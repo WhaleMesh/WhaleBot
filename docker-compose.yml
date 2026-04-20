@@ -1,0 +1,169 @@
+networks:
+  mvp_net:
+    name: mvp_net
+
+services:
+  orchestrator:
+    build: ./orchestrator
+    image: whalesbot/orchestrator:latest
+    container_name: orchestrator
+    environment:
+      ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-8080}
+      HEALTHCHECK_INTERVAL_SEC: ${HEALTHCHECK_INTERVAL_SEC:-5}
+      HEALTHCHECK_FAIL_THRESHOLD: ${HEALTHCHECK_FAIL_THRESHOLD:-3}
+    ports:
+      - "${ORCHESTRATOR_PORT:-8080}:8080"
+    networks: [mvp_net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  session:
+    build: ./session
+    image: whalesbot/session:latest
+    container_name: session
+    environment:
+      SESSION_PORT: ${SESSION_PORT:-8090}
+      SESSION_MAX_MESSAGES: ${SESSION_MAX_MESSAGES:-40}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: session
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${SESSION_PORT:-8090}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  chatmodel:
+    build: ./chatmodel
+    image: whalesbot/chatmodel:latest
+    container_name: chatmodel
+    environment:
+      CHATMODEL_PORT: ${CHATMODEL_PORT:-8081}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai_compatible}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.openai.com}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: chatmodel
+    # Lets MODEL_BASE_URL=http://localhost:... reach the host on Linux.
+    # No-op on Docker Desktop (macOS/Windows) where the name is built-in.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${CHATMODEL_PORT:-8081}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  im-telegram:
+    build: ./im-telegram
+    image: whalesbot/im-telegram:latest
+    container_name: im-telegram
+    environment:
+      IM_TELEGRAM_PORT: ${IM_TELEGRAM_PORT:-8084}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: im-telegram
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${IM_TELEGRAM_PORT:-8084}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  tool-docker-creator:
+    build: ./tool-docker-creator
+    image: whalesbot/tool-docker-creator:latest
+    container_name: tool-docker-creator
+    environment:
+      TOOL_DOCKER_CREATOR_PORT: ${TOOL_DOCKER_CREATOR_PORT:-8082}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: tool-docker-creator
+      USERDOCKER_DEFAULT_IMAGE: whalesbot/userdocker-base:latest
+      DOCKER_NETWORK: mvp_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+      userdocker-base: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${TOOL_DOCKER_CREATOR_PORT:-8082}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  env-golang:
+    build: ./env-golang
+    image: whalesbot/env-golang:latest
+    container_name: env-golang
+    environment:
+      ENV_GOLANG_PORT: ${ENV_GOLANG_PORT:-8083}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: env-golang
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${ENV_GOLANG_PORT:-8083}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  webui:
+    build: ./webui
+    image: whalesbot/webui:latest
+    container_name: webui
+    environment:
+      # Browser-facing URL — must be reachable from the host, not just from
+      # inside the mvp_net network.
+      ORCHESTRATOR_URL: http://localhost:${ORCHESTRATOR_PORT:-8080}
+    ports:
+      - "${WEBUI_PORT:-3000}:80"
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Build-only helper. Having this service in the compose file ensures
+  # `docker compose up --build` builds the userdocker-base image that
+  # tool-docker-creator uses when spawning new userdocker containers.
+  # We override the entrypoint so the container itself does not register —
+  # real userdocker containers are created on demand via
+  # POST /api/v1/tools/docker-create.
+  userdocker-base:
+    build: ./userdocker-base
+    image: whalesbot/userdocker-base:latest
+    container_name: userdocker-base
+    entrypoint: ["sleep"]
+    command: ["infinity"]
+    networks: [mvp_net]
+    restart: unless-stopped
