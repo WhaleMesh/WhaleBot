@@ -60,7 +60,7 @@ flowchart LR
   O --> M["chatmodel (:8081)"]
   O --> T["tool-docker-creator (:8082)"]
   O --> E["env-golang (:8083)"]
-  T -. docker.sock .-> D[(Docker Engine)]
+  T -. "docker.sock" .-> D[("Docker Engine")]
   D -->|"creates"| UD["userdocker (new container)"]
   UD -->|"self-register"| O
   IM -->|"self-register"| O
