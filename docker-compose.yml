@@ -69,6 +69,31 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  worker:
+    build: ./worker
+    image: whalesbot/worker:latest
+    container_name: worker
+    environment:
+      WORKER_PORT: ${WORKER_PORT:-8085}
+      REACT_MAX_STEPS: ${REACT_MAX_STEPS:-8}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SESSION_URL: http://session:8090
+      CHATMODEL_URL: http://chatmodel:8081
+      SERVICE_HOST: worker
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+      session: { condition: service_started }
+      chatmodel: { condition: service_started }
+      tool-docker-creator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${WORKER_PORT:-8085}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   im-telegram:
     build: ./im-telegram
     image: whalesbot/im-telegram:latest
