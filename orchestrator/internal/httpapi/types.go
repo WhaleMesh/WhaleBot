@@ -10,6 +10,7 @@ type ChatRequest struct {
 	Channel string `json:"channel"`
 	ChatID  string `json:"chat_id"`
 	Message string `json:"message"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 type ChatResponse struct {

@@ -14,9 +14,38 @@ import (
 	"time"
 )
 
+// Message matches OpenAI-style chat messages for /invoke and upstream APIs.
 type Message struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content string `json:"content,omitempty"`
+
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	// For role "tool"
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// Tool is a function tool definition (OpenAI tools[]).
+type Tool struct {
+	Type     string           `json:"type"`
+	Function ToolFunctionSpec `json:"function"`
+}
+
+type ToolFunctionSpec struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 type Client struct {
@@ -42,10 +71,6 @@ func New(baseURL, apiKey, model string) *Client {
 	}
 }
 
-// normalizeBaseURL trims trailing slashes and, crucially, rewrites a host of
-// `localhost` / `127.0.0.1` / `::1` to `host.docker.internal` so users can put
-// `http://localhost:11434` (Ollama, LM Studio, etc.) in their .env and have it
-// reach the host machine from inside the chatmodel container.
 func normalizeBaseURL(raw string) string {
 	trimmed := strings.TrimRight(raw, "/")
 	u, err := url.Parse(trimmed)
@@ -68,15 +93,22 @@ func normalizeBaseURL(raw string) string {
 }
 
 type chatCompletionsRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
+	Model          string         `json:"model"`
+	Messages       []any          `json:"messages"`
+	Temperature    *float64       `json:"temperature,omitempty"`
+	MaxTokens      *int           `json:"max_tokens,omitempty"`
+	Tools          []Tool         `json:"tools,omitempty"`
+	ToolChoice     any            `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool      `json:"parallel_tool_calls,omitempty"`
 }
 
 type chatCompletionsResponse struct {
 	Choices []struct {
-		Message Message `json:"message"`
+		Message struct {
+			Role        string          `json:"role"`
+			Content     json.RawMessage `json:"content"`
+			ToolCalls   []ToolCall      `json:"tool_calls"`
+		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -84,11 +116,55 @@ type chatCompletionsResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func (c *Client) Invoke(ctx context.Context, messages []Message, params map[string]any) (Message, error) {
-	if c.APIKey == "" {
-		return echoFallback(messages), nil
+func messageToOpenAI(m Message) any {
+	switch m.Role {
+	case "tool":
+		return map[string]any{
+			"role":         "tool",
+			"tool_call_id": m.ToolCallID,
+			"content":      m.Content,
+		}
+	case "assistant":
+		out := map[string]any{"role": "assistant"}
+		if m.Content != "" {
+			out["content"] = m.Content
+		} else if len(m.ToolCalls) == 0 {
+			out["content"] = ""
+		}
+		if len(m.ToolCalls) > 0 {
+			out["tool_calls"] = m.ToolCalls
+		}
+		return out
+	default:
+		return map[string]any{
+			"role":    m.Role,
+			"content": m.Content,
+		}
 	}
-	req := chatCompletionsRequest{Model: c.Model, Messages: messages}
+}
+
+func parseAssistantContent(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return ""
+}
+
+// Invoke calls Chat Completions. When tools is non-empty they are passed through;
+// params may include "temperature", "max_tokens", "tool_choice" (e.g. "auto").
+func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, params map[string]any) (Message, error) {
+	if c.APIKey == "" {
+		return echoFallback(messages, tools), nil
+	}
+	msgs := make([]any, 0, len(messages))
+	for i := range messages {
+		msgs = append(msgs, messageToOpenAI(messages[i]))
+	}
+	req := chatCompletionsRequest{Model: c.Model, Messages: msgs}
 	if v, ok := params["temperature"].(float64); ok {
 		req.Temperature = &v
 	}
@@ -96,8 +172,22 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, params map[stri
 		n := int(v)
 		req.MaxTokens = &n
 	}
+	if len(tools) > 0 {
+		req.Tools = tools
+		if tc, ok := params["tool_choice"]; ok {
+			req.ToolChoice = tc
+		} else {
+			req.ToolChoice = "auto"
+		}
+		if v, ok := params["parallel_tool_calls"].(bool); ok {
+			req.ParallelToolCalls = &v
+		}
+	}
 
-	body, _ := json.Marshal(req)
+	body, err := json.Marshal(req)
+	if err != nil {
+		return Message{}, err
+	}
 	url := c.BaseURL + "/v1/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -125,12 +215,15 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, params map[stri
 	if len(parsed.Choices) == 0 {
 		return Message{}, errors.New("no choices in response")
 	}
-	return parsed.Choices[0].Message, nil
+	cm := parsed.Choices[0].Message
+	return Message{
+		Role:      cm.Role,
+		Content:   parseAssistantContent(cm.Content),
+		ToolCalls: cm.ToolCalls,
+	}, nil
 }
 
-// echoFallback lets the whole MVP run end-to-end even without an API key by
-// returning a deterministic canned reply that includes the last user message.
-func echoFallback(messages []Message) Message {
+func echoFallback(messages []Message, tools []Tool) Message {
 	last := "(empty)"
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
@@ -138,9 +231,13 @@ func echoFallback(messages []Message) Message {
 			break
 		}
 	}
+	msg := "[echo mode — set MODEL_API_KEY to enable real LLM] 你说的是：" + last
+	if len(tools) > 0 {
+		msg += "（echo 模式下不会执行工具调用。）"
+	}
 	return Message{
 		Role:    "assistant",
-		Content: "[echo mode — set MODEL_API_KEY to enable real LLM] 你说的是：" + last,
+		Content: msg,
 	}
 }
 

@@ -133,6 +133,32 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	traceID := randomHex(8)
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
+	if wk := s.Registry.FirstHealthyByType("worker"); wk != nil {
+		req.TraceID = traceID
+		body, err := json.Marshal(req)
+		if err != nil {
+			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
+			return
+		}
+		r2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, wk.Endpoint+"/run", bytes.NewReader(body))
+		if err != nil {
+			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
+			return
+		}
+		r2.Header.Set("Content-Type", "application/json")
+		resp, err := s.HTTP.Do(r2)
+		if err != nil {
+			s.log("error", "worker proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+			writeJSON(w, 200, ChatResponse{Success: false, Error: "worker: " + err.Error(), TraceID: traceID, SessionID: sessionID})
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+
 	sess := s.Registry.FirstHealthyByType("session")
 	model := s.Registry.FirstHealthyByType("chat_model")
 	if sess == nil || model == nil {

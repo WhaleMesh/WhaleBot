@@ -26,6 +26,7 @@ func getenv(k, def string) string {
 type invokeRequest struct {
 	Messages []openai.Message `json:"messages"`
 	Params   map[string]any   `json:"params,omitempty"`
+	Tools    []openai.Tool    `json:"tools,omitempty"`
 }
 
 type invokeResponse struct {
@@ -59,7 +60,7 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(req.Context(), 60*time.Second)
 		defer cancel()
-		msg, err := client.Invoke(ctx, ir.Messages, ir.Params)
+		msg, err := client.Invoke(ctx, ir.Messages, ir.Tools, ir.Params)
 		if err != nil {
 			slog.Error("invoke failed", "err", err)
 			writeJSON(w, 200, invokeResponse{Success: false, Error: err.Error()})
