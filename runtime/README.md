@@ -1,27 +1,28 @@
-# worker
+# runtime
 
 ## ServiceCard
 ```yaml
-service: worker
-role: react_loop_executor
-compose_service: worker
-image: whalesbot/worker:latest
-build_context: ./worker
+service: runtime
+role: agent_runtime
+compose_service: runtime
+image: whalesbot/runtime:latest
+build_context: ./runtime
 owner: tbd
 runtime: go_http_service
 default_port: 8085
 health_endpoint: GET /health
 component_registration:
   enabled: true
-  name: worker
-  type: worker
+  name: runtime
+  type: runtime
   capabilities:
     - react_chat
     - run
+    - tool_manifest_consumer
   meta: {}
 last_verified_from:
   - docker-compose.yml
-  - worker/cmd/server/main.go
+  - runtime/cmd/server/main.go
 ```
 
 ## Purpose
@@ -37,7 +38,7 @@ path: /health
 request: none
 response:
   status: ok
-  service: worker
+  service: runtime
 error_behavior: standard_http_status
 ```
 
@@ -75,9 +76,9 @@ error_behavior:
   - `POST /api/v1/components/register` for self-registration
 
 ## Environment Variables
-### WORKER_PORT
+### RUNTIME_PORT
 ```yaml
-name: WORKER_PORT
+name: RUNTIME_PORT
 default: "8085"
 required: false
 effect: bind_port_for_http_server
@@ -118,7 +119,7 @@ effect: model_inference_and_tool_call_generation_target
 ### SERVICE_HOST
 ```yaml
 name: SERVICE_HOST
-default: worker
+default: runtime
 required: false
 effect: advertised_endpoint_host_for_registration
 ```
@@ -126,7 +127,7 @@ effect: advertised_endpoint_host_for_registration
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: `orchestrator`, `session`, `chatmodel`, `tool-docker-creator`.
-- healthcheck: `wget http://localhost:${WORKER_PORT}/health`.
+- healthcheck: `wget http://localhost:${RUNTIME_PORT}/health`.
 - volumes: none.
 - security_notes: executes tool side effects indirectly through orchestrator tool APIs.
 
@@ -134,11 +135,11 @@ effect: advertised_endpoint_host_for_registration
 ```yaml
 aliases:
   - react_engine
-  - agent_worker
+  - agent_runtime
   - tool_executor
 query_to_endpoint:
   run_agent_chat: POST /run
-  worker_health: GET /health
+  runtime_health: GET /health
 internal_tool_name_map:
   docker_create_userdocker: POST /api/v1/tools/docker-create
 ```

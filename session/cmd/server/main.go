@@ -37,11 +37,21 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	port := getenv("SESSION_PORT", "8090")
 	maxMsgs := getenvInt("SESSION_MAX_MESSAGES", 40)
+	dbPath := getenv("SESSION_DB_PATH", "")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	selfHost := getenv("SERVICE_HOST", "session")
 	self := "http://" + selfHost + ":" + port
 
-	st := store.New(maxMsgs)
+	st, err := store.New(maxMsgs, dbPath)
+	if err != nil {
+		slog.Error("init session store failed", "err", err, "db_path", dbPath)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := st.Close(); err != nil {
+			slog.Warn("close session store failed", "err", err)
+		}
+	}()
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "service": "session"})
@@ -118,7 +128,7 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("session listening", "port", port, "max_messages", maxMsgs)
+		slog.Info("session listening", "port", port, "max_messages", maxMsgs, "db_path", dbPath)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http listen failed", "err", err)
 			os.Exit(1)

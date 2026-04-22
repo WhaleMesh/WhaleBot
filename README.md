@@ -5,6 +5,10 @@ All services run on the same host and share a fixed Docker network named `mvp_ne
 Services self-register to the orchestrator, which health-checks them every 5 s
 and evicts any that fail 3 checks in a row.
 
+All service images in `docker-compose.yml` are built locally from this repository.
+The `image: whalesbot/...:latest` fields are local tags for the build results,
+not remote-registry dependencies.
+
 ## Quick start
 
 ```bash
@@ -75,11 +79,14 @@ flowchart LR
 | Service | Type | Port | Purpose |
 |---|---|---|---|
 | `orchestrator` | — | 8080 (host-exposed) | Registry + health-check loop + chat orchestration + API gateway for WebUI |
-| `session` | `session` | 8090 | In-memory conversation store (last 40 msgs per session) |
+| `session` | `session` | 8090 | SQLite-backed conversation store (last 40 msgs per session by default) |
 | `chatmodel` | `chat_model` | 8081 | OpenAI-compatible Chat Completions client |
 | `im-telegram` | `im_gateway` | 8084 | Telegram Bot long-poll → `orchestrator /api/v1/chat` |
 | `tool-docker-creator` | `tool` | 8082 | Creates `userdocker` containers via the Docker Engine API |
 | `env-golang` | `environment` | 8083 | Runs arbitrary Go code with `go run` and returns stdout/stderr/exit_code |
+| `logger` | `logger` | 8086 | Minimal SQLite-backed event log service |
+| `memory` | `memory` | 8087 | Minimal SQLite-backed KV/note memory service |
+| `workspace` | `workspace` | 8088 | Minimal workspace directory manager |
 | `userdocker-base` | `userdocker` | 9000 (per container) | Minimal self-registering image used by the creator; new instances are spawned on demand |
 | `webui` | `webui` | 3000 (host-exposed) | Svelte dashboard (served by nginx) |
 
@@ -184,7 +191,7 @@ curl -s -X POST http://localhost:8080/api/v1/tools/docker-create \
   -d '{"name":"user-task-001","network":"mvp_net","auto_register":true,"labels":{"mvp.type":"userdocker"}}' | jq
 ```
 
-(`image` left blank defaults to `whalesbot/userdocker-base:latest`.)
+(`image` left blank defaults to the locally built `whalesbot/userdocker-base:latest`.)
 
 ### 8. New userdocker is visible
 
@@ -223,6 +230,9 @@ The new container should appear on `mvp_net` and register itself.
 ├── im-telegram/           Go
 ├── tool-docker-creator/   Go (talks to Docker Engine API via unix socket)
 ├── env-golang/            Go (has Go toolchain in its runtime image)
+├── logger/                Go (SQLite-backed event log)
+├── memory/                Go (SQLite-backed key/value memory)
+├── workspace/             Go (workspace directory manager)
 ├── userdocker-base/       Go (minimal self-registering server)
 └── webui/                 Svelte + Vite, served by nginx
 ```
