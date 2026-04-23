@@ -50,6 +50,12 @@
   async function refresh() {
     try {
       const [sessionResp, logsResp] = await Promise.all([api.session(sessionId), api.logs()]);
+      if (sessionResp && sessionResp.success === false) {
+        throw new Error(sessionResp.error || 'session detail api returned success=false');
+      }
+      if (logsResp && logsResp.success === false) {
+        throw new Error(logsResp.error || 'logs api returned success=false');
+      }
       session = sessionResp.session || emptySession;
       logs = logsResp.logs || [];
       error = '';

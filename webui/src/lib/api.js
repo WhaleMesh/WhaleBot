@@ -5,6 +5,7 @@ function base() {
 
 async function req(path, opts = {}) {
   const res = await fetch(base() + path, {
+    cache: "no-store",
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
   });

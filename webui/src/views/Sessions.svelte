@@ -10,6 +10,9 @@
   async function refresh() {
     try {
       const r = await api.sessions();
+      if (r && r.success === false) {
+        throw new Error(r.error || 'sessions api returned success=false');
+      }
       sessions = r.sessions || [];
       error = '';
     } catch (e) { error = String(e); }
