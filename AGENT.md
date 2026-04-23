@@ -86,6 +86,9 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Svelte dashboard via caddy
   - entry: `webui/src/main.js`
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - note: router is hash-based so refresh keeps current page
+  - note: includes dedicated `Logger` page in addition to overview logs
+  - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances

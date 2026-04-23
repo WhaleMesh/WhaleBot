@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { api } from '../lib/api.js';
   import { goto } from '../lib/route.js';
   import { renderMarkdown } from '../lib/markdown.js';
@@ -10,6 +10,10 @@
   let logs = [];
   let error = '';
   let timer;
+  let lastMessageCount = 0;
+  let latestAnchorEl;
+  let shouldAutoScroll = true;
+  const AUTO_SCROLL_THRESHOLD_PX = 180;
 
   const emptySession = { id: sessionId, messages: [] };
 
@@ -38,6 +42,10 @@
   $: chatCompletedLogs = logs.filter(
     (l) => l?.message === 'chat completed' && l?.fields?.session_id === sessionId,
   );
+  $: if (messages.length > lastMessageCount && shouldAutoScroll) {
+    scrollToLatestMessage();
+  }
+  $: lastMessageCount = messages.length;
 
   async function refresh() {
     try {
@@ -48,41 +56,68 @@
     } catch (e) { error = String(e); }
   }
 
-  onMount(() => { refresh(); timer = setInterval(refresh, 3000); });
-  onDestroy(() => clearInterval(timer));
+  async function scrollToLatestMessage() {
+    await tick();
+    latestAnchorEl?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  function isNearPageBottom() {
+    if (typeof window === 'undefined') return true;
+    const doc = document.documentElement;
+    const distanceToBottom = doc.scrollHeight - (window.scrollY + window.innerHeight);
+    return distanceToBottom <= AUTO_SCROLL_THRESHOLD_PX;
+  }
+
+  function syncAutoScrollState() {
+    shouldAutoScroll = isNearPageBottom();
+  }
+
+  onMount(() => {
+    refresh();
+    timer = setInterval(refresh, 3000);
+    syncAutoScrollState();
+    window.addEventListener('scroll', syncAutoScrollState, { passive: true });
+  });
+
+  onDestroy(() => {
+    clearInterval(timer);
+    window.removeEventListener('scroll', syncAutoScrollState);
+  });
 </script>
 
-<div class="top">
-  <button on:click={() => goto('sessions')}>← Back</button>
-  <h1>Session <span class="mono">{sessionId}</span></h1>
-</div>
+<div class="sticky-header">
+  <div class="top">
+    <button on:click={() => goto('sessions')}>← Back</button>
+    <h1>Session <span class="mono">{sessionId}</span></h1>
+  </div>
 
-{#if error}<div class="err">{error}</div>{/if}
+  {#if error}<div class="err">{error}</div>{/if}
 
-<div class="meta-grid">
-  <div class="meta-item">
-    <div class="k">Created</div>
-    <div class="v">{fmtTs(session?.created_at)}</div>
-  </div>
-  <div class="meta-item">
-    <div class="k">Updated</div>
-    <div class="v">{fmtTs(session?.updated_at)}</div>
-  </div>
-  <div class="meta-item">
-    <div class="k">Messages</div>
-    <div class="v">{messages.length}</div>
-  </div>
-  <div class="meta-item">
-    <div class="k">Total Tokens (Real)</div>
-    <div class="v">{hasRealTokenData ? totalRealTokens : 'N/A'}</div>
-  </div>
-  <div class="meta-item">
-    <div class="k">Avg AI Latency</div>
-    <div class="v">{avgAssistantLatency !== null ? `${avgAssistantLatency} ms` : 'N/A'}</div>
-  </div>
-  <div class="meta-item">
-    <div class="k">Trace Events</div>
-    <div class="v">{chatCompletedLogs.length}</div>
+  <div class="meta-grid">
+    <div class="meta-item">
+      <div class="k">Created</div>
+      <div class="v">{fmtTs(session?.created_at)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Updated</div>
+      <div class="v">{fmtTs(session?.updated_at)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Messages</div>
+      <div class="v">{messages.length}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Total Tokens (Real)</div>
+      <div class="v">{hasRealTokenData ? totalRealTokens : 'N/A'}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Avg AI Latency</div>
+      <div class="v">{avgAssistantLatency !== null ? `${avgAssistantLatency} ms` : 'N/A'}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Trace Events</div>
+      <div class="v">{chatCompletedLogs.length}</div>
+    </div>
   </div>
 </div>
 
@@ -105,10 +140,20 @@
     {:else}
       <div class="empty">No messages in this session.</div>
     {/each}
+    <div bind:this={latestAnchorEl}></div>
   {/if}
 </div>
 
 <style>
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #0f1115;
+    padding-bottom: 0.8rem;
+    margin-bottom: 0.8rem;
+    border-bottom: 1px solid #232838;
+  }
   .top { display: flex; align-items: center; gap: 0.75rem; }
   h1 { margin: 0; }
   h1 .mono { font-family: ui-monospace, monospace; font-size: 1rem; color: #8ea6ff; }
@@ -117,7 +162,7 @@
   .meta-item { background: #151923; border: 1px solid #232838; border-radius: 8px; padding: 0.6rem 0.7rem; }
   .meta-item .k { font-size: 0.74rem; color: #8f98ae; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.2rem; }
   .meta-item .v { font-size: 0.92rem; color: #dfe3ee; }
-  .thread { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  .thread { display: flex; flex-direction: column; gap: 0.75rem; }
   .msg { padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #232838; max-width: 80%; }
   .msg.user { background: #172232; align-self: flex-end; }
   .msg.assistant { background: #151923; align-self: flex-start; }
