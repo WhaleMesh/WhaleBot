@@ -1,238 +1,86 @@
 # WhalesBot MVP
 
-Single-host, Docker Compose–based AI orchestration MVP written in Go + Svelte.
-All services run on the same host and share a fixed Docker network named `mvp_net`.
-Services self-register to the orchestrator, which health-checks them every 5 s
-and evicts any that fail 3 checks in a row.
+默认文档语言为中文。English version: [`README.en.md`](README.en.md)。
 
-All service images in `docker-compose.yml` are built locally from this repository.
-The `image: whalesbot/...:latest` fields are local tags for the build results,
-not remote-registry dependencies.
+WhalesBot MVP 是一个运行在单机 Docker Compose 上的多组件 AI 编排系统。  
+它的目标不是把所有能力塞进一个进程，而是让各能力作为独立服务协作，并由编排层统一对外提供入口。
 
-## Quick start
+## 面向使用者的核心理念
 
-```bash
-cp .env.example .env
-# (optional) edit .env to set TELEGRAM_BOT_TOKEN / MODEL_API_KEY
-docker compose up --build
-```
+- 统一入口：你只需要关注 `orchestrator` 与 `webui` 两个对外入口。
+- 组件自治：各服务独立运行、独立注册、独立健康检查。
+- 可替换：模型、IM 网关、工具环境等能力可以按服务级替换，而不需要重写整体系统。
+- 先可用再扩展：即便没有完整外部依赖（如模型 key、Telegram token），系统也尽可能保持可启动和可联调。
 
-Then open:
-
-- WebUI: http://localhost:3000
-- Orchestrator API: http://localhost:8080
-
-If `MODEL_API_KEY` is empty, `chatmodel` runs in **echo mode** — it replies with
-a canned response so you can still exercise the full pipeline end-to-end.
-If `TELEGRAM_BOT_TOKEN` is empty, `im-telegram` still starts and registers but
-skips the long-poll loop.
-
-## Using a local LLM (Ollama, LM Studio, vLLM, …)
-
-If your model server runs on the host machine, just point `MODEL_BASE_URL` at
-`localhost` — the `chatmodel` container automatically rewrites `localhost` /
-`127.0.0.1` / `::1` to `host.docker.internal`, and `docker-compose.yml` wires
-that name to the host gateway on Linux.
-
-Example with [Ollama](https://ollama.com):
-
-```bash
-# on the host
-ollama pull qwen2.5:7b
-ollama serve   # listens on 127.0.0.1:11434
-```
-
-```env
-# .env
-MODEL_BASE_URL=http://localhost:11434
-MODEL_API_KEY=ollama          # any non-empty value disables echo mode
-MODEL_NAME=qwen2.5:7b
-```
-
-`docker compose logs chatmodel` will show a line like
-`rewrote localhost base URL to host.docker.internal original=http://localhost:11434 rewritten=http://host.docker.internal:11434`
-confirming the rewrite.
-
-## Architecture
+## 系统框架（整体视图）
 
 ```mermaid
 flowchart LR
-  U["Telegram User"] --> IM["im-telegram"]
-  IM -->|"POST /api/v1/chat"| O["orchestrator (:8080)"]
-  WUI["webui (:3000)"] -->|REST| O
-  O --> S["session (:8090)"]
-  O --> M["chatmodel (:8081)"]
-  O --> T["tool-docker-creator (:8082)"]
-  O --> E["env-golang (:8083)"]
-  T -. "docker.sock" .-> D[("Docker Engine")]
-  D -->|"creates"| UD["userdocker (new container)"]
-  UD -->|"self-register"| O
-  IM -->|"self-register"| O
-  S -->|"self-register"| O
-  M -->|"self-register"| O
-  T -->|"self-register"| O
-  E -->|"self-register"| O
+  user["User"] --> webui["webui"]
+  tg["Telegram"] --> imTelegram["im-telegram"]
+  webui --> orchestrator["orchestrator"]
+  imTelegram --> orchestrator
+  orchestrator --> runtime["runtime"]
+  orchestrator --> session["session"]
+  orchestrator --> chatmodel["chatmodel"]
+  orchestrator --> toolDocker["tool-docker-creator"]
+  orchestrator --> envGolang["env-golang"]
+  orchestrator --> memory["memory"]
+  orchestrator --> logger["logger"]
+  orchestrator --> workspace["workspace"]
 ```
 
-## Services
+## 快速开始（使用者路径）
 
-| Service | Type | Port | Purpose |
-|---|---|---|---|
-| `orchestrator` | — | 8080 (host-exposed) | Registry + health-check loop + chat orchestration + API gateway for WebUI |
-| `session` | `session` | 8090 | SQLite-backed conversation store (last 40 msgs per session by default) |
-| `chatmodel` | `chat_model` | 8081 | OpenAI-compatible Chat Completions client |
-| `im-telegram` | `im_gateway` | 8084 | Telegram Bot long-poll → `orchestrator /api/v1/chat` |
-| `tool-docker-creator` | `tool` | 8082 | Creates `userdocker` containers via the Docker Engine API |
-| `env-golang` | `environment` | 8083 | Runs arbitrary Go code with `go run` and returns stdout/stderr/exit_code |
-| `logger` | `logger` | 8086 | Minimal SQLite-backed event log service |
-| `memory` | `memory` | 8087 | Minimal SQLite-backed KV/note memory service |
-| `workspace` | `workspace` | 8088 | Minimal workspace directory manager |
-| `userdocker-base` | `userdocker` | 9000 (per container) | Minimal self-registering image used by the creator; new instances are spawned on demand |
-| `webui` | `webui` | 3000 (host-exposed) | Svelte dashboard (served by nginx) |
-
-## Component registration
-
-Every non-orchestrator service POSTs to
-`http://orchestrator:8080/api/v1/components/register` on boot (and every 60 s
-thereafter to survive orchestrator restarts) with a body like:
-
-```json
-{
-  "name": "session",
-  "type": "session",
-  "version": "0.1.0",
-  "endpoint": "http://session:8090",
-  "health_endpoint": "http://session:8090/health",
-  "capabilities": ["get_context", "append_messages", "clear_context"],
-  "meta": {}
-}
-```
-
-The orchestrator pings each component's `health_endpoint` every
-`HEALTHCHECK_INTERVAL_SEC` seconds. On `HEALTHCHECK_FAIL_THRESHOLD` consecutive
-failures the component transitions `healthy → unhealthy → removed`.
-
-## Orchestrator API
-
-```
-GET  /health
-POST /api/v1/components/register
-GET  /api/v1/components
-POST /api/v1/chat
-GET  /api/v1/logs/recent
-GET  /api/v1/sessions
-GET  /api/v1/sessions/{id}
-POST /api/v1/tools/docker-create
-POST /api/v1/environments/golang/run
-```
-
-See the spec in this repo for request/response shapes. Every response includes
-`"success": true|false`.
-
-## Testing the acceptance criteria
-
-### 1. Auto-register
+1. 初始化环境变量
 
 ```bash
-curl http://localhost:8080/api/v1/components | jq '.components[] | {name,type,status}'
+cp .env.example .env
 ```
 
-Expect 6 components: `session`, `chatmodel`, `im-telegram`, `tool-docker-creator`, `env-golang` — all `healthy`.
-(`userdocker-base` is built but its compose container is a sleep placeholder.)
+2. 按需填写 `.env`（最常见）
 
-### 2. Telegram dialog
+- `MODEL_API_KEY`：为空时 `chatmodel` 会走 echo 模式（便于流程联调）。
+- `TELEGRAM_BOT_TOKEN`：为空时 `im-telegram` 会启动并注册，但不进入长轮询。
 
-Set `TELEGRAM_BOT_TOKEN` in `.env`, `docker compose up --build`, then message
-your bot. You should see two messages exchanged and a session created in the
-WebUI **Sessions** tab.
-
-### 3. Context persistence
+3. 启动系统
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/chat \
-  -H 'content-type: application/json' \
-  -d '{"user_id":"u1","channel":"web","chat_id":"demo","message":"我叫小明"}'
-curl -s -X POST http://localhost:8080/api/v1/chat \
-  -H 'content-type: application/json' \
-  -d '{"user_id":"u1","channel":"web","chat_id":"demo","message":"我叫什么名字？"}'
+docker compose up --build
 ```
 
-The second reply should reference "小明" (requires a real `MODEL_API_KEY`).
+4. 访问入口
 
-### 4. WebUI
+- WebUI: `http://localhost:3000`
+- Orchestrator API: `http://localhost:8080`
 
-Open http://localhost:3000 → Overview / Components / Sessions / Tools / Env·Go.
+## 仓库结构（仅保留总览）
 
-### 5. ~15 s removal
+根 README 只提供框架级信息；实现细节请查看各模块自己的 README。
 
-```bash
-docker stop chatmodel
-sleep 16
-curl -s http://localhost:8080/api/v1/components | jq '.components[] | select(.name=="chatmodel")'
-```
+- `orchestrator/`：编排与网关
+- `runtime/`：ReAct 执行循环
+- `session/`：会话持久化
+- `chatmodel/`：模型调用适配
+- `im-telegram/`：Telegram 网关
+- `tool-docker-creator/`：Docker 容器创建工具
+- `env-golang/`：Go 代码执行环境
+- `logger/`：日志服务
+- `memory/`：记忆服务
+- `workspace/`：工作区服务
+- `userdocker-base/`：动态 userdocker 基础镜像
+- `webui/`：前端界面
 
-Expect `"status": "removed"` with `failure_count >= 3`.
+## 文档与信息优先级
 
-### 6. Run Go code
+当信息不一致时，按以下顺序判断：
 
-```bash
-curl -s -X POST http://localhost:8080/api/v1/environments/golang/run \
-  -H 'content-type: application/json' \
-  -d '{"code":"package main\nimport \"fmt\"\nfunc main(){fmt.Println(\"hello\")}"}' | jq
-```
+1. `docker-compose.yml`（运行事实）
+2. `.env.example`（配置事实）
+3. `AGENT.md`（面向 AI agent 的低 token 项目快照）
+4. 根 `README.md` 与各模块 `README.md`（说明文档）
 
-Expect `"stdout": "hello\n"` and `"exit_code": 0`.
+## 贡献说明
 
-### 7. Create a userdocker container
-
-```bash
-curl -s -X POST http://localhost:8080/api/v1/tools/docker-create \
-  -H 'content-type: application/json' \
-  -d '{"name":"user-task-001","network":"mvp_net","auto_register":true,"labels":{"mvp.type":"userdocker"}}' | jq
-```
-
-(`image` left blank defaults to the locally built `whalesbot/userdocker-base:latest`.)
-
-### 8. New userdocker is visible
-
-```bash
-docker ps --filter label=mvp.type=userdocker
-curl -s http://localhost:8080/api/v1/components | jq '.components[] | select(.name=="user-task-001")'
-```
-
-The new container should appear on `mvp_net` and register itself.
-
-## Troubleshooting
-
-- **`docker.sock` permission denied from `tool-docker-creator`**: on the host,
-  either run compose as root, add yourself to the `docker` group, or adjust
-  socket permissions. The service needs read+write on `/var/run/docker.sock`.
-- **Network name conflict**: `mvp_net` is declared with `name: mvp_net`; if you
-  already have a different network by that name, `docker network rm mvp_net`.
-- **Model errors**: check the orchestrator logs or `/api/v1/logs/recent`.
-  Without a valid `MODEL_API_KEY`, `chatmodel` runs in echo mode — replies are
-  deterministic but not from the LLM.
-- **WebUI cannot reach orchestrator**: the WebUI calls
-  `http://localhost:${ORCHESTRATOR_PORT}` from the browser; that port must be
-  host-exposed (it is by default). If you access the WebUI from another host,
-  override `ORCHESTRATOR_URL` in the `webui` service's environment.
-
-## Repo layout
-
-```
-.
-├── docker-compose.yml
-├── .env.example
-├── README.md
-├── orchestrator/          Go
-├── session/               Go
-├── chatmodel/             Go
-├── im-telegram/           Go
-├── tool-docker-creator/   Go (talks to Docker Engine API via unix socket)
-├── env-golang/            Go (has Go toolchain in its runtime image)
-├── logger/                Go (SQLite-backed event log)
-├── memory/                Go (SQLite-backed key/value memory)
-├── workspace/             Go (workspace directory manager)
-├── userdocker-base/       Go (minimal self-registering server)
-└── webui/                 Svelte + Vite, served by nginx
-```
+提交贡献前，请同步检查并更新 `AGENT.md`。  
+只要你的改动影响了架构、服务清单、端口、环境变量、运行方式或项目状态，就必须在同一提交中更新 `AGENT.md`。
