@@ -27,6 +27,7 @@ last_verified_from:
 - Receives Telegram user messages via long-poll and forwards them to orchestrator chat API.
 - Sends orchestrator replies back to Telegram chats.
 - Converts standard Markdown replies into Telegram-friendly HTML before sending (IM-specific render adapter).
+- Provides basic Telegram chat commands (`/new`, `/end`, `/status`, `/help`) for session lifecycle control.
 - Exposes only a health endpoint for infrastructure checks.
 
 ## External API
@@ -45,6 +46,17 @@ error_behavior: standard_http_status
 - `POST ${ORCHESTRATOR_URL}/api/v1/chat` for each incoming Telegram text message.
 - `POST ${ORCHESTRATOR_URL}/api/v1/components/register` for service registration.
 - Telegram Bot API long-poll and message send operations via token.
+
+## User Commands (Telegram)
+- `/new` (`/reset`): starts a new conversation session ID for the current chat.
+- `/end` (`/stop`): marks current session as ended; normal text messages are paused until `/new`.
+- `/status`: shows current session state (`active`/`ended`) and session ID.
+- `/help` (`/commands`): lists supported commands.
+- Commands are registered to Telegram via `setMyCommands` at startup; users can select them from bot command UI.
+
+Notes:
+- Session switching is managed inside `im-telegram` (in-memory state per Telegram chat).
+- Session history content stays as standard Markdown in backend storage; only Telegram egress rendering is converted.
 
 ## Environment Variables
 ### IM_TELEGRAM_PORT

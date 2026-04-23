@@ -60,6 +60,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `im-telegram/cmd/server/main.go`
   - host exposed: no
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
+  - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
 - `tool-docker-creator`
   - purpose: create `userdocker` containers
   - entry: `tool-docker-creator/cmd/server/main.go`
@@ -123,7 +124,22 @@ Read this first, then read only the referenced source-of-truth files.
 - Keep changes minimal and consistent with current compose/network model.
 - If you change architecture, service list, env vars, ports, run commands, or status assumptions, you MUST update this file in the same change.
 
-## 7) Mandatory Update Policy
+## 7) Runtime Capability Injection
+
+- Runtime discovers capabilities per chat run from `GET /api/v1/components` on orchestrator.
+- Only components with `status=healthy` are considered.
+- Tool mapping:
+  - `type=tool` + capability `create_container` -> tool `docker_create_userdocker` (endpoint `/api/v1/tools/docker-create`)
+  - `type=environment` + capability `run_go` -> tool `run_go_code` (endpoint `/api/v1/environments/golang/run`)
+- Degrade behavior:
+  - If a capability is not discoverable, runtime should not rely on that tool.
+  - Tool calls without healthy backing component must return explicit unavailable errors.
+- Quick diagnostics:
+  - check components: `curl -s http://localhost:8080/api/v1/components`
+  - check env route: `curl -s -X POST http://localhost:8080/api/v1/environments/golang/run ...`
+  - ask runtime via chat to list tool names and confirm `run_go_code` is visible.
+
+## 8) Mandatory Update Policy
 
 `AGENT.md` must be updated every time the project is updated.
 
@@ -135,7 +151,7 @@ Update triggers (any one requires update):
 - change local runbook, bootstrap steps, or operational constraints
 - change project status, known drifts, or active roadmap assumptions
 
-## 8) Update Checklist (after each project change)
+## 9) Update Checklist (after each project change)
 
 - service map still matches `docker-compose.yml`
 - env groups still match `.env.example`

@@ -237,7 +237,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	catalog, routes, err := s.fetchRuntimeCatalog(r.Context())
 	if err != nil {
-		slog.Warn("fetch runtime catalog failed; continue with safe defaults", "err", err, "trace_id", traceID)
+		slog.Warn("fetch runtime catalog failed; continue with discovered defaults", "err", err, "trace_id", traceID)
 	}
 
 	msgs := make([]cmMessage, 0, len(history)+4)
@@ -326,17 +326,17 @@ func goRunToolDefinition() map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        "run_go_code",
-			"description": "Run Go code in the registered env-golang environment through orchestrator.",
+			"description": "Run Go code in the registered env-golang environment via orchestrator.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"code": map[string]any{
 						"type":        "string",
-						"description": "Complete Go source code. Must include package main and main()",
+						"description": "Complete Go source code including package main and main()",
 					},
 					"timeout_sec": map[string]any{
 						"type":        "integer",
-						"description": "Optional timeout in seconds (1-30). Default 10.",
+						"description": "Optional timeout in seconds (1-30), default 10",
 					},
 				},
 				"required": []string{"code"},
@@ -520,8 +520,7 @@ func (s *reactService) runGoCode(ctx context.Context, argsJSON string) (string, 
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		s.orchURL+"/api/v1/environments/golang/run", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.orchURL+"/api/v1/environments/golang/run", bytes.NewReader(raw))
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
 	}
@@ -690,8 +689,10 @@ func hasCapability(caps []string, target string) bool {
 }
 
 func buildSystemPrompt(c runtimeCatalog) string {
-	base := "你是 WhalesBot MVP 里的 ReAct 助手：先思考，再在需要时调用工具，最后给出简洁友好的最终回答。"
-	lines := []string{base, "当前可用能力由运行时实时发现："}
+	lines := []string{
+		"你是 WhalesBot MVP 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
+		"当前可用能力由运行时实时发现：",
+	}
 	if len(c.Tools) == 0 && len(c.Environments) == 0 {
 		lines = append(lines, "- 暂无可用 tool/environment，只能直接回答。")
 		return joinLines(lines)
@@ -702,7 +703,7 @@ func buildSystemPrompt(c runtimeCatalog) string {
 	for _, e := range c.Environments {
 		lines = append(lines, fmt.Sprintf("- environment `%s`: %s (endpoint: %s)", e.Name, e.Description, e.Endpoint))
 	}
-	lines = append(lines, "仅在用户需求明确时调用工具；参数必须合法且最小化；工具失败时要解释原因并给出下一步。")
+	lines = append(lines, "只有在用户需求明确时才调用工具；调用失败时需解释原因并给出下一步建议。")
 	return joinLines(lines)
 }
 

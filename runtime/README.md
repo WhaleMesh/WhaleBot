@@ -74,6 +74,7 @@ error_behavior:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:
   - `GET /api/v1/components` for runtime capability discovery
+  - `GET /api/v1/components` for runtime capability discovery
   - `POST /api/v1/tools/docker-create` for `docker_create_userdocker`
   - `POST /api/v1/environments/golang/run` for `run_go_code`
   - `POST /api/v1/components/register` for self-registration
