@@ -54,6 +54,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: ReAct loop execution engine
   - entry: `runtime/cmd/server/main.go`
   - host exposed: no
+  - note: discovers healthy tool/environment components via orchestrator and builds tool list per run
 - `im-telegram`
   - purpose: Telegram gateway
   - entry: `im-telegram/cmd/server/main.go`
@@ -67,6 +68,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: execute Go code (`go run`)
   - entry: `env-golang/cmd/server/main.go`
   - host exposed: no
+  - note: callable by runtime as tool `run_go_code` through orchestrator endpoint `/api/v1/environments/golang/run`
 - `logger`
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`

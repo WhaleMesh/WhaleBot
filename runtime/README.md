@@ -27,7 +27,8 @@ last_verified_from:
 
 ## Purpose
 - Runs the ReAct loop for chat requests.
-- Calls `chatmodel` with tool definitions and executes returned tool calls.
+- Dynamically discovers healthy tool/environment components from orchestrator before each run.
+- Calls `chatmodel` with dynamically built tool definitions and executes returned tool calls.
 - Persists final user+assistant pair into `session`.
 
 ## External API
@@ -72,7 +73,9 @@ error_behavior:
 - `CHATMODEL_URL`:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:
+  - `GET /api/v1/components` for runtime capability discovery
   - `POST /api/v1/tools/docker-create` for `docker_create_userdocker`
+  - `POST /api/v1/environments/golang/run` for `run_go_code`
   - `POST /api/v1/components/register` for self-registration
 
 ## Environment Variables
@@ -142,9 +145,10 @@ query_to_endpoint:
   runtime_health: GET /health
 internal_tool_name_map:
   docker_create_userdocker: POST /api/v1/tools/docker-create
+  run_go_code: POST /api/v1/environments/golang/run
 ```
 
 ## Change Safety
 - Keep `POST /run` schema aligned with orchestrator `/api/v1/chat` payload.
 - Do not remove session writeback (`append_messages`) or chat history continuity breaks.
-- Tool name `docker_create_userdocker` is contractually coupled to prompt and dispatcher.
+- Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync.
