@@ -74,8 +74,11 @@ error_behavior:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:
   - `GET /api/v1/components` for runtime capability discovery
-  - `GET /api/v1/components` for runtime capability discovery
-  - `POST /api/v1/tools/docker-create` for `docker_create_userdocker`
+  - `POST /api/v1/tools/user-dockers` for `manage_user_docker(action=create)`
+  - `GET /api/v1/tools/user-dockers` for `manage_user_docker(action=list)`
+  - `DELETE /api/v1/tools/user-dockers/{name}` for `manage_user_docker(action=remove)`
+  - `POST /api/v1/tools/user-dockers/{name}/restart` for `manage_user_docker(action=restart)`
+  - `GET /api/v1/tools/user-dockers/{name}/interface` for `manage_user_docker(action=get_interface)`
   - `POST /api/v1/environments/golang/run` for `run_go_code`
   - `POST /api/v1/components/register` for self-registration
 
@@ -130,7 +133,7 @@ effect: advertised_endpoint_host_for_registration
 
 ## Runtime Contract
 - network: `mvp_net`.
-- depends_on: `orchestrator`, `session`, `chatmodel`, `tool-docker-creator`.
+- depends_on: `orchestrator`, `session`, `chatmodel`, `user-docker-manager`.
 - healthcheck: `wget http://localhost:${RUNTIME_PORT}/health`.
 - volumes: none.
 - security_notes: executes tool side effects indirectly through orchestrator tool APIs.
@@ -145,7 +148,12 @@ query_to_endpoint:
   run_agent_chat: POST /run
   runtime_health: GET /health
 internal_tool_name_map:
-  docker_create_userdocker: POST /api/v1/tools/docker-create
+  manage_user_docker:
+    list: GET /api/v1/tools/user-dockers
+    create: POST /api/v1/tools/user-dockers
+    remove: DELETE /api/v1/tools/user-dockers/{name}
+    restart: POST /api/v1/tools/user-dockers/{name}/restart
+    get_interface: GET /api/v1/tools/user-dockers/{name}/interface
   run_go_code: POST /api/v1/environments/golang/run
 ```
 

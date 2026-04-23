@@ -49,13 +49,18 @@ error_behavior: standard_http_status_from_caddy
   - `GET /api/v1/sessions`
   - `GET /api/v1/sessions/{id}`
   - `POST /api/v1/chat`
-  - `POST /api/v1/tools/docker-create`
+  - `GET /api/v1/tools/user-dockers`
+  - `POST /api/v1/tools/user-dockers`
+  - `DELETE /api/v1/tools/user-dockers/{name}`
+  - `POST /api/v1/tools/user-dockers/{name}/restart`
+  - `GET /api/v1/tools/user-dockers/interface-contract`
+  - `GET /api/v1/tools/user-dockers/{name}/interface`
   - `POST /api/v1/environments/golang/run`
 
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.
 - `Tools` page is a selector list for tool test pages.
-  - Current item: `Docker Creator`.
+  - Current item: `User Docker Manager`.
 - `Envs` page is a selector list for environment test pages.
   - Current item: `Env · Go`.
 - `Logger` page provides a dedicated full log stream view for recent orchestrator logs.

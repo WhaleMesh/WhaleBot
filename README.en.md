@@ -24,7 +24,7 @@ flowchart LR
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
-  orchestrator --> toolDocker["tool-docker-creator"]
+  orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> envGolang["env-golang"]
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
@@ -64,7 +64,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `session/`: conversation persistence
 - `chatmodel/`: model adapter/client
 - `im-telegram/`: Telegram gateway
-- `tool-docker-creator/`: Docker container creator tool
+- `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `env-golang/`: Go execution environment
 - `logger/`: logging service
 - `memory/`: memory service

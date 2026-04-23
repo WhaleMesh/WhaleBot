@@ -88,7 +88,7 @@ services:
       orchestrator: { condition: service_started }
       session: { condition: service_started }
       chatmodel: { condition: service_started }
-      tool-docker-creator: { condition: service_started }
+      user-docker-manager: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${RUNTIME_PORT:-8085}/health || exit 1"]
       interval: 10s
@@ -117,14 +117,14 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  tool-docker-creator:
-    build: ./tool-docker-creator
-    image: whalesbot/tool-docker-creator:latest
-    container_name: tool-docker-creator
+  user-docker-manager:
+    build: ./user-docker-manager
+    image: whalesbot/user-docker-manager:latest
+    container_name: user-docker-manager
     environment:
-      TOOL_DOCKER_CREATOR_PORT: ${TOOL_DOCKER_CREATOR_PORT:-8082}
+      USER_DOCKER_MANAGER_PORT: ${USER_DOCKER_MANAGER_PORT:-8082}
       ORCHESTRATOR_URL: http://orchestrator:8080
-      SERVICE_HOST: tool-docker-creator
+      SERVICE_HOST: user-docker-manager
       USERDOCKER_DEFAULT_IMAGE: whalesbot/userdocker-base:latest
       DOCKER_NETWORK: mvp_net
     volumes:
@@ -134,7 +134,7 @@ services:
       orchestrator: { condition: service_started }
       userdocker-base: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${TOOL_DOCKER_CREATOR_PORT:-8082}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${USER_DOCKER_MANAGER_PORT:-8082}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -249,10 +249,10 @@ services:
 
   # Build-only helper. Having this service in the compose file ensures
   # `docker compose up --build` builds the userdocker-base image that
-  # tool-docker-creator uses when spawning new userdocker containers.
+  # user-docker-manager uses this image when spawning new userdocker containers.
   # We override the entrypoint so the container itself does not register —
   # real userdocker containers are created on demand via
-  # POST /api/v1/tools/docker-create.
+  # POST /api/v1/tools/user-dockers.
   userdocker-base:
     build: ./userdocker-base
     image: whalesbot/userdocker-base:latest

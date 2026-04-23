@@ -23,7 +23,7 @@ flowchart LR
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
-  orchestrator --> toolDocker["tool-docker-creator"]
+  orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> envGolang["env-golang"]
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
@@ -63,7 +63,7 @@ docker compose up --build
 - `session/`：会话持久化
 - `chatmodel/`：模型调用适配
 - `im-telegram/`：Telegram 网关
-- `tool-docker-creator/`：Docker 容器创建工具
+- `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）
 - `env-golang/`：Go 代码执行环境
 - `logger/`：日志服务
 - `memory/`：记忆服务

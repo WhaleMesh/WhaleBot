@@ -74,13 +74,21 @@ type DockerCreateRequest struct {
 	Labels       map[string]string `json:"labels"`
 	Network      string            `json:"network"`
 	AutoRegister bool              `json:"auto_register"`
+	Port         int               `json:"port,omitempty"`
 }
 
 type DockerCreateResponse struct {
 	Success     bool   `json:"success"`
 	ContainerID string `json:"container_id,omitempty"`
 	Name        string `json:"name,omitempty"`
+	Port        int    `json:"port,omitempty"`
 	Error       string `json:"error,omitempty"`
+}
+
+type UserDockerListResponse struct {
+	Success    bool             `json:"success"`
+	Containers []map[string]any `json:"containers,omitempty"`
+	Error      string           `json:"error,omitempty"`
 }
 
 type GolangRunRequest struct {

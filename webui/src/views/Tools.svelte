@@ -4,8 +4,8 @@
   const tools = [
     {
       id: 'docker-create',
-      name: 'Docker Creator',
-      desc: 'Test /api/v1/tools/docker-create and create userdocker containers.',
+      name: 'User Docker Manager',
+      desc: 'Manage userdockers via /api/v1/tools/user-dockers (list/create/remove/restart/interface).',
       status: 'available',
     },
   ];

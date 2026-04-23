@@ -28,7 +28,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `orchestrator` coordinates `session`, `chatmodel`, `runtime`, tools/environments.
 - Runtime/tooling:
   - `runtime` runs ReAct steps and calls model/tools.
-  - `tool-docker-creator` talks to Docker Engine via `/var/run/docker.sock`.
+  - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - `env-golang` executes user Go code.
 - Persistence:
   - `session`, `logger`, `memory`, `workspace` use named volumes.
@@ -63,10 +63,12 @@ Read this first, then read only the referenced source-of-truth files.
   - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
-- `tool-docker-creator`
-  - purpose: create `userdocker` containers
-  - entry: `tool-docker-creator/cmd/server/main.go`
+- `user-docker-manager`
+  - purpose: system-level `userdocker` manager (list/create/remove/restart/interface discovery)
+  - entry: `user-docker-manager/cmd/server/main.go`
   - host exposed: no
+  - note: registers to orchestrator as component name `user-docker-manager`
+  - note: enforces `userdocker.v1` interface contract when creating userdocker containers
 - `env-golang`
   - purpose: execute Go code (`go run`)
   - entry: `env-golang/cmd/server/main.go`
@@ -96,6 +98,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
   - compose behavior: `sleep infinity` placeholder container
+  - note: exposes public descriptor `GET /api/v1/userdocker/interface` (contract `userdocker.v1`)
 
 ## 4) Env Variables (grouped, minimal)
 
@@ -105,7 +108,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
   - localhost model endpoints are rewritten by `chatmodel` to `host.docker.internal`
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `TOOL_DOCKER_CREATOR_PORT`, `ENV_GOLANG_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `ENV_GOLANG_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
 - Health loop:
@@ -134,15 +137,17 @@ Read this first, then read only the referenced source-of-truth files.
 - Runtime discovers capabilities per chat run from `GET /api/v1/components` on orchestrator.
 - Only components with `status=healthy` are considered.
 - Tool mapping:
-  - `type=tool` + capability `create_container` -> tool `docker_create_userdocker` (endpoint `/api/v1/tools/docker-create`)
+  - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
   - `type=environment` + capability `run_go` -> tool `run_go_code` (endpoint `/api/v1/environments/golang/run`)
 - Degrade behavior:
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
 - Quick diagnostics:
   - check components: `curl -s http://localhost:8080/api/v1/components`
+  - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
+  - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
   - check env route: `curl -s -X POST http://localhost:8080/api/v1/environments/golang/run ...`
-  - ask runtime via chat to list tool names and confirm `run_go_code` is visible.
+  - ask runtime via chat to list tool names and confirm `manage_user_docker` and `run_go_code` are visible.
 
 ## 8) Mandatory Update Policy
 

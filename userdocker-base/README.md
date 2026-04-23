@@ -17,17 +17,21 @@ component_registration:
   type: COMPONENT_TYPE
   capabilities:
     - long_running
+    - introspection
+    - userdocker.v1
   meta:
-    origin: tool-docker-creator
+    origin: user-docker-manager
+    interface_version: userdocker.v1
 last_verified_from:
   - docker-compose.yml
   - userdocker-base/main.go
 ```
 
 ## Purpose
-- Provides a tiny HTTP service image intended to be spawned dynamically by `tool-docker-creator`.
+- Provides a tiny HTTP service image intended to be spawned dynamically by the user-docker-manager.
 - Optionally self-registers to orchestrator when `ORCHESTRATOR_URL` is provided.
 - In compose, it is kept running as a build/helper container (`sleep infinity`).
+- Implements the public `userdocker.v1` interface descriptor endpoint.
 
 ## External API
 ### Endpoint: GET /health
@@ -50,6 +54,21 @@ request: none
 response:
   content_type: text/plain
   body: "userdocker <name> (type=<type>)"
+error_behavior: standard_http_status
+```
+
+### Endpoint: GET /api/v1/userdocker/interface
+```yaml
+method: GET
+path: /api/v1/userdocker/interface
+request: none
+response:
+  interface_version: userdocker.v1
+  service_name: string
+  service_type: userdocker
+  description: string
+  endpoints: {method,path,description}[]
+  capabilities: {name,description}[]
 error_behavior: standard_http_status
 ```
 
@@ -107,10 +126,10 @@ query_to_endpoint:
   health: GET /health
   root_info: GET /
 used_by:
-  tool-docker-creator: as_default_spawn_image
+  user-docker-manager: as_default_spawn_image
 ```
 
 ## Change Safety
-- Keep backward-compatible self-registration payload keys (`name`, `type`, `endpoint`, `health_endpoint`, `capabilities`, `meta`).
+- Keep self-registration payload keys (`name`, `type`, `endpoint`, `health_endpoint`, `capabilities`, `meta`) stable across all userdocker implementations.
 - Compose helper behavior (`sleep infinity`) should not be mistaken for production spawned container behavior.
 - Endpoint host is built from `COMPONENT_NAME`; changing this affects discoverability.

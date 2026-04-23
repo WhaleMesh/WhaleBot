@@ -108,6 +108,25 @@ func (r *Registry) FirstHealthyByType(t string) *Component {
 	return nil
 }
 
+// FirstHealthyByCapability returns the first healthy component containing the
+// requested capability.
+func (r *Registry) FirstHealthyByCapability(capability string) *Component {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, c := range r.components {
+		if c.Status != StatusHealthy {
+			continue
+		}
+		for _, cap := range c.Capabilities {
+			if cap == capability {
+				cp := *c
+				return &cp
+			}
+		}
+	}
+	return nil
+}
+
 // All returns a raw reference slice (do not mutate). Used by health loop.
 func (r *Registry) snapshotForHealthcheck() []*Component {
 	r.mu.RLock()

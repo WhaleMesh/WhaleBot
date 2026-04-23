@@ -23,6 +23,26 @@ type registerRequest struct {
 	Meta           map[string]string `json:"meta"`
 }
 
+type interfaceEndpoint struct {
+	Method      string `json:"method"`
+	Path        string `json:"path"`
+	Description string `json:"description"`
+}
+
+type interfaceCapability struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type interfaceDescriptor struct {
+	InterfaceVersion string                `json:"interface_version"`
+	ServiceName      string                `json:"service_name"`
+	ServiceType      string                `json:"service_type"`
+	Description      string                `json:"description"`
+	Endpoints        []interfaceEndpoint   `json:"endpoints"`
+	Capabilities     []interfaceCapability `json:"capabilities"`
+}
+
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -38,6 +58,21 @@ func main() {
 	port := getenv("PORT", "9000")
 	orchURL := getenv("ORCHESTRATOR_URL", "")
 	self := "http://" + name + ":" + port
+	intf := interfaceDescriptor{
+		InterfaceVersion: "userdocker.v1",
+		ServiceName:      name,
+		ServiceType:      ctype,
+		Description:      "Default userdocker implementation for WhalesBot MVP.",
+		Endpoints: []interfaceEndpoint{
+			{Method: "GET", Path: "/", Description: "Basic service info output."},
+			{Method: "GET", Path: "/health", Description: "Health probe endpoint."},
+			{Method: "GET", Path: "/api/v1/userdocker/interface", Description: "Returns public userdocker interface descriptor."},
+		},
+		Capabilities: []interfaceCapability{
+			{Name: "introspection", Description: "Provides public interface descriptor endpoint."},
+			{Name: "long_running", Description: "Supports long-running container workloads."},
+		},
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -51,6 +86,10 @@ func main() {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, "userdocker %s (type=%s)\n", name, ctype)
 	})
+	mux.HandleFunc("/api/v1/userdocker/interface", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(intf)
+	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -62,8 +101,12 @@ func main() {
 			Version:        "0.1.0",
 			Endpoint:       self,
 			HealthEndpoint: self + "/health",
-			Capabilities:   []string{"long_running"},
-			Meta:           map[string]string{"origin": "tool-docker-creator"},
+			Capabilities:   []string{"long_running", "introspection", "userdocker.v1"},
+			Meta: map[string]string{
+				"origin":             "user-docker-manager",
+				"interface_version":  intf.InterfaceVersion,
+				"interface_endpoint": self + "/api/v1/userdocker/interface",
+			},
 		})
 	} else {
 		slog.Warn("ORCHESTRATOR_URL empty; will not self-register")

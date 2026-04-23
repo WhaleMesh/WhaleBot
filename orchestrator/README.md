@@ -133,10 +133,21 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
-### Endpoint: POST /api/v1/tools/docker-create
+### Endpoint: GET /api/v1/tools/user-dockers
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers?all=true|false
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: POST /api/v1/tools/user-dockers
 ```yaml
 method: POST
-path: /api/v1/tools/docker-create
+path: /api/v1/tools/user-dockers
 request:
   content_type: application/json
   body:
@@ -147,9 +158,54 @@ request:
     labels: object<string,string>
     network: string
     auto_register: boolean
-response: proxied_from_tool_service
+    port: int
+response: proxied_from_user_docker_manager
 error_behavior:
-  no_tool_component: http_503
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: DELETE /api/v1/tools/user-dockers/{name}
+```yaml
+method: DELETE
+path: /api/v1/tools/user-dockers/{name}?force=true|false
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: POST /api/v1/tools/user-dockers/{name}/restart
+```yaml
+method: POST
+path: /api/v1/tools/user-dockers/{name}/restart?timeout_sec=10
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: GET /api/v1/tools/user-dockers/interface-contract
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/interface-contract
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: GET /api/v1/tools/user-dockers/{name}/interface
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/{name}/interface?port=9000
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
   upstream_failure: propagated_or_502
 ```
 
@@ -173,6 +229,7 @@ error_behavior:
 - `chatmodel`: `/invoke`.
 - `worker`: `/run` when a healthy worker exists.
 - Generic proxy to `tool` and `environment` components by type lookup.
+- User docker operations route by capability lookup (`userdocker_*`) to the manager component.
 
 ## Environment Variables
 ### ORCHESTRATOR_PORT
@@ -216,7 +273,12 @@ query_to_endpoint:
   register_component: POST /api/v1/components/register
   chat: POST /api/v1/chat
   list_components: GET /api/v1/components
-  create_container_tool: POST /api/v1/tools/docker-create
+  list_userdockers: GET /api/v1/tools/user-dockers
+  create_userdocker: POST /api/v1/tools/user-dockers
+  remove_userdocker: DELETE /api/v1/tools/user-dockers/{name}
+  restart_userdocker: POST /api/v1/tools/user-dockers/{name}/restart
+  userdocker_contract: GET /api/v1/tools/user-dockers/interface-contract
+  userdocker_interface: GET /api/v1/tools/user-dockers/{name}/interface
   run_go_code: POST /api/v1/environments/golang/run
 ```
 

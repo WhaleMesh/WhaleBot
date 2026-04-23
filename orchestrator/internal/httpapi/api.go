@@ -55,7 +55,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/logs/recent", s.handleLogsRecent)
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
-		r.Post("/tools/docker-create", s.handleDockerCreate)
+		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
+		r.Get("/tools/user-dockers", s.handleUserDockerList)
+		r.Post("/tools/user-dockers", s.handleUserDockerCreate)
+		r.Get("/tools/user-dockers/{name}/interface", s.handleUserDockerInterface)
+		r.Delete("/tools/user-dockers/{name}", s.handleUserDockerRemove)
+		r.Post("/tools/user-dockers/{name}/restart", s.handleUserDockerRestart)
 		r.Post("/environments/golang/run", s.handleGolangRun)
 	})
 	return r
@@ -216,22 +221,82 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleDockerCreate(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByType("tool")
-	if tool == nil {
-		writeError(w, 503, "no healthy tool service")
-		return
-	}
-	s.proxyPost(w, r, tool.Endpoint+"/create_container")
-}
-
 func (s *Server) handleGolangRun(w http.ResponseWriter, r *http.Request) {
-	env := s.Registry.FirstHealthyByType("environment")
+	env := s.Registry.FirstHealthyByCapability("run_go")
 	if env == nil {
 		writeError(w, 503, "no healthy environment service")
 		return
 	}
 	s.proxyPost(w, r, env.Endpoint+"/run")
+}
+
+func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_interface_contract")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/interface-contract")
+}
+
+func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_list")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers?"+r.URL.RawQuery)
+}
+
+func (s *Server) handleUserDockerCreate(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_create")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers")
+}
+
+func (s *Server) handleUserDockerInterface(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_interface_discovery")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/interface", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerRemove(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_remove")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyDelete(w, r, target)
+}
+
+func (s *Server) handleUserDockerRestart(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_restart")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/restart", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyPost(w, r, target)
 }
 
 // --- helpers ---
@@ -313,6 +378,16 @@ func (s *Server) proxyPost(w http.ResponseWriter, r *http.Request, target string
 	s.doProxy(w, req)
 }
 
+func (s *Server) proxyDelete(w http.ResponseWriter, r *http.Request, target string) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete, target, nil)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
 func (s *Server) doProxy(w http.ResponseWriter, req *http.Request) {
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
@@ -360,4 +435,3 @@ func randomHex(n int) string {
 	_, _ = rand.Read(b)
 	return "trace_" + hex.EncodeToString(b)
 }
-

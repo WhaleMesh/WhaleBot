@@ -1,4 +1,4 @@
-module github.com/whalesbot/tooldockercreator
+module github.com/whalesbot/userdockermanager
 
 go 1.22
 
