@@ -12,7 +12,7 @@ export function renderMarkdown(md) {
 
   const fenced = [];
   let working = String(md).replace(/```(?:[a-zA-Z0-9_+-]+)?\n([\s\S]*?)```/g, (_, code) => {
-    const token = `__CODE_BLOCK_${fenced.length}__`;
+    const token = `CODEBLOCKTOKEN${fenced.length}END`;
     fenced.push(`<pre><code>${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`);
     return token;
   });
@@ -43,7 +43,7 @@ export function renderMarkdown(md) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 
   for (let i = 0; i < fenced.length; i += 1) {
-    working = working.replace(`__CODE_BLOCK_${i}__`, fenced[i]);
+    working = working.replace(`CODEBLOCKTOKEN${i}END`, fenced[i]);
   }
 
   return working.replace(/\n/g, '<br/>');

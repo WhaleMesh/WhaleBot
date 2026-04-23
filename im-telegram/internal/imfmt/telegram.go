@@ -36,7 +36,7 @@ func MarkdownToTelegramHTML(md string) string {
 		if len(sub) > 1 {
 			code = sub[1]
 		}
-		token := "__TG_CODE_BLOCK_" + strings.Repeat("X", len(blocks)+1) + "__"
+		token := "TGCODEBLOCKTOKEN" + strings.Repeat("X", len(blocks)+1) + "END"
 		blocks = append(blocks, block{
 			token: token,
 			html:  "<pre><code>" + html.EscapeString(strings.TrimSuffix(code, "\n")) + "</code></pre>",

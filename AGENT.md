@@ -60,6 +60,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `im-telegram/cmd/server/main.go`
   - host exposed: no
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
+  - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
 - `tool-docker-creator`
