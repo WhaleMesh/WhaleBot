@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -47,7 +49,6 @@ type chatResponse struct {
 type chatState struct {
 	CurrentSessionID string
 	Ended            bool
-	Seq              int
 }
 
 type commandResult struct {
@@ -73,7 +74,6 @@ func (m *conversationManager) getOrCreate(chatID int64) *chatState {
 	st = &chatState{
 		CurrentSessionID: base,
 		Ended:            false,
-		Seq:              0,
 	}
 	m.chats[chatID] = st
 	return st
@@ -96,10 +96,18 @@ func (m *conversationManager) newSession(chatID int64) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	st := m.getOrCreate(chatID)
-	st.Seq++
 	st.Ended = false
-	st.CurrentSessionID = fmt.Sprintf("%d-%d", chatID, st.Seq)
+	st.CurrentSessionID = buildSessionID(chatID)
 	return st.CurrentSessionID
+}
+
+func buildSessionID(chatID int64) string {
+	randomPart := "fallback"
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err == nil {
+		randomPart = hex.EncodeToString(buf)
+	}
+	return fmt.Sprintf("%d-%d-%s", chatID, time.Now().UnixMilli(), randomPart)
 }
 
 func (m *conversationManager) endSession(chatID int64) string {

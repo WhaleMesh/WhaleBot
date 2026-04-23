@@ -56,6 +56,7 @@ error_behavior: standard_http_status
 
 Notes:
 - Session switching is managed inside `im-telegram` (in-memory state per Telegram chat).
+- `/new` now generates a unique logical session key in format `chatID-timestamp-randomhex` to avoid reusing old IDs after service restarts.
 - Session history content stays as standard Markdown in backend storage; only Telegram egress rendering is converted.
 
 ## Environment Variables
