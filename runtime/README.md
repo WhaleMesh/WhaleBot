@@ -30,6 +30,7 @@ last_verified_from:
 - Dynamically discovers healthy tool/environment components from orchestrator before each run.
 - Calls `chatmodel` with dynamically built tool definitions and executes returned tool calls.
 - Persists final user+assistant pair into `session`.
+- Emits structured tool lifecycle events (`tool_call_start`, `tool_call_end`, `tool_call_error`) with full args/result payloads for diagnosis.
 
 ## External API
 ### Endpoint: GET /health
@@ -81,6 +82,8 @@ error_behavior:
   - `GET /api/v1/tools/user-dockers/{name}/interface` for `manage_user_docker(action=get_interface)`
   - `POST /api/v1/environments/golang/run` for `run_go_code`
   - `POST /api/v1/components/register` for self-registration
+- `logger` (when discovered via capability `events_write`):
+  - `POST /events` for structured runtime/tool trace events
 
 ## Environment Variables
 ### RUNTIME_PORT
@@ -161,3 +164,4 @@ internal_tool_name_map:
 - Keep `POST /run` schema aligned with orchestrator `/api/v1/chat` payload.
 - Do not remove session writeback (`append_messages`) or chat history continuity breaks.
 - Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync.
+- Tool event fields (`trace_id`, `session_id`, `module`, `phase`, `tool_name`, `tool_call_id`, `step`, `duration_ms`, `args`, `result`) are consumed by Logger diagnostics; keep them stable.

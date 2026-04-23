@@ -55,6 +55,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `runtime/cmd/server/main.go`
   - host exposed: no
   - note: discovers healthy tool/environment components via orchestrator and builds tool list per run
+  - note: emits structured tool lifecycle events (`tool_call_start` / `tool_call_end` / `tool_call_error`) and writes to `logger` when available
 - `im-telegram`
   - purpose: Telegram gateway
   - entry: `im-telegram/cmd/server/main.go`
@@ -92,6 +93,7 @@ Read this first, then read only the referenced source-of-truth files.
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
   - note: router is hash-based so refresh keeps current page
   - note: includes dedicated `Logger` page in addition to overview logs
+  - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
 - `userdocker-base`
@@ -144,6 +146,7 @@ Read this first, then read only the referenced source-of-truth files.
   - Tool calls without healthy backing component must return explicit unavailable errors.
 - Quick diagnostics:
   - check components: `curl -s http://localhost:8080/api/v1/components`
+  - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
   - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
   - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
   - check env route: `curl -s -X POST http://localhost:8080/api/v1/environments/golang/run ...`

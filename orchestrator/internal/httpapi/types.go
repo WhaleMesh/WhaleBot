@@ -91,6 +91,20 @@ type UserDockerListResponse struct {
 	Error      string           `json:"error,omitempty"`
 }
 
+type LoggerEvent struct {
+	ID      int64             `json:"id,omitempty"`
+	Time    time.Time         `json:"time"`
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields,omitempty"`
+}
+
+type LoggerEventsRecentResponse struct {
+	Success bool          `json:"success"`
+	Events  []LoggerEvent `json:"events,omitempty"`
+	Error   string        `json:"error,omitempty"`
+}
+
 type GolangRunRequest struct {
 	Code       string `json:"code"`
 	TimeoutSec int    `json:"timeout_sec,omitempty"`

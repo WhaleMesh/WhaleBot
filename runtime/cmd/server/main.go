@@ -181,6 +181,7 @@ type availableRoutes struct {
 	CanUserDockerRestart bool
 	CanUserDockerInspect bool
 	CanRunGo             bool
+	LoggerWriteEndpoint  string
 }
 
 func main() {
@@ -284,7 +285,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs = append(msgs, cmMessage{Role: "user", Content: req.Message})
 
-	finalText, totalUsage, err := s.reactLoop(r.Context(), msgs, routes)
+	finalText, totalUsage, err := s.reactLoop(r.Context(), msgs, routes, traceID, sessionID)
 	if err != nil {
 		slog.Error("react loop failed", "err", err, "trace_id", traceID)
 		writeJSON(w, 200, chatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
@@ -400,7 +401,7 @@ func goRunToolDefinition() map[string]any {
 	}
 }
 
-func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes) (string, *usage, error) {
+func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string) (string, *usage, error) {
 	tools := make([]map[string]any, 0, 2)
 	if routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect {
 		tools = append(tools, userDockerManagerToolDefinition())
@@ -450,9 +451,63 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			if tc.Type == "" {
 				tc.Type = "function"
 			}
+			callStart := time.Now()
+			startFields := map[string]string{
+				"trace_id":     traceID,
+				"session_id":   sessionID,
+				"module":       "tool",
+				"phase":        "start",
+				"tool_name":    tc.Function.Name,
+				"tool_call_id": tc.ID,
+				"step":         strconv.Itoa(step + 1),
+				"args":         tc.Function.Arguments,
+			}
+			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "tool_call_start", startFields)
+
 			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments)
+			durationMS := time.Since(callStart).Milliseconds()
 			if err != nil {
 				resText = toolJSON(false, nil, err.Error())
+				errFields := map[string]string{
+					"trace_id":      traceID,
+					"session_id":    sessionID,
+					"module":        "tool",
+					"phase":         "error",
+					"tool_name":     tc.Function.Name,
+					"tool_call_id":  tc.ID,
+					"step":          strconv.Itoa(step + 1),
+					"duration_ms":   strconv.FormatInt(durationMS, 10),
+					"args":          tc.Function.Arguments,
+					"result":        resText,
+					"error_message": err.Error(),
+				}
+				s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "error", "tool_call_error", errFields)
+			} else {
+				ok, errMsg := decodeToolResult(resText)
+				phase := "end"
+				level := "info"
+				eventName := "tool_call_end"
+				if !ok {
+					phase = "error"
+					level = "warn"
+					eventName = "tool_call_error"
+				}
+				endFields := map[string]string{
+					"trace_id":     traceID,
+					"session_id":   sessionID,
+					"module":       "tool",
+					"phase":        phase,
+					"tool_name":    tc.Function.Name,
+					"tool_call_id": tc.ID,
+					"step":         strconv.Itoa(step + 1),
+					"duration_ms":  strconv.FormatInt(durationMS, 10),
+					"args":         tc.Function.Arguments,
+					"result":       resText,
+				}
+				if errMsg != "" {
+					endFields["error_message"] = errMsg
+				}
+				s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, level, eventName, endFields)
 			}
 			msgs = append(msgs, cmMessage{
 				Role:       "tool",
@@ -916,9 +971,80 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 					Capabilities: c.Capabilities,
 				})
 			}
+		case "logger":
+			if hasCapability(c.Capabilities, "events_write") {
+				routes.LoggerWriteEndpoint = c.Endpoint
+			}
 		}
 	}
 	return catalog, routes, nil
+}
+
+func (s *reactService) emitRuntimeEvent(ctx context.Context, loggerEndpoint, level, message string, fields map[string]string) {
+	if fields == nil {
+		fields = map[string]string{}
+	}
+	slog.Log(ctx, toSlogLevel(level), message, anyPairs(fields)...)
+	if loggerEndpoint == "" {
+		return
+	}
+	payload := map[string]any{
+		"time":    time.Now(),
+		"level":   level,
+		"message": message,
+		"fields":  fields,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		slog.Warn("runtime event marshal failed", "err", err)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loggerEndpoint+"/events", bytes.NewReader(body))
+	if err != nil {
+		slog.Warn("runtime event request failed", "err", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.http.Do(req)
+	if err != nil {
+		slog.Warn("runtime event emit failed", "err", err, "logger_endpoint", loggerEndpoint)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		slog.Warn("runtime event emit rejected", "status", resp.StatusCode, "body", truncate(string(b), 500))
+	}
+}
+
+func toSlogLevel(level string) slog.Level {
+	switch level {
+	case "error":
+		return slog.LevelError
+	case "warn":
+		return slog.LevelWarn
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func anyPairs(m map[string]string) []any {
+	out := make([]any, 0, len(m)*2)
+	for k, v := range m {
+		out = append(out, k, v)
+	}
+	return out
+}
+
+func decodeToolResult(raw string) (ok bool, errMsg string) {
+	var payload struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return true, ""
+	}
+	return payload.Success, payload.Error
 }
 
 func hasCapability(caps []string, target string) bool {

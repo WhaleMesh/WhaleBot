@@ -109,6 +109,17 @@ response:
 error_behavior: standard_http_status
 ```
 
+### Endpoint: GET /api/v1/logger/events/recent
+```yaml
+method: GET
+path: /api/v1/logger/events/recent?limit=200
+request: none
+response: proxied_from_logger_events_recent
+error_behavior:
+  no_logger_component: http_503
+  upstream_failure: propagated_or_502
+```
+
 ### Endpoint: GET /api/v1/sessions
 ```yaml
 method: GET
@@ -273,6 +284,7 @@ query_to_endpoint:
   register_component: POST /api/v1/components/register
   chat: POST /api/v1/chat
   list_components: GET /api/v1/components
+  list_persistent_logger_events: GET /api/v1/logger/events/recent
   list_userdockers: GET /api/v1/tools/user-dockers
   create_userdocker: POST /api/v1/tools/user-dockers
   remove_userdocker: DELETE /api/v1/tools/user-dockers/{name}

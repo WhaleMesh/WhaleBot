@@ -53,6 +53,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/components", s.handleListComponents)
 		r.Post("/chat", s.handleChat)
 		r.Get("/logs/recent", s.handleLogsRecent)
+		r.Get("/logger/events/recent", s.handleLoggerEventsRecent)
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
@@ -98,6 +99,19 @@ func (s *Server) handleLogsRecent(w http.ResponseWriter, _ *http.Request) {
 		"success": true,
 		"logs":    s.Logs.Recent(),
 	})
+}
+
+func (s *Server) handleLoggerEventsRecent(w http.ResponseWriter, r *http.Request) {
+	loggerComp := s.Registry.FirstHealthyByCapability("events_recent")
+	if loggerComp == nil {
+		writeError(w, 503, "no healthy logger service")
+		return
+	}
+	target := loggerComp.Endpoint + "/events/recent"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {

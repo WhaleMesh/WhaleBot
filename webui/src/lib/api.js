@@ -19,6 +19,8 @@ export const api = {
   health: () => req("/health"),
   components: () => req("/api/v1/components"),
   logs: () => req("/api/v1/logs/recent"),
+  loggerEvents: (limit = 200) =>
+    req(`/api/v1/logger/events/recent?limit=${encodeURIComponent(limit)}`),
   sessions: () => req("/api/v1/sessions"),
   session: (id) => req("/api/v1/sessions/" + encodeURIComponent(id)),
   chat: (body) =>

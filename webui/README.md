@@ -46,6 +46,7 @@ error_behavior: standard_http_status_from_caddy
   - `GET /health`
   - `GET /api/v1/components`
   - `GET /api/v1/logs/recent`
+  - `GET /api/v1/logger/events/recent`
   - `GET /api/v1/sessions`
   - `GET /api/v1/sessions/{id}`
   - `POST /api/v1/chat`
@@ -63,7 +64,10 @@ error_behavior: standard_http_status_from_caddy
   - Current item: `User Docker Manager`.
 - `Envs` page is a selector list for environment test pages.
   - Current item: `Env · Go`.
-- `Logger` page provides a dedicated full log stream view for recent orchestrator logs.
+- `Logger` page provides dual-source diagnostics:
+  - persistent logger events from `GET /api/v1/logger/events/recent`
+  - recent orchestrator ring logs from `GET /api/v1/logs/recent`
+- `Logger` page supports fine-grained filters (`module`, `tool_name`, `trace_id`, `level`, `phase`, time window) and tool-call flow grouping by `trace_id + tool_call_id`.
 - `Sessions` detail page renders Markdown and displays extra diagnostics when available:
   - message timestamps
   - real token usage (`prompt_tokens` / `completion_tokens` / `total_tokens`) when available
