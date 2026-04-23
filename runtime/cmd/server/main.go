@@ -17,7 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/worker/internal/registerclient"
+	"github.com/whalesbot/runtime/internal/registerclient"
 )
 
 func getenv(k, def string) string {
@@ -37,11 +37,11 @@ func getenvInt(k string, def int) int {
 }
 
 type chatRequest struct {
-	UserID   string `json:"user_id"`
-	Channel  string `json:"channel"`
-	ChatID   string `json:"chat_id"`
-	Message  string `json:"message"`
-	TraceID  string `json:"trace_id,omitempty"`
+	UserID  string `json:"user_id"`
+	Channel string `json:"channel"`
+	ChatID  string `json:"chat_id"`
+	Message string `json:"message"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 type chatResponse struct {
@@ -98,11 +98,11 @@ type dockerCreateResp struct {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("WORKER_PORT", "8085")
+	port := getenv("RUNTIME_PORT", "8085")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	sessionURL := getenv("SESSION_URL", "http://session:8090")
 	chatmodelURL := getenv("CHATMODEL_URL", "http://chatmodel:8081")
-	selfHost := getenv("SERVICE_HOST", "worker")
+	selfHost := getenv("SERVICE_HOST", "runtime")
 	self := "http://" + selfHost + ":" + port
 	maxSteps := getenvInt("REACT_MAX_STEPS", 8)
 
@@ -116,7 +116,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, map[string]any{"status": "ok", "service": "worker"})
+		writeJSON(w, 200, map[string]any{"status": "ok", "service": "runtime"})
 	})
 	r.Post("/run", svc.handleRun)
 
@@ -124,18 +124,18 @@ func main() {
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "worker",
-		Type:           "worker",
+		Name:           "runtime",
+		Type:           "runtime",
 		Version:        "0.1.0",
 		Endpoint:       self,
 		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"react_chat", "run"},
+		Capabilities:   []string{"react_chat", "run", "tool_manifest_consumer"},
 	})
 	rc.Start(ctx)
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("worker listening", "port", port, "max_steps", maxSteps)
+		slog.Info("runtime listening", "port", port, "max_steps", maxSteps)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)
@@ -320,13 +320,13 @@ func (s *reactService) dispatchTool(ctx context.Context, name, argsJSON string) 
 
 func (s *reactService) dockerCreate(ctx context.Context, argsJSON string) (string, error) {
 	var args struct {
-		Name          string            `json:"name"`
-		Image         string            `json:"image"`
-		Cmd           []string          `json:"cmd"`
-		Env           map[string]string `json:"env"`
-		Labels        map[string]string `json:"labels"`
-		Network       string            `json:"network"`
-		AutoRegister  *bool             `json:"auto_register"`
+		Name         string            `json:"name"`
+		Image        string            `json:"image"`
+		Cmd          []string          `json:"cmd"`
+		Env          map[string]string `json:"env"`
+		Labels       map[string]string `json:"labels"`
+		Network      string            `json:"network"`
+		AutoRegister *bool             `json:"auto_register"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return toolJSON(false, nil, "invalid tool arguments: "+err.Error()), nil

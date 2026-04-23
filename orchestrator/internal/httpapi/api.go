@@ -133,7 +133,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	traceID := randomHex(8)
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
-	if wk := s.Registry.FirstHealthyByType("worker"); wk != nil {
+		if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
 		req.TraceID = traceID
 		body, err := json.Marshal(req)
 		if err != nil {
@@ -148,8 +148,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		r2.Header.Set("Content-Type", "application/json")
 		resp, err := s.HTTP.Do(r2)
 		if err != nil {
-			s.log("error", "worker proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-			writeJSON(w, 200, ChatResponse{Success: false, Error: "worker: " + err.Error(), TraceID: traceID, SessionID: sessionID})
+					s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+					writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
 			return
 		}
 		defer resp.Body.Close()
