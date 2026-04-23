@@ -78,7 +78,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `workspace/cmd/server/main.go`
   - host exposed: no
 - `webui`
-  - purpose: Svelte dashboard via nginx
+  - purpose: Svelte dashboard via caddy
   - entry: `webui/src/main.js`
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
 - `userdocker-base`

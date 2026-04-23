@@ -8,7 +8,7 @@ compose_service: webui
 image: whalesbot/webui:latest
 build_context: ./webui
 owner: tbd
-runtime: static_frontend_served_by_nginx
+runtime: static_frontend_served_by_caddy
 default_port: 80
 health_endpoint: GET /
 component_registration:
@@ -37,7 +37,7 @@ request: none
 response:
   content_type: text/html
   body: web_dashboard_app
-error_behavior: standard_http_status_from_nginx
+error_behavior: standard_http_status_from_caddy
 ```
 
 ## Internal Calls
@@ -74,6 +74,20 @@ effect: host_port_mapping_to_container_port_80_in_compose
 - healthcheck: `wget http://localhost/`.
 - volumes: none.
 - security_notes: frontend trusts configured orchestrator URL; CORS and host reachability must match deployment.
+
+## Gateway Layering Notes (Outer Caddy/Nginx)
+
+- Current inner server is Caddy inside the `webui` container.
+- Using an outer gateway (Caddy, nginx, ingress) in front of `webui` is supported and does not conflict.
+- Recommended responsibility split:
+  - inner Caddy: static files + SPA fallback + runtime `env.js` serving.
+  - outer gateway: TLS, domain routing, auth, rate limit, access logs, WAF-like policies.
+- Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:8080` in public deployments).
+- Keep `/env.js` non-cached (`Cache-Control: no-store`) so runtime endpoint changes can take effect without rebuilding.
+- If deploying under a path prefix (for example `/whalesbot/`), align:
+  - frontend base path build/runtime config
+  - outer gateway path rewrite rules
+  - API base URL exposed to browsers
 
 ## AI Lookup Hints
 ```yaml
