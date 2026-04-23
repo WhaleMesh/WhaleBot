@@ -8,11 +8,13 @@
   import ToolDockerCreate from './views/ToolDockerCreate.svelte';
   import Envs from './views/Envs.svelte';
   import EnvGo from './views/EnvGo.svelte';
+  import Logger from './views/Logger.svelte';
 
   const nav = [
     { id: 'overview', label: 'Overview' },
     { id: 'components', label: 'Components' },
     { id: 'sessions', label: 'Sessions' },
+    { id: 'logger', label: 'Logger' },
     { id: 'tools', label: 'Tools' },
     { id: 'envs', label: 'Envs' },
   ];
@@ -37,6 +39,8 @@
       <Components />
     {:else if $route.name === 'sessions'}
       <Sessions />
+    {:else if $route.name === 'logger'}
+      <Logger />
     {:else if $route.name === 'session'}
       <SessionDetail sessionId={$route.params.id} />
     {:else if $route.name === 'tools'}

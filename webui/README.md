@@ -53,14 +53,18 @@ error_behavior: standard_http_status_from_caddy
   - `POST /api/v1/environments/golang/run`
 
 ## UI Navigation Model
+- Router uses hash-based URLs so browser refresh keeps the current page and detail context.
 - `Tools` page is a selector list for tool test pages.
   - Current item: `Docker Creator`.
 - `Envs` page is a selector list for environment test pages.
   - Current item: `Env · Go`.
+- `Logger` page provides a dedicated full log stream view for recent orchestrator logs.
 - `Sessions` detail page renders Markdown and displays extra diagnostics when available:
   - message timestamps
   - real token usage (`prompt_tokens` / `completion_tokens` / `total_tokens`) when available
   - real assistant reply latency
+  - sticky top header/meta block for quick back navigation and status visibility
+  - auto-scroll to newest message only when user is already near page bottom
 
 ## Environment Variables
 ### ORCHESTRATOR_URL
