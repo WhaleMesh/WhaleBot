@@ -27,6 +27,7 @@ last_verified_from:
 - Provides the human-facing dashboard for component status, logs, sessions, and tool operations.
 - Calls orchestrator REST API from the browser.
 - Is not a backend component in the orchestrator registry.
+- Renders session content as standard Markdown (no IM-specific formatting conversion).
 
 ## External API
 ### Endpoint: GET /
@@ -50,6 +51,16 @@ error_behavior: standard_http_status_from_caddy
   - `POST /api/v1/chat`
   - `POST /api/v1/tools/docker-create`
   - `POST /api/v1/environments/golang/run`
+
+## UI Navigation Model
+- `Tools` page is a selector list for tool test pages.
+  - Current item: `Docker Creator`.
+- `Envs` page is a selector list for environment test pages.
+  - Current item: `Env · Go`.
+- `Sessions` detail page renders Markdown and displays extra diagnostics when available:
+  - message timestamps
+  - real token usage (`prompt_tokens` / `completion_tokens` / `total_tokens`) when available
+  - real assistant reply latency
 
 ## Environment Variables
 ### ORCHESTRATOR_URL

@@ -48,6 +48,12 @@ type ToolFunctionSpec struct {
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
 type Client struct {
 	BaseURL string
 	APIKey  string
@@ -110,6 +116,7 @@ type chatCompletionsResponse struct {
 			ToolCalls   []ToolCall      `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -156,9 +163,9 @@ func parseAssistantContent(raw json.RawMessage) string {
 
 // Invoke calls Chat Completions. When tools is non-empty they are passed through;
 // params may include "temperature", "max_tokens", "tool_choice" (e.g. "auto").
-func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, params map[string]any) (Message, error) {
+func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, params map[string]any) (Message, *Usage, error) {
 	if c.APIKey == "" {
-		return echoFallback(messages, tools), nil
+		return echoFallback(messages, tools), nil, nil
 	}
 	msgs := make([]any, 0, len(messages))
 	for i := range messages {
@@ -186,41 +193,41 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, p
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 	url := c.BaseURL + "/v1/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return Message{}, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return Message{}, nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 	var parsed chatCompletionsResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return Message{}, fmt.Errorf("decode: %w", err)
+		return Message{}, nil, fmt.Errorf("decode: %w", err)
 	}
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Message{}, errors.New(parsed.Error.Message)
+		return Message{}, nil, errors.New(parsed.Error.Message)
 	}
 	if len(parsed.Choices) == 0 {
-		return Message{}, errors.New("no choices in response")
+		return Message{}, nil, errors.New("no choices in response")
 	}
 	cm := parsed.Choices[0].Message
 	return Message{
 		Role:      cm.Role,
 		Content:   parseAssistantContent(cm.Content),
 		ToolCalls: cm.ToolCalls,
-	}, nil
+	}, parsed.Usage, nil
 }
 
 func echoFallback(messages []Message, tools []Tool) Message {

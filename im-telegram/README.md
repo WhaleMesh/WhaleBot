@@ -26,6 +26,7 @@ last_verified_from:
 ## Purpose
 - Receives Telegram user messages via long-poll and forwards them to orchestrator chat API.
 - Sends orchestrator replies back to Telegram chats.
+- Converts standard Markdown replies into Telegram-friendly HTML before sending (IM-specific render adapter).
 - Exposes only a health endpoint for infrastructure checks.
 
 ## External API
@@ -102,3 +103,4 @@ upstream_chat_target:
 - Keep Telegram forward payload fields (`user_id`, `channel`, `chat_id`, `message`) unchanged.
 - Preserve behavior when `TELEGRAM_BOT_TOKEN` is empty (non-failing degraded mode).
 - Do not add blocking logic on health endpoint; infra checks depend on it.
+- Keep IM formatting conversion isolated to Telegram egress; do not rewrite session storage content.

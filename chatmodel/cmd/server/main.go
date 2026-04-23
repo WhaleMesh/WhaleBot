@@ -32,6 +32,7 @@ type invokeRequest struct {
 type invokeResponse struct {
 	Success bool           `json:"success"`
 	Message openai.Message `json:"message"`
+	Usage   *openai.Usage  `json:"usage,omitempty"`
 	Error   string         `json:"error,omitempty"`
 }
 
@@ -60,13 +61,13 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(req.Context(), 60*time.Second)
 		defer cancel()
-		msg, err := client.Invoke(ctx, ir.Messages, ir.Tools, ir.Params)
+		msg, usage, err := client.Invoke(ctx, ir.Messages, ir.Tools, ir.Params)
 		if err != nil {
 			slog.Error("invoke failed", "err", err)
 			writeJSON(w, 200, invokeResponse{Success: false, Error: err.Error()})
 			return
 		}
-		writeJSON(w, 200, invokeResponse{Success: true, Message: msg})
+		writeJSON(w, 200, invokeResponse{Success: true, Message: msg, Usage: usage})
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

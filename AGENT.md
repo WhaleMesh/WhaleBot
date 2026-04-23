@@ -45,6 +45,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
   - host exposed: no
+  - note: message metadata may include real `prompt_tokens` / `completion_tokens` / `total_tokens` and `reply_latency_ms` when upstream provides usage
 - `chatmodel`
   - purpose: OpenAI-compatible chat completions client
   - entry: `chatmodel/cmd/server/main.go`
@@ -57,6 +58,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Telegram gateway
   - entry: `im-telegram/cmd/server/main.go`
   - host exposed: no
+  - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
 - `tool-docker-creator`
   - purpose: create `userdocker` containers
   - entry: `tool-docker-creator/cmd/server/main.go`
@@ -81,6 +83,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Svelte dashboard via caddy
   - entry: `webui/src/main.js`
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`

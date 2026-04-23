@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/whalesbot/imtelegram/internal/imfmt"
 	"github.com/whalesbot/imtelegram/internal/registerclient"
 )
 
@@ -122,7 +123,10 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 				slog.Error("orchestrator chat failed", "err", err)
 				reply = "抱歉，我暂时无法回应：" + err.Error()
 			}
-			out := tgbotapi.NewMessage(msg.Chat.ID, reply)
+			// Keep session storage in standard markdown; conversion is IM-specific at send time.
+			out := tgbotapi.NewMessage(msg.Chat.ID, imfmt.MarkdownToTelegramHTML(reply))
+			out.ParseMode = "HTML"
+			out.DisableWebPagePreview = true
 			if _, err := bot.Send(out); err != nil {
 				slog.Error("telegram send failed", "err", err)
 			}

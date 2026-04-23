@@ -1,27 +1,27 @@
 <script>
   import { goto } from '../lib/route.js';
 
-  const tools = [
+  const envs = [
     {
-      id: 'docker-create',
-      name: 'Docker Creator',
-      desc: 'Test /api/v1/tools/docker-create and create userdocker containers.',
+      id: 'go',
+      name: 'Go Environment',
+      desc: 'Run Go code in env-golang via /api/v1/environments/golang/run.',
       status: 'available',
     },
   ];
 </script>
 
-<h1>Tools</h1>
-<p class="hint">Select a tool to open its dedicated test page.</p>
+<h1>Envs</h1>
+<p class="hint">Select an environment to open its dedicated test page.</p>
 
 <div class="grid">
-  {#each tools as t}
-    <button class="card" on:click={() => goto('tool', { id: t.id })}>
+  {#each envs as e}
+    <button class="card" on:click={() => goto('env', { id: e.id })}>
       <div class="row">
-        <h2>{t.name}</h2>
-        <span class="status {t.status}">{t.status}</span>
+        <h2>{e.name}</h2>
+        <span class="status {e.status}">{e.status}</span>
       </div>
-      <p>{t.desc}</p>
+      <p>{e.desc}</p>
     </button>
   {/each}
 </div>

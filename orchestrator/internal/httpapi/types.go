@@ -1,8 +1,15 @@
 package httpapi
 
+import "time"
+
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string    `json:"role"`
+	Content          string    `json:"content"`
+	Timestamp        time.Time `json:"timestamp,omitempty"`
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	TotalTokens      int       `json:"total_tokens,omitempty"`
+	ReplyLatencyMS   int64     `json:"reply_latency_ms,omitempty"`
 }
 
 type ChatRequest struct {
@@ -49,7 +56,14 @@ type ChatModelInvokeRequest struct {
 type ChatModelInvokeResponse struct {
 	Success bool    `json:"success"`
 	Message Message `json:"message"`
+	Usage   *Usage  `json:"usage,omitempty"`
 	Error   string  `json:"error,omitempty"`
+}
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type DockerCreateRequest struct {

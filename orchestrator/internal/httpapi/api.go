@@ -115,6 +115,7 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid json: "+err.Error())
@@ -133,7 +134,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	traceID := randomHex(8)
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
-		if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
+	if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
 		req.TraceID = traceID
 		body, err := json.Marshal(req)
 		if err != nil {
@@ -148,8 +149,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		r2.Header.Set("Content-Type", "application/json")
 		resp, err := s.HTTP.Do(r2)
 		if err != nil {
-					s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-					writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
+			s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+			writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
 			return
 		}
 		defer resp.Body.Close()
@@ -179,11 +180,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	invokeMsgs = append(invokeMsgs, history...)
 	invokeMsgs = append(invokeMsgs, userMsg)
 
-	assistantMsg, err := s.invokeChatModel(model.Endpoint, invokeMsgs)
+	assistantMsg, usage, err := s.invokeChatModel(model.Endpoint, invokeMsgs)
 	if err != nil {
 		s.log("error", "chatmodel invoke failed", map[string]string{"err": err.Error(), "trace_id": traceID})
 		writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
 		return
+	}
+
+	now := time.Now()
+	assistantMsg.Timestamp = now
+	assistantMsg.ReplyLatencyMS = now.Sub(start).Milliseconds()
+	userMsg.Timestamp = start
+	if usage != nil {
+		assistantMsg.PromptTokens = usage.PromptTokens
+		assistantMsg.CompletionTokens = usage.CompletionTokens
+		assistantMsg.TotalTokens = usage.TotalTokens
 	}
 
 	if err := s.appendMessages(sess.Endpoint, sessionID, []Message{userMsg, assistantMsg}); err != nil {
@@ -242,27 +253,27 @@ func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, error) {
 	return gr.Messages, nil
 }
 
-func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, error) {
+func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, *Usage, error) {
 	body, _ := json.Marshal(ChatModelInvokeRequest{
 		Messages: messages,
 		Params:   map[string]any{"temperature": 0.7, "max_tokens": 512},
 	})
 	resp, err := s.HTTP.Post(modelURL+"/invoke", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return Message{}, fmt.Errorf("chatmodel returned %d", resp.StatusCode)
+		return Message{}, nil, fmt.Errorf("chatmodel returned %d", resp.StatusCode)
 	}
 	var ir ChatModelInvokeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&ir); err != nil {
-		return Message{}, err
+		return Message{}, nil, err
 	}
 	if !ir.Success {
-		return Message{}, errors.New(ir.Error)
+		return Message{}, nil, errors.New(ir.Error)
 	}
-	return ir.Message, nil
+	return ir.Message, ir.Usage, nil
 }
 
 func (s *Server) appendMessages(sessionURL, sessionID string, msgs []Message) error {
@@ -349,3 +360,4 @@ func randomHex(n int) string {
 	_, _ = rand.Read(b)
 	return "trace_" + hex.EncodeToString(b)
 }
+

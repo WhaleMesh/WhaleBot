@@ -1,5 +1,6 @@
 <script>
   import { api } from '../lib/api.js';
+  import { goto } from '../lib/route.js';
 
   let code = `package main
 
@@ -25,7 +26,10 @@ func main() {
   }
 </script>
 
-<h1>Go Environment</h1>
+<div class="top">
+  <button class="back" on:click={() => goto('envs')}>← Back</button>
+  <h1>Env · Go</h1>
+</div>
 <p class="hint">Calls <code>/api/v1/environments/golang/run</code>. Code runs inside the <code>env-golang</code> container with a timeout.</p>
 
 <label>Timeout (seconds)<input type="number" min="1" max="30" bind:value={timeout} /></label>
@@ -58,7 +62,9 @@ func main() {
 {/if}
 
 <style>
-  h1 { margin-top: 0; }
+  .top { display: flex; align-items: center; gap: 0.75rem; }
+  h1 { margin: 0; }
+  .back { background: #1c2130; color: #dfe3ee; border: 1px solid #2d3448; border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; }
   .hint { color: #9aa3bb; margin-top: -0.25rem; }
   code { background: #1c2130; padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.85rem; }
   label { display: inline-flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: #c7cde0; margin-bottom: 0.5rem; }

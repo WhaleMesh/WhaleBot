@@ -53,8 +53,13 @@ type chatResponse struct {
 }
 
 type sessionMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string    `json:"role"`
+	Content          string    `json:"content"`
+	Timestamp        time.Time `json:"timestamp,omitempty"`
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	TotalTokens      int       `json:"total_tokens,omitempty"`
+	ReplyLatencyMS   int64     `json:"reply_latency_ms,omitempty"`
 }
 
 type toolCall struct {
@@ -76,7 +81,14 @@ type cmMessage struct {
 type invokeResponse struct {
 	Success bool      `json:"success"`
 	Message cmMessage `json:"message"`
+	Usage   *usage    `json:"usage,omitempty"`
 	Error   string    `json:"error,omitempty"`
+}
+
+type usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type dockerCreateBody struct {
@@ -155,6 +167,7 @@ type reactService struct {
 }
 
 func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 200, chatResponse{Success: false, Error: "invalid json: " + err.Error()})
@@ -191,15 +204,30 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs = append(msgs, cmMessage{Role: "user", Content: req.Message})
 
-	finalText, err := s.reactLoop(r.Context(), msgs)
+	finalText, totalUsage, err := s.reactLoop(r.Context(), msgs)
 	if err != nil {
 		slog.Error("react loop failed", "err", err, "trace_id", traceID)
 		writeJSON(w, 200, chatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
 		return
 	}
 
-	assistantMsg := sessionMessage{Role: "assistant", Content: finalText}
-	userStored := sessionMessage{Role: "user", Content: req.Message}
+	now := time.Now()
+	assistantMsg := sessionMessage{
+		Role:          "assistant",
+		Content:       finalText,
+		Timestamp:     now,
+		ReplyLatencyMS: now.Sub(start).Milliseconds(),
+	}
+	userStored := sessionMessage{
+		Role:      "user",
+		Content:   req.Message,
+		Timestamp: start,
+	}
+	if totalUsage != nil {
+		assistantMsg.PromptTokens = totalUsage.PromptTokens
+		assistantMsg.CompletionTokens = totalUsage.CompletionTokens
+		assistantMsg.TotalTokens = totalUsage.TotalTokens
+	}
 	if err := s.appendMessages(sessionID, []sessionMessage{userStored, assistantMsg}); err != nil {
 		slog.Error("append_messages failed", "err", err, "trace_id", traceID)
 	}
@@ -251,31 +279,42 @@ func dockerToolDefinition() map[string]any {
 	}
 }
 
-func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage) (string, error) {
+func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage) (string, *usage, error) {
 	tools := []map[string]any{dockerToolDefinition()}
 	params := map[string]any{
 		"temperature": 0.4,
 		"max_tokens":  1024.0,
 		"tool_choice": "auto",
 	}
+	totalUsage := &usage{}
+	hasUsage := false
 
 	for step := 0; step < s.maxSteps; step++ {
 		out, err := s.invokeChatModel(ctx, msgs, tools, params)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if !out.Success {
 			if out.Error != "" {
-				return "", errors.New(out.Error)
+				return "", nil, errors.New(out.Error)
 			}
-			return "", errors.New("chatmodel invoke failed")
+			return "", nil, errors.New("chatmodel invoke failed")
+		}
+		if out.Usage != nil {
+			totalUsage.PromptTokens += out.Usage.PromptTokens
+			totalUsage.CompletionTokens += out.Usage.CompletionTokens
+			totalUsage.TotalTokens += out.Usage.TotalTokens
+			hasUsage = true
 		}
 		assistant := out.Message
 		if len(assistant.ToolCalls) == 0 {
 			if assistant.Content == "" {
-				return "", errors.New("empty assistant message")
+				return "", nil, errors.New("empty assistant message")
 			}
-			return assistant.Content, nil
+			if hasUsage {
+				return assistant.Content, totalUsage, nil
+			}
+			return assistant.Content, nil, nil
 		}
 
 		msgs = append(msgs, assistant)
@@ -295,7 +334,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage) (string,
 			})
 		}
 	}
-	return "", errors.New("reached max ReAct steps without a final reply")
+	return "", nil, errors.New("reached max ReAct steps without a final reply")
 }
 
 func toolJSON(ok bool, data any, errMsg string) string {
