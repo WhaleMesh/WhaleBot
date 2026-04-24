@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -101,6 +102,10 @@ type userDockerCreateBody struct {
 	Network      string            `json:"network"`
 	AutoRegister bool              `json:"auto_register"`
 	Port         int               `json:"port,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Workspace    string            `json:"workspace,omitempty"`
+	ExternalImageApprovedByUser bool `json:"external_image_approved_by_user,omitempty"`
 }
 
 type userDockerCreateResp struct {
@@ -138,15 +143,6 @@ type userDockerInterfaceResp struct {
 	Error     string         `json:"error,omitempty"`
 }
 
-type golangRunResp struct {
-	Success    bool   `json:"success"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	ExitCode   int    `json:"exit_code"`
-	DurationMS int64  `json:"duration_ms"`
-	Error      string `json:"error,omitempty"`
-}
-
 type component struct {
 	Name         string            `json:"name"`
 	Type         string            `json:"type"`
@@ -157,8 +153,7 @@ type component struct {
 }
 
 type runtimeCatalog struct {
-	Tools        []toolSpec
-	Environments []envSpec
+	Tools []toolSpec
 }
 
 type toolSpec struct {
@@ -167,20 +162,20 @@ type toolSpec struct {
 	Endpoint    string
 }
 
-type envSpec struct {
-	Name         string
-	Description  string
-	Endpoint     string
-	Capabilities []string
-}
-
 type availableRoutes struct {
 	CanUserDockerList    bool
+	CanUserDockerImages  bool
 	CanUserDockerCreate  bool
+	CanUserDockerStart   bool
+	CanUserDockerStop    bool
+	CanUserDockerTouch   bool
+	CanUserDockerSwitch  bool
 	CanUserDockerRemove  bool
 	CanUserDockerRestart bool
 	CanUserDockerInspect bool
-	CanRunGo             bool
+	CanUserDockerExec    bool
+	CanUserDockerFiles   bool
+	CanUserDockerExport  bool
 	LoggerWriteEndpoint  string
 }
 
@@ -326,22 +321,26 @@ func userDockerManagerToolDefinition() map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        "manage_user_docker",
-			"description": "Manage user docker containers. Supports list/create/remove/restart/get_interface.",
+			"description": "Primary execution tool. Create and control userdocker containers for project setup, build, run and artifact export.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"action": map[string]any{
 						"type":        "string",
-						"description": "Operation: list | create | remove | restart | get_interface.",
-						"enum":        []string{"list", "create", "remove", "restart", "get_interface"},
+						"description": "Operation: list_images | list | create | start | stop | touch | switch_scope | remove | restart | get_interface | exec | list_files | read_file | write_file | delete_file | mkdir | move | export_artifact.",
+						"enum": []string{
+							"list_images", "list", "create", "start", "stop", "touch", "switch_scope", "remove", "restart",
+							"get_interface", "exec", "list_files", "read_file", "write_file", "delete_file",
+							"mkdir", "move", "export_artifact",
+						},
 					},
 					"name": map[string]any{
 						"type":        "string",
-						"description": "Container name (required for create/remove/restart/get_interface).",
+						"description": "Container name (required for most actions except list).",
 					},
 					"image": map[string]any{
 						"type":        "string",
-						"description": "Docker image reference; omit for default userdocker base image.",
+						"description": "Docker image reference. Prefer framework images. For Go build tasks, prefer whalesbot/userdocker-golang:latest. External images require explicit user approval and must implement /api/v1/userdocker/interface.",
 					},
 					"cmd": map[string]any{
 						"type": "array", "items": map[string]any{"type": "string"},
@@ -370,6 +369,57 @@ func userDockerManagerToolDefinition() map[string]any {
 						"type":        "integer",
 						"description": "Optional userdocker service port for create/get_interface. Default 9000.",
 					},
+					"scope": map[string]any{
+						"type":        "string",
+						"description": "Container scope for create: session_scoped | global_service.",
+						"enum":        []string{"session_scoped", "global_service"},
+					},
+					"target_scope": map[string]any{
+						"type":        "string",
+						"description": "Target scope for action=switch_scope.",
+						"enum":        []string{"session_scoped", "global_service"},
+					},
+					"session_id": map[string]any{
+						"type":        "string",
+						"description": "Optional explicit session id. Defaults to current runtime session.",
+					},
+					"workspace": map[string]any{
+						"type":        "string",
+						"description": "Optional workspace volume name for create.",
+					},
+					"external_image_approved_by_user": map[string]any{
+						"type":        "boolean",
+						"description": "Only for action=create with non-framework image. Must be true only after user explicitly approves pulling external image.",
+					},
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Path argument for list_files/read_file/write_file/delete_file/mkdir/export_artifact.",
+					},
+					"from": map[string]any{
+						"type":        "string",
+						"description": "Source path for action=move.",
+					},
+					"to": map[string]any{
+						"type":        "string",
+						"description": "Destination path for action=move.",
+					},
+					"content_base64": map[string]any{
+						"type":        "string",
+						"description": "Base64 file content for action=write_file.",
+					},
+					"command": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Command argv for action=exec.",
+					},
+					"command_sh": map[string]any{
+						"type":        "string",
+						"description": "Shell command for action=exec.",
+					},
+					"cwd": map[string]any{
+						"type":        "string",
+						"description": "Working directory for action=exec.",
+					},
 				},
 				"required": []string{"action"},
 			},
@@ -377,37 +427,10 @@ func userDockerManagerToolDefinition() map[string]any {
 	}
 }
 
-func goRunToolDefinition() map[string]any {
-	return map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name":        "run_go_code",
-			"description": "Run Go code in the registered env-golang environment via orchestrator.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"code": map[string]any{
-						"type":        "string",
-						"description": "Complete Go source code including package main and main()",
-					},
-					"timeout_sec": map[string]any{
-						"type":        "integer",
-						"description": "Optional timeout in seconds (1-30), default 10",
-					},
-				},
-				"required": []string{"code"},
-			},
-		},
-	}
-}
-
 func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string) (string, *usage, error) {
-	tools := make([]map[string]any, 0, 2)
-	if routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect {
+	tools := make([]map[string]any, 0, 1)
+	if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 		tools = append(tools, userDockerManagerToolDefinition())
-	}
-	if routes.CanRunGo {
-		tools = append(tools, goRunToolDefinition())
 	}
 	params := map[string]any{
 		"temperature": 0.4,
@@ -464,7 +487,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			}
 			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "tool_call_start", startFields)
 
-			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments)
+			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
 			durationMS := time.Since(callStart).Milliseconds()
 			if err != nil {
 				resText = toolJSON(false, nil, err.Error())
@@ -530,24 +553,19 @@ func toolJSON(ok bool, data any, errMsg string) string {
 	return string(b)
 }
 
-func (s *reactService) dispatchTool(ctx context.Context, routes availableRoutes, name, argsJSON string) (string, error) {
+func (s *reactService) dispatchTool(ctx context.Context, routes availableRoutes, name, argsJSON, sessionID string) (string, error) {
 	switch name {
 	case "manage_user_docker":
-		if !routes.CanUserDockerList && !routes.CanUserDockerCreate && !routes.CanUserDockerRemove && !routes.CanUserDockerRestart && !routes.CanUserDockerInspect {
+		if !routes.CanUserDockerImages && !routes.CanUserDockerList && !routes.CanUserDockerCreate && !routes.CanUserDockerStart && !routes.CanUserDockerStop && !routes.CanUserDockerTouch && !routes.CanUserDockerSwitch && !routes.CanUserDockerRemove && !routes.CanUserDockerRestart && !routes.CanUserDockerInspect && !routes.CanUserDockerExec && !routes.CanUserDockerFiles && !routes.CanUserDockerExport {
 			return toolJSON(false, nil, "manage_user_docker unavailable: no healthy user-docker-manager component"), nil
 		}
-		return s.manageUserDocker(ctx, routes, argsJSON)
-	case "run_go_code":
-		if !routes.CanRunGo {
-			return toolJSON(false, nil, "run_go_code unavailable: no healthy environment component"), nil
-		}
-		return s.runGoCode(ctx, argsJSON)
+		return s.manageUserDocker(ctx, routes, argsJSON, sessionID)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
 }
 
-func (s *reactService) manageUserDocker(ctx context.Context, routes availableRoutes, argsJSON string) (string, error) {
+func (s *reactService) manageUserDocker(ctx context.Context, routes availableRoutes, argsJSON, runtimeSessionID string) (string, error) {
 	var args struct {
 		Action       string            `json:"action"`
 		Name         string            `json:"name"`
@@ -561,11 +579,32 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		Force        *bool             `json:"force"`
 		TimeoutSec   int               `json:"timeout_sec"`
 		Port         int               `json:"port"`
+		Scope        string            `json:"scope"`
+		TargetScope  string            `json:"target_scope"`
+		SessionID    string            `json:"session_id"`
+		Workspace    string            `json:"workspace"`
+		ExternalImageApprovedByUser *bool `json:"external_image_approved_by_user"`
+		Path         string            `json:"path"`
+		From         string            `json:"from"`
+		To           string            `json:"to"`
+		ContentB64   string            `json:"content_base64"`
+		Command      []string          `json:"command"`
+		CommandSh    string            `json:"command_sh"`
+		Cwd          string            `json:"cwd"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return toolJSON(false, nil, "invalid tool arguments: "+err.Error()), nil
 	}
+	sessionID := args.SessionID
+	if sessionID == "" {
+		sessionID = runtimeSessionID
+	}
 	switch args.Action {
+	case "list_images":
+		if !routes.CanUserDockerImages {
+			return toolJSON(false, nil, "list_images unavailable: manager capability missing"), nil
+		}
+		return s.userDockerImages(ctx)
 	case "list":
 		if !routes.CanUserDockerList {
 			return toolJSON(false, nil, "list unavailable: manager capability missing"), nil
@@ -574,7 +613,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if args.IncludeStop != nil {
 			includeStopped = *args.IncludeStop
 		}
-		return s.userDockerList(ctx, includeStopped)
+		return s.userDockerList(ctx, includeStopped, sessionID)
 	case "create":
 		if !routes.CanUserDockerCreate {
 			return toolJSON(false, nil, "create unavailable: manager capability missing"), nil
@@ -595,8 +634,46 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			Network:      args.Network,
 			AutoRegister: auto,
 			Port:         args.Port,
+			Scope:        args.Scope,
+			SessionID:    sessionID,
+			Workspace:    args.Workspace,
+		}
+		if args.ExternalImageApprovedByUser != nil {
+			body.ExternalImageApprovedByUser = *args.ExternalImageApprovedByUser
 		}
 		return s.userDockerCreate(ctx, body)
+	case "start":
+		if !routes.CanUserDockerStart {
+			return toolJSON(false, nil, "start unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" {
+			return toolJSON(false, nil, "name is required for action=start"), nil
+		}
+		return s.userDockerStart(ctx, args.Name, sessionID)
+	case "stop":
+		if !routes.CanUserDockerStop {
+			return toolJSON(false, nil, "stop unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" {
+			return toolJSON(false, nil, "name is required for action=stop"), nil
+		}
+		return s.userDockerStop(ctx, args.Name, args.TimeoutSec, sessionID)
+	case "touch":
+		if !routes.CanUserDockerTouch {
+			return toolJSON(false, nil, "touch unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" {
+			return toolJSON(false, nil, "name is required for action=touch"), nil
+		}
+		return s.userDockerTouch(ctx, args.Name, sessionID)
+	case "switch_scope":
+		if !routes.CanUserDockerSwitch {
+			return toolJSON(false, nil, "switch_scope unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" || args.TargetScope == "" {
+			return toolJSON(false, nil, "name and target_scope are required for action=switch_scope"), nil
+		}
+		return s.userDockerSwitchScope(ctx, args.Name, args.TargetScope, sessionID)
 	case "remove":
 		if !routes.CanUserDockerRemove {
 			return toolJSON(false, nil, "remove unavailable: manager capability missing"), nil
@@ -608,7 +685,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if args.Force != nil {
 			force = *args.Force
 		}
-		return s.userDockerRemove(ctx, args.Name, force)
+		return s.userDockerRemove(ctx, args.Name, force, sessionID)
 	case "restart":
 		if !routes.CanUserDockerRestart {
 			return toolJSON(false, nil, "restart unavailable: manager capability missing"), nil
@@ -616,7 +693,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if args.Name == "" {
 			return toolJSON(false, nil, "name is required for action=restart"), nil
 		}
-		return s.userDockerRestart(ctx, args.Name, args.TimeoutSec)
+		return s.userDockerRestart(ctx, args.Name, args.TimeoutSec, sessionID)
 	case "get_interface":
 		if !routes.CanUserDockerInspect {
 			return toolJSON(false, nil, "get_interface unavailable: manager capability missing"), nil
@@ -624,14 +701,68 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if args.Name == "" {
 			return toolJSON(false, nil, "name is required for action=get_interface"), nil
 		}
-		return s.userDockerGetInterface(ctx, args.Name, args.Port)
+		return s.userDockerGetInterface(ctx, args.Name, args.Port, sessionID)
+	case "exec":
+		if !routes.CanUserDockerExec {
+			return toolJSON(false, nil, "exec unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" {
+			return toolJSON(false, nil, "name is required for action=exec"), nil
+		}
+		body := map[string]any{
+			"session_id": sessionID,
+			"command":    args.Command,
+			"command_sh": args.CommandSh,
+			"cwd":        args.Cwd,
+			"env":        args.Env,
+			"timeout_sec": args.TimeoutSec,
+		}
+		return s.userDockerPost(ctx, args.Name, "exec", body)
+	case "list_files":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "list_files unavailable: manager capability missing"), nil
+		}
+		return s.userDockerGet(ctx, args.Name, "files", map[string]string{"path": args.Path, "session_id": sessionID})
+	case "read_file":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "read_file unavailable: manager capability missing"), nil
+		}
+		return s.userDockerGet(ctx, args.Name, "file", map[string]string{"path": args.Path, "session_id": sessionID})
+	case "write_file":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "write_file unavailable: manager capability missing"), nil
+		}
+		return s.userDockerPut(ctx, args.Name, "file", map[string]any{"path": args.Path, "content_base64": args.ContentB64, "session_id": sessionID})
+	case "delete_file":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "delete_file unavailable: manager capability missing"), nil
+		}
+		return s.userDockerDelete(ctx, args.Name, "file", map[string]string{"path": args.Path, "session_id": sessionID})
+	case "mkdir":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "mkdir unavailable: manager capability missing"), nil
+		}
+		return s.userDockerPost(ctx, args.Name, "files/mkdir", map[string]any{"path": args.Path, "session_id": sessionID})
+	case "move":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "move unavailable: manager capability missing"), nil
+		}
+		return s.userDockerPost(ctx, args.Name, "files/move", map[string]any{"from": args.From, "to": args.To, "session_id": sessionID})
+	case "export_artifact":
+		if !routes.CanUserDockerExport {
+			return toolJSON(false, nil, "export_artifact unavailable: manager capability missing"), nil
+		}
+		return s.userDockerGet(ctx, args.Name, "artifacts/export", map[string]string{"path": args.Path, "session_id": sessionID})
 	default:
-		return toolJSON(false, nil, "action must be one of: list/create/remove/restart/get_interface"), nil
+		return toolJSON(false, nil, "unsupported action"), nil
 	}
 }
 
-func (s *reactService) userDockerList(ctx context.Context, includeStopped bool) (string, error) {
+func (s *reactService) userDockerList(ctx context.Context, includeStopped bool, sessionID string) (string, error) {
 	target := fmt.Sprintf("%s/api/v1/tools/user-dockers?all=%t", s.orchURL, includeStopped)
+	if sessionID != "" {
+		target += "&session_id=" + url.QueryEscape(sessionID)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -695,8 +826,11 @@ func (s *reactService) userDockerCreate(ctx context.Context, body userDockerCrea
 	}, ""), nil
 }
 
-func (s *reactService) userDockerRemove(ctx context.Context, name string, force bool) (string, error) {
+func (s *reactService) userDockerRemove(ctx context.Context, name string, force bool, sessionID string) (string, error) {
 	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s?force=%t", s.orchURL, url.PathEscape(name), force)
+	if sessionID != "" {
+		target += "&session_id=" + url.QueryEscape(sessionID)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -723,8 +857,11 @@ func (s *reactService) userDockerRemove(ctx context.Context, name string, force 
 	return toolJSON(true, map[string]any{"name": out.Name}, ""), nil
 }
 
-func (s *reactService) userDockerRestart(ctx context.Context, name string, timeoutSec int) (string, error) {
+func (s *reactService) userDockerRestart(ctx context.Context, name string, timeoutSec int, sessionID string) (string, error) {
 	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/restart?timeout_sec=%d", s.orchURL, url.PathEscape(name), timeoutSec)
+	if sessionID != "" {
+		target += "&session_id=" + url.QueryEscape(sessionID)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, nil)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -751,10 +888,17 @@ func (s *reactService) userDockerRestart(ctx context.Context, name string, timeo
 	return toolJSON(true, map[string]any{"name": out.Name}, ""), nil
 }
 
-func (s *reactService) userDockerGetInterface(ctx context.Context, name string, port int) (string, error) {
+func (s *reactService) userDockerGetInterface(ctx context.Context, name string, port int, sessionID string) (string, error) {
 	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/interface", s.orchURL, url.PathEscape(name))
+	params := make([]string, 0, 2)
 	if port > 0 {
-		target += fmt.Sprintf("?port=%d", port)
+		params = append(params, fmt.Sprintf("port=%d", port))
+	}
+	if sessionID != "" {
+		params = append(params, "session_id="+url.QueryEscape(sessionID))
+	}
+	if len(params) > 0 {
+		target += "?" + strings.Join(params, "&")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -785,30 +929,107 @@ func (s *reactService) userDockerGetInterface(ctx context.Context, name string, 
 	}, ""), nil
 }
 
-func (s *reactService) runGoCode(ctx context.Context, argsJSON string) (string, error) {
-	var args struct {
-		Code       string `json:"code"`
-		TimeoutSec int    `json:"timeout_sec"`
+func (s *reactService) userDockerStart(ctx context.Context, name, sessionID string) (string, error) {
+	return s.userDockerPost(ctx, name, "start", map[string]any{"session_id": sessionID})
+}
+
+func (s *reactService) userDockerStop(ctx context.Context, name string, timeoutSec int, sessionID string) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/stop?timeout_sec=%d", s.orchURL, url.PathEscape(name), timeoutSec)
+	if sessionID != "" {
+		target += "&session_id=" + url.QueryEscape(sessionID)
 	}
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return toolJSON(false, nil, "invalid tool arguments: "+err.Error()), nil
-	}
-	if args.Code == "" {
-		return toolJSON(false, nil, "code is required"), nil
-	}
-	body := map[string]any{
-		"code":        args.Code,
-		"timeout_sec": args.TimeoutSec,
-	}
-	raw, err := json.Marshal(body)
+	return s.userDockerRequestNoBody(ctx, http.MethodPost, target)
+}
+
+func (s *reactService) userDockerTouch(ctx context.Context, name, sessionID string) (string, error) {
+	return s.userDockerPost(ctx, name, "touch", map[string]any{"session_id": sessionID})
+}
+
+func (s *reactService) userDockerSwitchScope(ctx context.Context, name, targetScope, sessionID string) (string, error) {
+	return s.userDockerPost(ctx, name, "switch-scope", map[string]any{"target_scope": targetScope, "session_id": sessionID})
+}
+
+func (s *reactService) userDockerPost(ctx context.Context, name, action string, payload map[string]any) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.orchURL+"/api/v1/environments/golang/run", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerPut(ctx context.Context, name, action string, payload map[string]any) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, bytes.NewReader(raw))
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerGet(ctx context.Context, name, action string, query map[string]string) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	q := url.Values{}
+	for k, v := range query {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerDelete(ctx context.Context, name, action string, query map[string]string) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	q := url.Values{}
+	for k, v := range query {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerImages(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.orchURL+"/api/v1/tools/user-dockers/images", nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerRequestNoBody(ctx context.Context, method, target string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, method, target, nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerDoRequest(req *http.Request) (string, error) {
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -818,27 +1039,17 @@ func (s *reactService) runGoCode(ctx context.Context, argsJSON string) (string, 
 	if resp.StatusCode >= 300 {
 		return toolJSON(false, nil, fmt.Sprintf("orchestrator returned %d: %s", resp.StatusCode, truncate(string(b), 500))), nil
 	}
-	var gr golangRunResp
-	if json.Unmarshal(b, &gr) != nil {
-		return toolJSON(false, nil, "decode golang response: "+truncate(string(b), 300)), nil
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return toolJSON(false, nil, "decode user docker response: "+truncate(string(b), 300)), nil
 	}
-	if !gr.Success {
-		if gr.Error == "" {
-			gr.Error = "go run failed"
+	if ok, _ := payload["success"].(bool); !ok {
+		if msg, _ := payload["error"].(string); msg != "" {
+			return toolJSON(false, nil, msg), nil
 		}
-		return toolJSON(false, map[string]any{
-			"stdout":      gr.Stdout,
-			"stderr":      gr.Stderr,
-			"exit_code":   gr.ExitCode,
-			"duration_ms": gr.DurationMS,
-		}, gr.Error), nil
+		return toolJSON(false, nil, "user docker operation failed"), nil
 	}
-	return toolJSON(true, map[string]any{
-		"stdout":      gr.Stdout,
-		"stderr":      gr.Stderr,
-		"exit_code":   gr.ExitCode,
-		"duration_ms": gr.DurationMS,
-	}, ""), nil
+	return toolJSON(true, payload, ""), nil
 }
 
 func (s *reactService) invokeChatModel(ctx context.Context, msgs []cmMessage, tools []map[string]any, params map[string]any) (invokeResponse, error) {
@@ -937,11 +1148,26 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 		}
 		switch c.Type {
 		case "tool":
+			if hasCapability(c.Capabilities, "userdocker_images") {
+				routes.CanUserDockerImages = true
+			}
 			if hasCapability(c.Capabilities, "userdocker_list") {
 				routes.CanUserDockerList = true
 			}
 			if hasCapability(c.Capabilities, "userdocker_create") {
 				routes.CanUserDockerCreate = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_start") {
+				routes.CanUserDockerStart = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_stop") {
+				routes.CanUserDockerStop = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_touch") {
+				routes.CanUserDockerTouch = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_switch_scope") {
+				routes.CanUserDockerSwitch = true
 			}
 			if hasCapability(c.Capabilities, "userdocker_remove") {
 				routes.CanUserDockerRemove = true
@@ -952,24 +1178,23 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 			if hasCapability(c.Capabilities, "userdocker_interface_discovery") {
 				routes.CanUserDockerInspect = true
 			}
-			if routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect {
+			if hasCapability(c.Capabilities, "userdocker_exec") {
+				routes.CanUserDockerExec = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_files") {
+				routes.CanUserDockerFiles = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_artifact_export") {
+				routes.CanUserDockerExport = true
+			}
+			if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 				if !containsTool(catalog.Tools, "manage_user_docker") {
 					catalog.Tools = append(catalog.Tools, toolSpec{
 						Name:        "manage_user_docker",
-						Description: "Manage user docker containers (list/create/remove/restart/get_interface)",
+						Description: "Manage user docker containers (lifecycle/scope/exec/files/artifacts)",
 						Endpoint:    "/api/v1/tools/user-dockers",
 					})
 				}
-			}
-		case "environment":
-			if hasCapability(c.Capabilities, "run_go") {
-				routes.CanRunGo = true
-				catalog.Environments = append(catalog.Environments, envSpec{
-					Name:         c.Name,
-					Description:  "Run Go code with timeout constraints",
-					Endpoint:     "/api/v1/environments/golang/run",
-					Capabilities: c.Capabilities,
-				})
 			}
 		case "logger":
 			if hasCapability(c.Capabilities, "events_write") {
@@ -1069,16 +1294,17 @@ func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
 		"你是 WhalesBot MVP 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
 		"当前可用能力由运行时实时发现：",
+		"涉及工程创建、编译、产物导出时，默认使用 manage_user_docker：先 create，再写文件/exec，最后 export_artifact。",
+		"创建容器优先使用框架镜像（例如 whalesbot/*）；如需外部镜像，必须先明确征得用户同意后再继续。",
+		"在选择镜像前，先使用 manage_user_docker(action=list_images) 获取框架可用镜像列表。",
+		"Go 编译任务优先使用 whalesbot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
 	}
-	if len(c.Tools) == 0 && len(c.Environments) == 0 {
-		lines = append(lines, "- 暂无可用 tool/environment，只能直接回答。")
+	if len(c.Tools) == 0 {
+		lines = append(lines, "- 暂无可用 tool，只能直接回答。")
 		return joinLines(lines)
 	}
 	for _, t := range c.Tools {
 		lines = append(lines, fmt.Sprintf("- tool `%s`: %s (endpoint: %s)", t.Name, t.Description, t.Endpoint))
-	}
-	for _, e := range c.Environments {
-		lines = append(lines, fmt.Sprintf("- environment `%s`: %s (endpoint: %s)", e.Name, e.Description, e.Endpoint))
 	}
 	lines = append(lines, "只有在用户需求明确时才调用工具；调用失败时需解释原因并给出下一步建议。")
 	return joinLines(lines)

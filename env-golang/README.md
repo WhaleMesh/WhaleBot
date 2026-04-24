@@ -25,6 +25,7 @@ last_verified_from:
 ```
 
 ## Purpose
+- Deprecated in current compose topology. Runtime now uses `manage_user_docker` + container `exec` for Go/project execution.
 - Executes user-provided Go snippets through `go run`.
 - Returns stdout/stderr, exit code, duration, and failure details.
 - Serves as an environment component routed by orchestrator.

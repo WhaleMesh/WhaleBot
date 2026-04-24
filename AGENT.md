@@ -25,15 +25,15 @@ Read this first, then read only the referenced source-of-truth files.
   - `webui` (browser) -> `orchestrator`
   - `im-telegram` (long poll) -> `orchestrator`
 - Core flow:
-  - `orchestrator` coordinates `session`, `chatmodel`, `runtime`, tools/environments.
+  - `orchestrator` coordinates `session`, `chatmodel`, `runtime`, and tool components.
 - Runtime/tooling:
   - `runtime` runs ReAct steps and calls model/tools.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
-  - `env-golang` executes user Go code.
+  - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
   - `session`, `logger`, `memory`, `workspace` use named volumes.
 - Dynamic nodes:
-  - `userdocker-base` image is build placeholder in compose; real `userdocker` containers are created on demand by API.
+  - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
 ## 3) Service Map (compose-aligned)
 
@@ -65,16 +65,15 @@ Read this first, then read only the referenced source-of-truth files.
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
 - `user-docker-manager`
-  - purpose: system-level `userdocker` manager (list/create/remove/restart/interface discovery)
+  - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations)
   - entry: `user-docker-manager/cmd/server/main.go`
   - host exposed: no
   - note: registers to orchestrator as component name `user-docker-manager`
-  - note: enforces `userdocker.v1` interface contract when creating userdocker containers
-- `env-golang`
-  - purpose: execute Go code (`go run`)
-  - entry: `env-golang/cmd/server/main.go`
-  - host exposed: no
-  - note: callable by runtime as tool `run_go_code` through orchestrator endpoint `/api/v1/environments/golang/run`
+  - note: enforces `userdocker.v1` interface contract and only manages containers labeled as manager-owned `userdocker`
+  - note: raw language images (for example official `golang:*`) are rejected unless they expose `/api/v1/userdocker/interface`
+  - note: pulling non-framework images requires explicit user approval flag (`external_image_approved_by_user=true`)
+  - note: supports `session_scoped` and `global_service` container scopes with `switch-scope`
+  - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for session-scoped containers (default 24h)
 - `logger`
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`
@@ -101,6 +100,11 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `userdocker-base/main.go`
   - compose behavior: `sleep infinity` placeholder container
   - note: exposes public descriptor `GET /api/v1/userdocker/interface` (contract `userdocker.v1`)
+  - note: implements workspace APIs (`/exec`, `/files`, `/file`, `/files/mkdir`, `/files/move`, `/artifacts/export`)
+- `userdocker-golang`
+  - purpose: Go toolchain image for spawned `userdocker` compile/build tasks
+  - build source: `userdocker-base/Dockerfile` with Go final base image
+  - compose behavior: `sleep infinity` placeholder container
 
 ## 4) Env Variables (grouped, minimal)
 
@@ -110,9 +114,11 @@ Read this first, then read only the referenced source-of-truth files.
   - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
   - localhost model endpoints are rewritten by `chatmodel` to `host.docker.internal`
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `ENV_GOLANG_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
+- Userdocker manager lifecycle:
+  - `USERDOCKER_IDLE_HOURS`, `USERDOCKER_IDLE_CHECK_SEC`, `USERDOCKER_ALLOWED_IMAGES`
 - Health loop:
   - `HEALTHCHECK_INTERVAL_SEC`, `HEALTHCHECK_FAIL_THRESHOLD`
 - Session:
@@ -120,7 +126,7 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 12 services including `runtime`, `logger`, `memory`, `workspace`.
+- `docker-compose.yml` contains 11 services including `runtime`, `logger`, `memory`, `workspace`.
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
 - Named volumes in use: `session_data`, `logger_data`, `memory_data`, `workspace_data`.
@@ -140,7 +146,10 @@ Read this first, then read only the referenced source-of-truth files.
 - Only components with `status=healthy` are considered.
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
-  - `type=environment` + capability `run_go` -> tool `run_go_code` (endpoint `/api/v1/environments/golang/run`)
+- `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
+- `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
+- for Go compile tasks, prefer `whalesbot/userdocker-golang:latest` when listed in `action=list_images`.
+- runtime no longer relies on `environment`-type execution capability; build/run flows use `manage_user_docker`.
 - Degrade behavior:
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
@@ -148,9 +157,9 @@ Read this first, then read only the referenced source-of-truth files.
   - check components: `curl -s http://localhost:8080/api/v1/components`
   - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
   - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
+  - check userdocker allowed images: `curl -s http://localhost:8080/api/v1/tools/user-dockers/images`
   - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
-  - check env route: `curl -s -X POST http://localhost:8080/api/v1/environments/golang/run ...`
-  - ask runtime via chat to list tool names and confirm `manage_user_docker` and `run_go_code` are visible.
+  - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
 
 ## 8) Mandatory Update Policy
 

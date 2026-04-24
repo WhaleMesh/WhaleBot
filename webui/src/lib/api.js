@@ -46,9 +46,4 @@ export const api = {
     const suffix = port ? `?port=${encodeURIComponent(port)}` : "";
     return req(`/api/v1/tools/user-dockers/${encodeURIComponent(name)}/interface${suffix}`);
   },
-  runGo: (body) =>
-    req("/api/v1/environments/golang/run", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
 };

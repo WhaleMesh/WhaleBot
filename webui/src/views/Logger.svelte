@@ -262,7 +262,7 @@
     <input placeholder="tool / react / session" bind:value={moduleName} />
   </label>
   <label>Tool name
-    <input placeholder="manage_user_docker / run_go_code" bind:value={toolName} />
+    <input placeholder="manage_user_docker" bind:value={toolName} />
   </label>
   <label>Trace ID
     <input placeholder="trace_xxx" bind:value={traceId} />

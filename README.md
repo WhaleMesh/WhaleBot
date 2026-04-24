@@ -24,7 +24,6 @@ flowchart LR
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
   orchestrator --> toolDocker["user-docker-manager"]
-  orchestrator --> envGolang["env-golang"]
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
@@ -64,11 +63,11 @@ docker compose up --build
 - `chatmodel/`：模型调用适配
 - `im-telegram/`：Telegram 网关
 - `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）
-- `env-golang/`：Go 代码执行环境
 - `logger/`：日志服务
 - `memory/`：记忆服务
 - `workspace/`：工作区服务
 - `userdocker-base/`：动态 userdocker 基础镜像
+- `whalesbot/userdocker-golang:latest`：动态 userdocker 的 Go 编译镜像（由 `userdocker-base` 构建变体生成）
 - `webui/`：前端界面
 
 ## 文档与信息优先级

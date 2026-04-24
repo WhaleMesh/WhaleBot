@@ -27,7 +27,7 @@ last_verified_from:
 
 ## Purpose
 - Runs the ReAct loop for chat requests.
-- Dynamically discovers healthy tool/environment components from orchestrator before each run.
+- Dynamically discovers healthy tool components from orchestrator before each run.
 - Calls `chatmodel` with dynamically built tool definitions and executes returned tool calls.
 - Persists final user+assistant pair into `session`.
 - Emits structured tool lifecycle events (`tool_call_start`, `tool_call_end`, `tool_call_error`) with full args/result payloads for diagnosis.
@@ -75,12 +75,19 @@ error_behavior:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:
   - `GET /api/v1/components` for runtime capability discovery
+  - `GET /api/v1/tools/user-dockers/images` for `manage_user_docker(action=list_images)`
   - `POST /api/v1/tools/user-dockers` for `manage_user_docker(action=create)`
   - `GET /api/v1/tools/user-dockers` for `manage_user_docker(action=list)`
+  - `POST /api/v1/tools/user-dockers/{name}/start` for `manage_user_docker(action=start)`
+  - `POST /api/v1/tools/user-dockers/{name}/stop` for `manage_user_docker(action=stop)`
+  - `POST /api/v1/tools/user-dockers/{name}/touch` for `manage_user_docker(action=touch)`
+  - `POST /api/v1/tools/user-dockers/{name}/switch-scope` for `manage_user_docker(action=switch_scope)`
   - `DELETE /api/v1/tools/user-dockers/{name}` for `manage_user_docker(action=remove)`
   - `POST /api/v1/tools/user-dockers/{name}/restart` for `manage_user_docker(action=restart)`
   - `GET /api/v1/tools/user-dockers/{name}/interface` for `manage_user_docker(action=get_interface)`
-  - `POST /api/v1/environments/golang/run` for `run_go_code`
+  - `POST /api/v1/tools/user-dockers/{name}/exec` for `manage_user_docker(action=exec)`
+  - `/api/v1/tools/user-dockers/{name}/file(s)*` for file CRUD/mkdir/move
+  - `GET /api/v1/tools/user-dockers/{name}/artifacts/export` for `manage_user_docker(action=export_artifact)`
   - `POST /api/v1/components/register` for self-registration
 - `logger` (when discovered via capability `events_write`):
   - `POST /events` for structured runtime/tool trace events
@@ -152,12 +159,19 @@ query_to_endpoint:
   runtime_health: GET /health
 internal_tool_name_map:
   manage_user_docker:
+    list_images: GET /api/v1/tools/user-dockers/images
     list: GET /api/v1/tools/user-dockers
     create: POST /api/v1/tools/user-dockers
+    start: POST /api/v1/tools/user-dockers/{name}/start
+    stop: POST /api/v1/tools/user-dockers/{name}/stop
+    touch: POST /api/v1/tools/user-dockers/{name}/touch
+    switch_scope: POST /api/v1/tools/user-dockers/{name}/switch-scope
     remove: DELETE /api/v1/tools/user-dockers/{name}
     restart: POST /api/v1/tools/user-dockers/{name}/restart
     get_interface: GET /api/v1/tools/user-dockers/{name}/interface
-  run_go_code: POST /api/v1/environments/golang/run
+    exec: POST /api/v1/tools/user-dockers/{name}/exec
+    files: /api/v1/tools/user-dockers/{name}/file(s)*
+    export_artifact: GET /api/v1/tools/user-dockers/{name}/artifacts/export
 ```
 
 ## Change Safety
@@ -165,3 +179,4 @@ internal_tool_name_map:
 - Do not remove session writeback (`append_messages`) or chat history continuity breaks.
 - Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync.
 - Tool event fields (`trace_id`, `session_id`, `module`, `phase`, `tool_name`, `tool_call_id`, `step`, `duration_ms`, `args`, `result`) are consumed by Logger diagnostics; keep them stable.
+- For `manage_user_docker(action=create)`, prefer framework images by default; external image pull must follow explicit user approval.

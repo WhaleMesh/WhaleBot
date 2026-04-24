@@ -10,9 +10,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+)
+
+const (
+	ScopeSessionScoped = "session_scoped"
+	ScopeGlobalService = "global_service"
 )
 
 type CreateRequest struct {
@@ -24,6 +31,10 @@ type CreateRequest struct {
 	Network      string            `json:"network"`
 	AutoRegister bool              `json:"auto_register"`
 	Port         int               `json:"port,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Workspace    string            `json:"workspace,omitempty"`
+	ExternalImageApprovedByUser bool `json:"external_image_approved_by_user,omitempty"`
 }
 
 type CreateResult struct {
@@ -34,13 +45,17 @@ type CreateResult struct {
 }
 
 type ContainerSummary struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Image   string            `json:"image"`
-	State   string            `json:"state"`
-	Status  string            `json:"status"`
-	Created int64             `json:"created"`
-	Labels  map[string]string `json:"labels,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Image        string            `json:"image"`
+	State        string            `json:"state"`
+	Status       string            `json:"status"`
+	Created      int64             `json:"created"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Scope        string            `json:"scope,omitempty"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Workspace    string            `json:"workspace,omitempty"`
+	LastActiveAt string            `json:"last_active_at,omitempty"`
 }
 
 type InterfaceEndpoint struct {
@@ -61,6 +76,16 @@ type InterfaceDescriptor struct {
 	Description      string                `json:"description"`
 	Endpoints        []InterfaceEndpoint   `json:"endpoints"`
 	Capabilities     []InterfaceCapability `json:"capabilities"`
+}
+
+type ContainerMeta struct {
+	Name         string            `json:"name"`
+	Port         int               `json:"port"`
+	Scope        string            `json:"scope"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Workspace    string            `json:"workspace,omitempty"`
+	LastActiveAt string            `json:"last_active_at,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
 }
 
 var requiredInterface = InterfaceDescriptor{
@@ -84,12 +109,16 @@ type Creator struct {
 	socketPath      string
 	baseURL         string
 	httpClient      *http.Client
+	directHTTP      *http.Client
 	DefaultImage    string
 	DefaultNetwork  string
 	OrchestratorURL string
+	AllowedImages   map[string]struct{}
+	mu              sync.RWMutex
+	lastActive      map[string]time.Time
 }
 
-func New(defaultImage, defaultNetwork, orchestratorURL string) (*Creator, error) {
+func New(defaultImage, defaultNetwork, orchestratorURL string, allowedImages []string) (*Creator, error) {
 	socketPath := "/var/run/docker.sock"
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -97,13 +126,27 @@ func New(defaultImage, defaultNetwork, orchestratorURL string) (*Creator, error)
 			return d.DialContext(ctx, "unix", socketPath)
 		},
 	}
+	allowed := map[string]struct{}{}
+	for _, img := range allowedImages {
+		img = strings.TrimSpace(img)
+		if img == "" {
+			continue
+		}
+		allowed[img] = struct{}{}
+	}
+	if defaultImage != "" {
+		allowed[defaultImage] = struct{}{}
+	}
 	return &Creator{
 		socketPath:      socketPath,
 		baseURL:         "http://docker",
 		httpClient:      &http.Client{Transport: tr, Timeout: 120 * time.Second},
+		directHTTP:      &http.Client{Timeout: 15 * time.Second},
 		DefaultImage:    defaultImage,
 		DefaultNetwork:  defaultNetwork,
 		OrchestratorURL: orchestratorURL,
+		AllowedImages:   allowed,
+		lastActive:      map[string]time.Time{},
 	}, nil
 }
 
@@ -123,6 +166,7 @@ type hostConfig struct {
 	RestartPolicy struct {
 		Name string `json:"Name"`
 	} `json:"RestartPolicy"`
+	Binds []string `json:"Binds,omitempty"`
 }
 
 type networkingConfig struct {
@@ -146,8 +190,21 @@ type listContainersResponse struct {
 
 type inspectContainerResponse struct {
 	Config struct {
+		Image  string            `json:"Image"`
+		Cmd    []string          `json:"Cmd"`
+		Env    []string          `json:"Env"`
 		Labels map[string]string `json:"Labels"`
 	} `json:"Config"`
+	HostConfig struct {
+		RestartPolicy struct {
+			Name string `json:"Name"`
+		} `json:"RestartPolicy"`
+	} `json:"HostConfig"`
+	NetworkSettings struct {
+		Networks map[string]struct {
+			NetworkID string `json:"NetworkID"`
+		} `json:"Networks"`
+	} `json:"NetworkSettings"`
 }
 
 type dockerError struct {
@@ -168,9 +225,28 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	if req.Name == "" {
 		return CreateResult{}, errors.New("name is required")
 	}
+	scope := req.Scope
+	if scope == "" {
+		scope = ScopeSessionScoped
+	}
+	if scope != ScopeSessionScoped && scope != ScopeGlobalService {
+		return CreateResult{}, fmt.Errorf("invalid scope %q", scope)
+	}
+	if scope == ScopeSessionScoped && req.SessionID == "" {
+		return CreateResult{}, errors.New("session_id is required for session_scoped containers")
+	}
 	img := req.Image
 	if img == "" {
 		img = c.DefaultImage
+	}
+	if isFrameworkImage(img) && !c.isAllowedImage(img) {
+		return CreateResult{}, fmt.Errorf("framework image %q is not configured. allowed images: %s", img, strings.Join(c.AllowedImageList(), ", "))
+	}
+	if !isFrameworkImage(img) && !req.ExternalImageApprovedByUser {
+		return CreateResult{}, fmt.Errorf(
+			"external image %q requires explicit user approval; prefer framework images (for example %q)",
+			img, c.DefaultImage,
+		)
 	}
 	netName := req.Network
 	if netName == "" {
@@ -179,6 +255,14 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	port := req.Port
 	if port <= 0 {
 		port = 9000
+	}
+	workspace := req.Workspace
+	if workspace == "" {
+		if scope == ScopeSessionScoped {
+			workspace = "workspace_" + req.SessionID
+		} else {
+			workspace = "workspace_global_" + req.Name
+		}
 	}
 
 	if !isLocalImage(img) {
@@ -198,12 +282,25 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	labels["mvp.managed_by"] = "user-docker-manager"
 	labels["mvp.userdocker.interface_version"] = requiredInterface.InterfaceVersion
 	labels["mvp.userdocker.port"] = strconv.Itoa(port)
+	labels["mvp.userdocker.scope"] = scope
+	labels["mvp.userdocker.workspace"] = workspace
+	labels["mvp.userdocker.last_active_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if scope == ScopeSessionScoped {
+		labels["mvp.userdocker.session_id"] = req.SessionID
+	} else {
+		delete(labels, "mvp.userdocker.session_id")
+	}
 
 	envList := make([]string, 0, len(req.Env)+4)
 	for k, v := range req.Env {
 		envList = append(envList, k+"="+v)
 	}
 	envList = append(envList, "PORT="+strconv.Itoa(port))
+	envList = append(envList, "WORKSPACE_ROOT=/workspace")
+	envList = append(envList, "MVP_USERDOCKER_SCOPE="+scope)
+	if req.SessionID != "" {
+		envList = append(envList, "MVP_SESSION_ID="+req.SessionID)
+	}
 	if req.AutoRegister {
 		envList = append(envList,
 			"ORCHESTRATOR_URL="+c.OrchestratorURL,
@@ -221,6 +318,7 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 			RestartPolicy: struct {
 				Name string `json:"Name"`
 			}{Name: "unless-stopped"},
+			Binds: []string{workspace + ":/workspace"},
 		},
 		NetworkingConfig: &networkingConfig{
 			EndpointsConfig: map[string]struct{}{
@@ -268,8 +366,15 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	contract, err := c.waitForContract(ctx, req.Name, port)
 	if err != nil {
 		_ = c.Remove(context.Background(), req.Name, true)
+		if strings.Contains(err.Error(), "contract endpoint returned 404") {
+			return CreateResult{}, fmt.Errorf(
+				"userdocker contract validation failed: image %q is incompatible (missing /api/v1/userdocker/interface). use a userdocker-compatible image such as %q",
+				img, c.DefaultImage,
+			)
+		}
 		return CreateResult{}, fmt.Errorf("userdocker contract validation failed: %w", err)
 	}
+	c.markActive(req.Name, time.Now().UTC())
 
 	return CreateResult{ContainerID: cr.ID, Name: req.Name, Port: port, Interface: contract}, nil
 }
@@ -303,14 +408,26 @@ func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSum
 		if len(item.Names) > 0 {
 			name = strings.TrimPrefix(item.Names[0], "/")
 		}
+		scope := item.Labels["mvp.userdocker.scope"]
+		if scope == "" {
+			scope = ScopeSessionScoped
+		}
+		lastActive := item.Labels["mvp.userdocker.last_active_at"]
+		if t, ok := c.getLastActive(name); ok {
+			lastActive = t.UTC().Format(time.RFC3339Nano)
+		}
 		out = append(out, ContainerSummary{
-			ID:      item.ID,
-			Name:    name,
-			Image:   item.Image,
-			State:   item.State,
-			Status:  item.Status,
-			Created: item.Created,
-			Labels:  item.Labels,
+			ID:           item.ID,
+			Name:         name,
+			Image:        item.Image,
+			State:        item.State,
+			Status:       item.Status,
+			Created:      item.Created,
+			Labels:       item.Labels,
+			Scope:        scope,
+			SessionID:    item.Labels["mvp.userdocker.session_id"],
+			Workspace:    item.Labels["mvp.userdocker.workspace"],
+			LastActiveAt: lastActive,
 		})
 	}
 	return out, nil
@@ -319,6 +436,9 @@ func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSum
 func (c *Creator) Remove(ctx context.Context, name string, force bool) error {
 	if name == "" {
 		return errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return err
 	}
 	rmURL := fmt.Sprintf("%s/containers/%s?force=%d", c.baseURL, url.PathEscape(name), boolAsInt(force))
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, rmURL, nil)
@@ -334,12 +454,16 @@ func (c *Creator) Remove(ctx context.Context, name string, force bool) error {
 	if resp.StatusCode >= 300 {
 		return dockerAPIError("container remove", resp.StatusCode, body)
 	}
+	c.clearLastActive(name)
 	return nil
 }
 
 func (c *Creator) Restart(ctx context.Context, name string, timeoutSec int) error {
 	if name == "" {
 		return errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return err
 	}
 	if timeoutSec <= 0 {
 		timeoutSec = 10
@@ -358,12 +482,163 @@ func (c *Creator) Restart(ctx context.Context, name string, timeoutSec int) erro
 	if resp.StatusCode >= 300 {
 		return dockerAPIError("container restart", resp.StatusCode, body)
 	}
+	c.markActive(name, time.Now().UTC())
 	return nil
+}
+
+func (c *Creator) Start(ctx context.Context, name string) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return err
+	}
+	startURL := c.baseURL + "/containers/" + url.PathEscape(name) + "/start"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, startURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 && resp.StatusCode != 304 {
+		return dockerAPIError("container start", resp.StatusCode, body)
+	}
+	c.markActive(name, time.Now().UTC())
+	return nil
+}
+
+func (c *Creator) Stop(ctx context.Context, name string, timeoutSec int) error {
+	if name == "" {
+		return errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return err
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 10
+	}
+	stopURL := fmt.Sprintf("%s/containers/%s/stop?t=%d", c.baseURL, url.PathEscape(name), timeoutSec)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, stopURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 && resp.StatusCode != 304 {
+		return dockerAPIError("container stop", resp.StatusCode, body)
+	}
+	return nil
+}
+
+func (c *Creator) Touch(ctx context.Context, name string) (time.Time, error) {
+	if name == "" {
+		return time.Time{}, errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return time.Time{}, err
+	}
+	now := time.Now().UTC()
+	c.markActive(name, now)
+	return now, nil
+}
+
+func (c *Creator) SwitchScope(ctx context.Context, name, targetScope, sessionID string) (CreateResult, error) {
+	if name == "" {
+		return CreateResult{}, errors.New("name is required")
+	}
+	if targetScope != ScopeSessionScoped && targetScope != ScopeGlobalService {
+		return CreateResult{}, fmt.Errorf("invalid target scope %q", targetScope)
+	}
+	if targetScope == ScopeSessionScoped && sessionID == "" {
+		return CreateResult{}, errors.New("session_id is required when switching to session_scoped")
+	}
+	meta, err := c.inspectManaged(ctx, name)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	port, _ := strconv.Atoi(meta.Config.Labels["mvp.userdocker.port"])
+	if port <= 0 {
+		port = 9000
+	}
+	workspace := meta.Config.Labels["mvp.userdocker.workspace"]
+	if targetScope == ScopeSessionScoped {
+		workspace = "workspace_" + sessionID
+	} else if workspace == "" {
+		workspace = "workspace_global_" + name
+	}
+	envMap := envListToMap(meta.Config.Env)
+	delete(envMap, "MVP_SESSION_ID")
+	envMap["MVP_USERDOCKER_SCOPE"] = targetScope
+	if sessionID != "" {
+		envMap["MVP_SESSION_ID"] = sessionID
+	}
+	labels := map[string]string{}
+	for k, v := range meta.Config.Labels {
+		if !strings.HasPrefix(k, "mvp.") || k == "mvp.type" {
+			labels[k] = v
+		}
+	}
+	createReq := CreateRequest{
+		Name:         name,
+		Image:        meta.Config.Image,
+		Cmd:          meta.Config.Cmd,
+		Env:          envMap,
+		Labels:       labels,
+		Network:      meta.firstNetwork(),
+		AutoRegister: true,
+		Port:         port,
+		Scope:        targetScope,
+		SessionID:    sessionID,
+		Workspace:    workspace,
+	}
+	if err := c.Remove(ctx, name, true); err != nil {
+		return CreateResult{}, err
+	}
+	return c.Create(ctx, createReq)
+}
+
+func (c *Creator) ContainerMeta(ctx context.Context, name string) (ContainerMeta, error) {
+	item, err := c.inspectManaged(ctx, name)
+	if err != nil {
+		return ContainerMeta{}, err
+	}
+	port := 9000
+	if p, err := strconv.Atoi(item.Config.Labels["mvp.userdocker.port"]); err == nil && p > 0 {
+		port = p
+	}
+	scope := item.Config.Labels["mvp.userdocker.scope"]
+	if scope == "" {
+		scope = ScopeSessionScoped
+	}
+	lastActive := item.Config.Labels["mvp.userdocker.last_active_at"]
+	if t, ok := c.getLastActive(name); ok {
+		lastActive = t.UTC().Format(time.RFC3339Nano)
+	}
+	return ContainerMeta{
+		Name:         name,
+		Port:         port,
+		Scope:        scope,
+		SessionID:    item.Config.Labels["mvp.userdocker.session_id"],
+		Workspace:    item.Config.Labels["mvp.userdocker.workspace"],
+		LastActiveAt: lastActive,
+		Labels:       item.Config.Labels,
+	}, nil
 }
 
 func (c *Creator) FetchInterfaceDescriptor(ctx context.Context, name string, port int) (InterfaceDescriptor, error) {
 	if name == "" {
 		return InterfaceDescriptor{}, errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return InterfaceDescriptor{}, err
 	}
 	if port <= 0 {
 		detectedPort, err := c.userDockerPort(ctx, name)
@@ -407,7 +682,7 @@ func (c *Creator) fetchContract(ctx context.Context, name string, port int) (Int
 	if err != nil {
 		return InterfaceDescriptor{}, err
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.directHTTP.Do(req)
 	if err != nil {
 		return InterfaceDescriptor{}, err
 	}
@@ -446,24 +721,76 @@ func validateInterfaceContract(contract InterfaceDescriptor) error {
 	return nil
 }
 
-func (c *Creator) userDockerPort(ctx context.Context, name string) (int, error) {
+func (c *Creator) inspectManaged(ctx context.Context, name string) (inspectContainerResponse, error) {
 	inspectURL := fmt.Sprintf("%s/containers/%s/json", c.baseURL, url.PathEscape(name))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, inspectURL, nil)
 	if err != nil {
-		return 0, err
+		return inspectContainerResponse{}, err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, err
+		return inspectContainerResponse{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return 0, dockerAPIError("container inspect", resp.StatusCode, body)
+		return inspectContainerResponse{}, dockerAPIError("container inspect", resp.StatusCode, body)
 	}
 	var item inspectContainerResponse
 	if err := json.Unmarshal(body, &item); err != nil {
-		return 0, fmt.Errorf("decode inspect response: %w", err)
+		return inspectContainerResponse{}, fmt.Errorf("decode inspect response: %w", err)
+	}
+	labels := item.Config.Labels
+	if labels == nil {
+		return inspectContainerResponse{}, errors.New("container labels missing")
+	}
+	if labels["mvp.type"] != "userdocker" || labels["mvp.managed_by"] != "user-docker-manager" {
+		return inspectContainerResponse{}, errors.New("target container is not a managed userdocker")
+	}
+	return item, nil
+}
+
+func (i inspectContainerResponse) firstNetwork() string {
+	for name := range i.NetworkSettings.Networks {
+		return name
+	}
+	return ""
+}
+
+func (c *Creator) markActive(name string, t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastActive[name] = t
+}
+
+func (c *Creator) getLastActive(name string) (time.Time, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	t, ok := c.lastActive[name]
+	return t, ok
+}
+
+func (c *Creator) clearLastActive(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.lastActive, name)
+}
+
+func envListToMap(in []string) map[string]string {
+	out := make(map[string]string, len(in))
+	for _, kv := range in {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 && parts[0] != "" {
+			out[parts[0]] = parts[1]
+		}
+	}
+	return out
+}
+
+func (c *Creator) userDockerPort(ctx context.Context, name string) (int, error) {
+	item, err := c.inspectManaged(ctx, name)
+	if err != nil {
+		return 0, err
 	}
 	if item.Config.Labels != nil {
 		if portText := item.Config.Labels["mvp.userdocker.port"]; portText != "" {
@@ -544,6 +871,10 @@ func dockerAPIError(op string, status int, body []byte) error {
 // docker compose build) whose names typically do not contain a registry host
 // slash or are tagged with a well-known prefix. For these, skip ImagePull.
 func isLocalImage(ref string) bool {
+	return isFrameworkImage(ref)
+}
+
+func isFrameworkImage(ref string) bool {
 	if strings.HasPrefix(ref, "whalesbot/") {
 		return true
 	}
@@ -551,4 +882,18 @@ func isLocalImage(ref string) bool {
 		return true
 	}
 	return false
+}
+
+func (c *Creator) AllowedImageList() []string {
+	out := make([]string, 0, len(c.AllowedImages))
+	for img := range c.AllowedImages {
+		out = append(out, img)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *Creator) isAllowedImage(ref string) bool {
+	_, ok := c.AllowedImages[ref]
+	return ok
 }
