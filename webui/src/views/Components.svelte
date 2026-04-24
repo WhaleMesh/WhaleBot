@@ -6,6 +6,14 @@
   let error = '';
   let timer;
 
+  function isUserDockerComponent(c) {
+    const type = String(c?.type || '').toLowerCase();
+    return type === 'userdocker';
+  }
+
+  $: userDockerComponents = components.filter((c) => isUserDockerComponent(c));
+  $: otherComponents = components.filter((c) => !isUserDockerComponent(c));
+
   async function refresh() {
     try {
       const c = await api.components();
@@ -21,6 +29,7 @@
 <h1>Components</h1>
 {#if error}<div class="err">{error}</div>{/if}
 
+<h2>Userdocker Components</h2>
 <table>
   <thead>
     <tr>
@@ -29,7 +38,7 @@
     </tr>
   </thead>
   <tbody>
-    {#each components as c}
+    {#each userDockerComponents as c}
       <tr>
         <td>{c.name}</td>
         <td><span class="type">{c.type}</span></td>
@@ -40,13 +49,44 @@
         <td>{c.last_checked_at ? new Date(c.last_checked_at).toLocaleTimeString() : '—'}</td>
       </tr>
     {:else}
-      <tr><td colspan="7" class="empty">No components registered yet.</td></tr>
+      <tr><td colspan="7" class="empty">No userdocker components registered yet.</td></tr>
+    {/each}
+  </tbody>
+</table>
+
+<h2>Other Components</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Name</th><th>Type</th><th>Endpoint</th>
+      <th>Status</th><th>Version</th><th>Failures</th><th>Last Check</th>
+    </tr>
+  </thead>
+  <tbody>
+    {#each otherComponents as c}
+      <tr>
+        <td>{c.name}</td>
+        <td><span class="type">{c.type}</span></td>
+        <td class="mono">{c.endpoint}</td>
+        <td><span class="chip {c.status}">{c.status}</span></td>
+        <td>{c.version}</td>
+        <td>{c.failure_count}</td>
+        <td>{c.last_checked_at ? new Date(c.last_checked_at).toLocaleTimeString() : '—'}</td>
+      </tr>
+    {:else}
+      <tr><td colspan="7" class="empty">No non-userdocker components registered yet.</td></tr>
     {/each}
   </tbody>
 </table>
 
 <style>
-  h1 { margin-top: 0; }
+  h1 { margin-top: 0; margin-bottom: 0.6rem; }
+  h2 {
+    margin: 1rem 0 0.45rem;
+    font-size: 0.92rem;
+    color: #c7d0e6;
+    font-weight: 600;
+  }
   table { width: 100%; border-collapse: collapse; background: #151923; border: 1px solid #232838; border-radius: 8px; overflow: hidden; }
   th, td { padding: 0.6rem 0.75rem; text-align: left; font-size: 0.9rem; }
   thead th { background: #1b2030; color: #9aa3bb; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }

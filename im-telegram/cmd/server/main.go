@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -47,19 +48,57 @@ func getenv(k, def string) string {
 	return def
 }
 
+func getenvInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
 type chatRequest struct {
 	UserID  string `json:"user_id"`
 	Channel string `json:"channel"`
 	ChatID  string `json:"chat_id"`
 	Message string `json:"message"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 type chatResponse struct {
-	Success   bool   `json:"success"`
-	SessionID string `json:"session_id"`
-	Reply     string `json:"reply"`
-	TraceID   string `json:"trace_id"`
-	Error     string `json:"error,omitempty"`
+	Success     bool             `json:"success"`
+	SessionID   string           `json:"session_id"`
+	Reply       string           `json:"reply"`
+	TraceID     string           `json:"trace_id"`
+	Attachments []chatAttachment `json:"attachments,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+type chatAttachment struct {
+	Filename      string `json:"filename"`
+	MimeType      string `json:"mime_type,omitempty"`
+	ContentBase64 string `json:"content_base64"`
+	SourcePath    string `json:"source_path,omitempty"`
+}
+
+type loggerEvent struct {
+	ID      int64             `json:"id"`
+	Time    time.Time         `json:"time"`
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields"`
+}
+
+type loggerEventsResponse struct {
+	Success bool          `json:"success"`
+	Events  []loggerEvent `json:"events"`
+	Error   string        `json:"error,omitempty"`
+}
+
+type sessionMessage struct {
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
 type chatState struct {
@@ -205,7 +244,10 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 	u.Timeout = 30
 	updates := bot.GetUpdatesChan(u)
 
-	cli := &http.Client{Timeout: 90 * time.Second}
+	chatTimeoutSec := getenvInt("IM_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
+	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
+	sessionURL := getenv("SESSION_URL", "http://session:8090")
+	sessionCLI := &http.Client{Timeout: 20 * time.Second}
 	conv := newConversationManager()
 
 	for {
@@ -232,23 +274,218 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 				continue
 			}
 			sessionID := conv.resolveSessionID(msg.Chat.ID)
+			traceID := newTraceID()
+			progressDone := make(chan struct{})
+			go streamProgressUpdates(ctx, cli, orchURL, bot, msg.Chat.ID, sessionID, traceID, progressDone, sessionCLI, sessionURL)
 			chatResp, err := callOrchestrator(ctx, cli, orchURL, chatRequest{
 				UserID:  strconv.FormatInt(msg.From.ID, 10),
 				Channel: "telegram",
 				ChatID:  sessionID,
 				Message: msg.Text,
+				TraceID: traceID,
 			})
+			close(progressDone)
 			reply := chatResp.Reply
-			traceID := chatResp.TraceID
+			if chatResp.TraceID != "" {
+				traceID = chatResp.TraceID
+			}
 			if err != nil {
 				slog.Error("orchestrator chat failed", "err", err)
-				reply = "抱歉，我暂时无法回应：" + err.Error()
+				if strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+					reply = fmt.Sprintf("执行超时（等待运行结果超过 %ds）。\nsession_id: `%s`\ntrace_id: `%s`\n请到 Session 页面查看中间步骤（tool_call/runtime事件）继续排查。", chatTimeoutSec, sessionID, defaultText(traceID, "unknown"))
+				} else {
+					reply = fmt.Sprintf("抱歉，我暂时无法回应：%s\nsession_id: `%s`\ntrace_id: `%s`", err.Error(), sessionID, defaultText(traceID, "unknown"))
+				}
 			}
 			if err := sendTelegramReply(ctx, bot, msg.Chat.ID, reply, sessionID, traceID); err != nil {
 				slog.Error("telegram reply failed", "chat_id", msg.Chat.ID, "session_id", sessionID, "trace_id", traceID, "err", err)
 			}
+			if err != nil {
+				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, reply)
+			}
+			if len(chatResp.Attachments) > 0 {
+				sendTelegramAttachments(ctx, bot, msg.Chat.ID, sessionID, traceID, chatResp.Attachments, sessionCLI, sessionURL)
+			}
 		}
 	}
+}
+
+func defaultText(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
+}
+
+func newTraceID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("trace_%d", time.Now().UnixNano())
+	}
+	return "trace_" + hex.EncodeToString(buf)
+}
+
+func streamProgressUpdates(
+	ctx context.Context,
+	cli *http.Client,
+	orchURL string,
+	bot *tgbotapi.BotAPI,
+	chatID int64,
+	sessionID, traceID string,
+	done <-chan struct{},
+	sessionCLI *http.Client,
+	sessionURL string,
+) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	seen := map[int64]struct{}{}
+	updates := 0
+	maxUpdates := 24
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			events, err := fetchLoggerEvents(ctx, cli, orchURL, 120)
+			if err != nil {
+				continue
+			}
+			for i := len(events) - 1; i >= 0; i-- {
+				evt := events[i]
+				if evt.Fields["trace_id"] != traceID {
+					continue
+				}
+				if evt.ID > 0 {
+					if _, ok := seen[evt.ID]; ok {
+						continue
+					}
+					seen[evt.ID] = struct{}{}
+				}
+				msg, ok := renderProgressEvent(evt, sessionID)
+				if !ok {
+					continue
+				}
+				if err := sendTelegramReply(ctx, bot, chatID, msg, sessionID, traceID); err != nil {
+					slog.Warn("telegram progress update failed", "chat_id", chatID, "trace_id", traceID, "err", err)
+					continue
+				}
+				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, msg)
+				updates++
+				if updates >= maxUpdates {
+					return
+				}
+			}
+		}
+	}
+}
+
+func fetchLoggerEvents(ctx context.Context, cli *http.Client, orchURL string, limit int) ([]loggerEvent, error) {
+	u := fmt.Sprintf("%s/api/v1/logger/events/recent?limit=%d", orchURL, limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("logger events status %d", resp.StatusCode)
+	}
+	var out loggerEventsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if !out.Success {
+		return nil, fmt.Errorf("logger events success=false: %s", out.Error)
+	}
+	return out.Events, nil
+}
+
+func renderProgressEvent(evt loggerEvent, sessionID string) (string, bool) {
+	f := evt.Fields
+	if f == nil || f["session_id"] != sessionID {
+		return "", false
+	}
+	switch evt.Message {
+	case "runtime_run_start":
+		return fmt.Sprintf("开始执行任务。\ntrace_id: `%s`", f["trace_id"]), true
+	case "runtime_context_loaded":
+		return fmt.Sprintf("上下文加载完成，历史消息 %s 条。", defaultText(f["history_count"], "0")), true
+	case "react_step_start":
+		return fmt.Sprintf("执行到 Step %s。", defaultText(f["step"], "?")), true
+	case "tool_call_start":
+		return fmt.Sprintf("调用工具：`%s`（step %s）", defaultText(f["tool_name"], "unknown"), defaultText(f["step"], "?")), true
+	case "tool_call_end":
+		return fmt.Sprintf("工具完成：`%s`（耗时 %sms）", defaultText(f["tool_name"], "unknown"), defaultText(f["duration_ms"], "?")), true
+	case "tool_call_error":
+		return fmt.Sprintf("工具报错：`%s`\n%s", defaultText(f["tool_name"], "unknown"), defaultText(f["error_message"], "unknown error")), true
+	case "runtime_react_loop_error":
+		return fmt.Sprintf("执行失败：%s", defaultText(f["error_message"], "react loop error")), true
+	case "runtime_run_completed":
+		return fmt.Sprintf("任务执行完成（reply_latency_ms=%s）。", defaultText(f["reply_latency_ms"], "?")), true
+	default:
+		return "", false
+	}
+}
+
+func sendTelegramAttachments(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, sessionID, traceID string, attachments []chatAttachment, sessionCLI *http.Client, sessionURL string) {
+	for _, att := range attachments {
+		raw, err := base64.StdEncoding.DecodeString(att.ContentBase64)
+		if err != nil {
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s` base64 解析失败。", att.Filename), sessionID, traceID)
+			continue
+		}
+		if len(raw) > 45*1024*1024 {
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s` 超过 Telegram 文件上限（%.2f MB）。", att.Filename, float64(len(raw))/1024.0/1024.0), sessionID, traceID)
+			continue
+		}
+		name := att.Filename
+		if strings.TrimSpace(name) == "" {
+			name = "artifact.bin"
+		}
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: name, Bytes: raw})
+		doc.Caption = fmt.Sprintf("编译产物：%s", name)
+		if _, err := bot.Send(doc); err != nil {
+			slog.Error("telegram send attachment failed", "chat_id", chatID, "session_id", sessionID, "trace_id", traceID, "filename", name, "err", err)
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s`。", name), sessionID, traceID)
+		} else {
+			_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, fmt.Sprintf("[artifact] %s uploaded", name))
+		}
+	}
+}
+
+func appendAssistantMessage(ctx context.Context, cli *http.Client, sessionURL, sessionID, content string) error {
+	if cli == nil || strings.TrimSpace(sessionURL) == "" || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(content) == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"session_id": sessionID,
+		"messages": []sessionMessage{
+			{
+				Role:      "assistant",
+				Content:   content,
+				Timestamp: time.Now(),
+			},
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sessionURL+"/append_messages", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("session append status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func sendTelegramReply(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, text, sessionID, traceID string) error {

@@ -43,6 +43,7 @@ last_verified_from:
 ## Purpose
 - Full user docker lifecycle management via Docker Engine API.
 - Supports dual-scope containers (`session_scoped` / `global_service`) with scope switching.
+- For `session_scoped` creation, container runtime name appends a sanitized `session_id` suffix to reduce naming conflicts across sessions.
 - Supports list/create/start/stop/touch/remove/restart and interface-discovery operations.
 - Proxies command execution, file CRUD and artifact export to managed userdocker containers.
 - Enforces `userdocker.v1` public interface contract on newly created userdocker containers.

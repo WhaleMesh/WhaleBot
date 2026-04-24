@@ -8,6 +8,7 @@
 
   let session = null;
   let logs = [];
+  let loggerEvents = [];
   let error = '';
   let timer;
   let lastMessageCount = 0;
@@ -62,6 +63,25 @@
     };
   }
 
+  function shortText(v, n = 220) {
+    const s = String(v || '');
+    if (s.length <= n) return s;
+    return `${s.slice(0, n)}...`;
+  }
+
+  function getPlanMarker(evt) {
+    const message = String(evt?.message || '');
+    const phase = String(evt?.fields?.phase || '');
+    const status = String(evt?.fields?.plan_status || '');
+    if (message === 'runtime_plan_confirmed' || phase === 'plan_confirmed' || status === 'confirmed') {
+      return 'plan_confirmed';
+    }
+    if (message === 'runtime_plan' || phase === 'plan' || status === 'proposed') {
+      return 'plan';
+    }
+    return '';
+  }
+
   $: messages = session?.messages || [];
   $: assistantMessages = messages.filter((m) => m.role === 'assistant');
   $: messagesWithRealTokens = messages.filter((m) => Number.isFinite(m.total_tokens) && m.total_tokens > 0);
@@ -80,6 +100,10 @@
   $: chatCompletedLogs = logs.filter(
     (l) => l?.message === 'chat completed' && l?.fields?.session_id === sessionId,
   );
+  $: sessionTraceEvents = (loggerEvents || [])
+    .filter((e) => e?.fields?.session_id === sessionId)
+    .sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
+  $: toolEventCount = sessionTraceEvents.filter((e) => (e?.fields?.module || '') === 'tool').length;
   $: if (messages.length > lastMessageCount && shouldAutoScroll) {
     scrollToLatestMessage();
   }
@@ -87,15 +111,23 @@
 
   async function refresh() {
     try {
-      const [sessionResp, logsResp] = await Promise.all([api.session(sessionId), api.logs()]);
+      const [sessionResp, logsResp, loggerResp] = await Promise.all([
+        api.session(sessionId),
+        api.logs(),
+        api.loggerEvents(500),
+      ]);
       if (sessionResp && sessionResp.success === false) {
         throw new Error(sessionResp.error || 'session detail api returned success=false');
       }
       if (logsResp && logsResp.success === false) {
         throw new Error(logsResp.error || 'logs api returned success=false');
       }
+      if (loggerResp && loggerResp.success === false) {
+        throw new Error(loggerResp.error || 'logger events api returned success=false');
+      }
       session = sessionResp.session || emptySession;
       logs = logsResp.logs || [];
+      loggerEvents = loggerResp.events || [];
       error = '';
     } catch (e) { error = String(e); }
   }
@@ -182,7 +214,50 @@
       <div class="k">Trace Events</div>
       <div class="v">{chatCompletedLogs.length}</div>
     </div>
+    <div class="meta-item">
+      <div class="k">Runtime Events</div>
+      <div class="v">{sessionTraceEvents.length}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Tool Events</div>
+      <div class="v">{toolEventCount}</div>
+    </div>
   </div>
+</div>
+
+<div class="trace-panel">
+  <h2>Runtime Timeline</h2>
+  {#if sessionTraceEvents.length > 0}
+    <div class="trace-list">
+      {#each sessionTraceEvents.slice(0, 120) as evt}
+        <details class="trace-item">
+          <summary>
+            <span class="t">{fmtTs(evt.time)}</span>
+            <span class="lvl {evt.level || 'info'}">{evt.level || 'info'}</span>
+            {#if getPlanMarker(evt) === 'plan'}
+              <span class="plan-mark plan">plan</span>
+            {:else if getPlanMarker(evt) === 'plan_confirmed'}
+              <span class="plan-mark confirmed">plan_confirmed</span>
+            {/if}
+            <span class="msg">{evt.message || '-'}</span>
+            <span class="meta">{evt.fields?.module || '-'} / {evt.fields?.phase || '-'}</span>
+            {#if evt.fields?.step}<span class="meta">step {evt.fields.step}</span>{/if}
+            {#if evt.fields?.tool_name}<span class="meta">{evt.fields.tool_name}</span>{/if}
+          </summary>
+          <div class="trace-body">
+            {#if evt.fields?.plan_status}<div><b>plan_status:</b> {evt.fields.plan_status}</div>{/if}
+            {#if evt.fields?.duration_ms}<div><b>duration_ms:</b> {evt.fields.duration_ms}</div>{/if}
+            {#if evt.fields?.trace_id}<div><b>trace_id:</b> {evt.fields.trace_id}</div>{/if}
+            {#if evt.fields?.error_message}<div class="trace-err"><b>error:</b> {evt.fields.error_message}</div>{/if}
+            {#if evt.fields?.args}<pre>{shortText(evt.fields.args, 1200)}</pre>{/if}
+            {#if evt.fields?.result}<pre>{shortText(evt.fields.result, 1200)}</pre>{/if}
+          </div>
+        </details>
+      {/each}
+    </div>
+  {:else}
+    <div class="trace-empty">No runtime events for this session yet.</div>
+  {/if}
 </div>
 
 <div class="thread">
@@ -245,6 +320,91 @@
   .meta-item .k { font-size: 0.74rem; color: #8f98ae; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.2rem; }
   .meta-item .v { font-size: 0.92rem; color: #dfe3ee; }
   .thread { display: flex; flex-direction: column; gap: 0.75rem; }
+  .trace-panel {
+    margin: 0.4rem 0 1rem;
+    background: #111522;
+    border: 1px solid #232838;
+    border-radius: 8px;
+    padding: 0.75rem;
+  }
+  .trace-panel h2 {
+    margin: 0 0 0.5rem;
+    font-size: 0.92rem;
+    color: #cfd7ea;
+  }
+  .trace-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    max-height: 34vh;
+    overflow: auto;
+  }
+  .trace-item {
+    border: 1px solid #263049;
+    border-radius: 6px;
+    background: #0d111a;
+    padding: 0.25rem 0.45rem;
+  }
+  .trace-item summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    color: #d8e0f1;
+    font-size: 0.78rem;
+  }
+  .trace-item .t { color: #8f98ae; }
+  .trace-item .msg { color: #dfe3ee; }
+  .trace-item .meta {
+    color: #aeb8cd;
+    background: #1a2133;
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+  }
+  .trace-item .lvl {
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    color: #8ea6ff;
+  }
+  .trace-item .lvl.error { color: #f16a6a; }
+  .trace-item .lvl.warn { color: #f5c469; }
+  .plan-mark {
+    border-radius: 999px;
+    padding: 0.08rem 0.45rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .plan-mark.plan {
+    background: rgba(114, 173, 255, 0.2);
+    color: #91bdff;
+  }
+  .plan-mark.confirmed {
+    background: rgba(90, 211, 155, 0.18);
+    color: #74dca8;
+  }
+  .trace-body {
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    color: #cbd3e5;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .trace-body pre {
+    margin: 0;
+    background: #0a0f17;
+    border: 1px solid #232838;
+    border-radius: 6px;
+    padding: 0.45rem 0.55rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .trace-err { color: #ffb8bd; }
+  .trace-empty { color: #8f98ae; font-size: 0.82rem; }
   .msg { padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #232838; max-width: 80%; }
   .msg.user { background: #172232; align-self: flex-end; }
   .msg.assistant { background: #151923; align-self: flex-start; }

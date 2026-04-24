@@ -30,7 +30,9 @@ last_verified_from:
 - Dynamically discovers healthy tool components from orchestrator before each run.
 - Calls `chatmodel` with dynamically built tool definitions and executes returned tool calls.
 - Persists final user+assistant pair into `session`.
-- Emits structured tool lifecycle events (`tool_call_start`, `tool_call_end`, `tool_call_error`) with full args/result payloads for diagnosis.
+- Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.
+- For execution-oriented requests, first returns an execution plan and asks user confirmation before running tools.
+- `export_artifact` tool outputs can be returned as chat attachments (`filename` + base64 payload) for IM delivery.
 
 ## External API
 ### Endpoint: GET /health
@@ -104,9 +106,9 @@ effect: bind_port_for_http_server
 ### REACT_MAX_STEPS
 ```yaml
 name: REACT_MAX_STEPS
-default: "8"
+default: "16"
 required: false
-effect: max_iterations_before_react_loop_fails
+effect: max_iterations_before_runtime_forces_text_finalization
 ```
 
 ### ORCHESTRATOR_URL

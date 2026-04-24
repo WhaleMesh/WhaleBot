@@ -56,7 +56,11 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `runtime/cmd/server/main.go`
   - host exposed: no
   - note: discovers healthy tool/environment components via orchestrator and builds tool list per run
-  - note: emits structured tool lifecycle events (`tool_call_start` / `tool_call_end` / `tool_call_error`) and writes to `logger` when available
+  - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
+  - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
+  - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available
+  - note: execution-oriented requests now default to plan-first mode (ask for user confirmation before tool execution)
+  - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
 - `im-telegram`
   - purpose: Telegram gateway
   - entry: `im-telegram/cmd/server/main.go`
@@ -64,6 +68,9 @@ Read this first, then read only the referenced source-of-truth files.
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
   - note: outbound send path strips internal thought/channel markers (for example `<|channel|>...`) before Telegram delivery
   - note: send flow includes retry + format-fallback (HTML -> plain text) and best-effort failure notice to avoid silent drops
+  - note: streams step-level progress updates from logger events (`react/tool/runtime` phases) during long-running tasks
+  - note: can upload binary artifacts to Telegram as documents when runtime returns chat attachments
+  - note: writes progress/attachment status messages to `session` via `SESSION_URL` so Session page stays aligned with IM timeline
   - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
@@ -76,6 +83,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: raw language images (for example official `golang:*`) are rejected unless they expose `/api/v1/userdocker/interface`
   - note: pulling non-framework images requires explicit user approval flag (`external_image_approved_by_user=true`)
   - note: supports `session_scoped` and `global_service` container scopes with `switch-scope`
+  - note: session-scoped container names append a sanitized `session_id` suffix to reduce naming conflicts across sessions
   - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for session-scoped containers (default 24h)
 - `logger`
   - purpose: event logs (SQLite)
@@ -99,6 +107,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
   - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`
   - note: session detail keeps thought traces and renders them collapsed by default
+  - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
@@ -122,6 +131,14 @@ Read this first, then read only the referenced source-of-truth files.
   - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
+- IM/session sync:
+  - `SESSION_URL` (for `im-telegram` progress message append)
+- Orchestrator request timeout:
+  - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
+- Telegram gateway timeout:
+  - `IM_TELEGRAM_CHAT_TIMEOUT_SEC`
+- Telegram progress stream:
+  - enabled by default via logger polling during chat execution (no extra env required)
 - Userdocker manager lifecycle:
   - `USERDOCKER_IDLE_HOURS`, `USERDOCKER_IDLE_CHECK_SEC`, `USERDOCKER_ALLOWED_IMAGES`
 - Health loop:

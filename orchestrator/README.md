@@ -263,6 +263,14 @@ required: false
 effect: consecutive_failures_before_component_removed
 ```
 
+### ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+```yaml
+name: ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+default: "240"
+required: false
+effect: timeout_seconds_for_orchestrator_http_proxy_to_runtime_tool_and_other_upstreams
+```
+
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: none.

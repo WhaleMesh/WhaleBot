@@ -47,11 +47,19 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Success   bool   `json:"success"`
-	SessionID string `json:"session_id,omitempty"`
-	Reply     string `json:"reply,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Success     bool             `json:"success"`
+	SessionID   string           `json:"session_id,omitempty"`
+	Reply       string           `json:"reply,omitempty"`
+	TraceID     string           `json:"trace_id,omitempty"`
+	Attachments []chatAttachment `json:"attachments,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+type chatAttachment struct {
+	Filename      string `json:"filename"`
+	MimeType      string `json:"mime_type,omitempty"`
+	ContentBase64 string `json:"content_base64"`
+	SourcePath    string `json:"source_path,omitempty"`
 }
 
 type sessionMessage struct {
@@ -94,18 +102,18 @@ type usage struct {
 }
 
 type userDockerCreateBody struct {
-	Name         string            `json:"name"`
-	Image        string            `json:"image"`
-	Cmd          []string          `json:"cmd"`
-	Env          map[string]string `json:"env"`
-	Labels       map[string]string `json:"labels"`
-	Network      string            `json:"network"`
-	AutoRegister bool              `json:"auto_register"`
-	Port         int               `json:"port,omitempty"`
-	Scope        string            `json:"scope,omitempty"`
-	SessionID    string            `json:"session_id,omitempty"`
-	Workspace    string            `json:"workspace,omitempty"`
-	ExternalImageApprovedByUser bool `json:"external_image_approved_by_user,omitempty"`
+	Name                        string            `json:"name"`
+	Image                       string            `json:"image"`
+	Cmd                         []string          `json:"cmd"`
+	Env                         map[string]string `json:"env"`
+	Labels                      map[string]string `json:"labels"`
+	Network                     string            `json:"network"`
+	AutoRegister                bool              `json:"auto_register"`
+	Port                        int               `json:"port,omitempty"`
+	Scope                       string            `json:"scope,omitempty"`
+	SessionID                   string            `json:"session_id,omitempty"`
+	Workspace                   string            `json:"workspace,omitempty"`
+	ExternalImageApprovedByUser bool              `json:"external_image_approved_by_user,omitempty"`
 }
 
 type userDockerCreateResp struct {
@@ -187,7 +195,7 @@ func main() {
 	chatmodelURL := getenv("CHATMODEL_URL", "http://chatmodel:8081")
 	selfHost := getenv("SERVICE_HOST", "runtime")
 	self := "http://" + selfHost + ":" + port
-	maxSteps := getenvInt("REACT_MAX_STEPS", 8)
+	maxSteps := getenvInt("REACT_MAX_STEPS", 16)
 
 	svc := &reactService{
 		orchURL:      orchURL,
@@ -261,6 +269,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
 	history, err := s.fetchContext(sessionID)
+	contextErr := err
 	if err != nil {
 		slog.Error("get_context failed", "err", err, "trace_id", traceID)
 	}
@@ -269,9 +278,109 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("fetch runtime catalog failed; continue with discovered defaults", "err", err, "trace_id", traceID)
 	}
+	toolEnabled := routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport
+	s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_run_start", map[string]string{
+		"trace_id":    traceID,
+		"session_id":  sessionID,
+		"module":      "runtime",
+		"phase":       "start",
+		"channel":     req.Channel,
+		"chat_id":     req.ChatID,
+		"message_len": strconv.Itoa(len(req.Message)),
+	})
+	if err != nil {
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "warn", "runtime_catalog_error", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "runtime",
+			"phase":         "error",
+			"error_message": err.Error(),
+		})
+	}
+	if contextErr != nil {
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "warn", "runtime_context_error", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "runtime",
+			"phase":         "error",
+			"error_message": contextErr.Error(),
+		})
+	}
+	s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_context_loaded", map[string]string{
+		"trace_id":      traceID,
+		"session_id":    sessionID,
+		"module":        "runtime",
+		"phase":         "end",
+		"history_count": strconv.Itoa(len(history)),
+	})
+	s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_react_loop_start", map[string]string{
+		"trace_id":     traceID,
+		"session_id":   sessionID,
+		"module":       "react",
+		"phase":        "start",
+		"max_steps":    strconv.Itoa(s.maxSteps),
+		"tool_enabled": strconv.FormatBool(toolEnabled),
+	})
+	if isToolInventoryQuery(req.Message) {
+		finalText := renderToolInventoryReply(catalog)
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_tool_inventory_response", map[string]string{
+			"trace_id":    traceID,
+			"session_id":  sessionID,
+			"module":      "runtime",
+			"phase":       "end",
+			"tool_count":  strconv.Itoa(len(catalog.Tools)),
+			"reply_chars": strconv.Itoa(len(finalText)),
+		})
+		now := time.Now()
+		userStored := sessionMessage{Role: "user", Content: req.Message, Timestamp: start}
+		assistantMsg := sessionMessage{
+			Role:           "assistant",
+			Content:        finalText,
+			Timestamp:      now,
+			ReplyLatencyMS: now.Sub(start).Milliseconds(),
+		}
+		if err := s.appendMessages(sessionID, []sessionMessage{userStored, assistantMsg}); err != nil {
+			slog.Error("append_messages failed", "err", err, "trace_id", traceID)
+		}
+		writeJSON(w, 200, chatResponse{
+			Success:   true,
+			SessionID: sessionID,
+			Reply:     finalText,
+			TraceID:   traceID,
+		})
+		return
+	}
 
 	msgs := make([]cmMessage, 0, len(history)+4)
 	msgs = append(msgs, cmMessage{Role: "system", Content: buildSystemPrompt(catalog)})
+	planConfirmed := isPlanConfirmationMessage(req.Message, history)
+	forcePlanOnly := shouldForcePlanFirst(req.Message, history)
+	if forcePlanOnly {
+		msgs = append(msgs, cmMessage{
+			Role:    "system",
+			Content: "当前用户请求涉及实际执行。你必须先输出一个简洁执行计划（步骤列表），并明确询问用户“是否按此计划执行”。在用户确认前，不要调用任何工具，不要执行任务。",
+		})
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_plan", map[string]string{
+			"trace_id":     traceID,
+			"session_id":   sessionID,
+			"module":       "runtime",
+			"phase":        "plan",
+			"plan_status":  "proposed",
+			"message_text": "plan generated and waiting for user confirmation",
+		})
+	} else if planConfirmed {
+		msgs = append(msgs, cmMessage{
+			Role:    "system",
+			Content: "用户已确认计划。现在可以执行任务，并在最终回复中按步骤给出每一步执行结果摘要。",
+		})
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_plan_confirmed", map[string]string{
+			"trace_id":    traceID,
+			"session_id":  sessionID,
+			"module":      "runtime",
+			"phase":       "plan_confirmed",
+			"plan_status": "confirmed",
+		})
+	}
 	for _, m := range history {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
@@ -280,9 +389,16 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs = append(msgs, cmMessage{Role: "user", Content: req.Message})
 
-	finalText, totalUsage, err := s.reactLoop(r.Context(), msgs, routes, traceID, sessionID)
+	finalText, totalUsage, attachments, err := s.reactLoop(r.Context(), msgs, routes, traceID, sessionID, forcePlanOnly)
 	if err != nil {
 		slog.Error("react loop failed", "err", err, "trace_id", traceID)
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "error", "runtime_react_loop_error", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "react",
+			"phase":         "error",
+			"error_message": err.Error(),
+		})
 		writeJSON(w, 200, chatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
 		return
 	}
@@ -306,13 +422,42 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.appendMessages(sessionID, []sessionMessage{userStored, assistantMsg}); err != nil {
 		slog.Error("append_messages failed", "err", err, "trace_id", traceID)
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "error", "runtime_session_append_error", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "session",
+			"phase":         "error",
+			"error_message": err.Error(),
+		})
+	} else {
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_session_append_done", map[string]string{
+			"trace_id":   traceID,
+			"session_id": sessionID,
+			"module":     "session",
+			"phase":      "end",
+		})
 	}
+	doneFields := map[string]string{
+		"trace_id":         traceID,
+		"session_id":       sessionID,
+		"module":           "runtime",
+		"phase":            "end",
+		"reply_chars":      strconv.Itoa(len(finalText)),
+		"reply_latency_ms": strconv.FormatInt(assistantMsg.ReplyLatencyMS, 10),
+	}
+	if totalUsage != nil {
+		doneFields["prompt_tokens"] = strconv.Itoa(totalUsage.PromptTokens)
+		doneFields["completion_tokens"] = strconv.Itoa(totalUsage.CompletionTokens)
+		doneFields["total_tokens"] = strconv.Itoa(totalUsage.TotalTokens)
+	}
+	s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_run_completed", doneFields)
 
 	writeJSON(w, 200, chatResponse{
-		Success:   true,
-		SessionID: sessionID,
-		Reply:     finalText,
-		TraceID:   traceID,
+		Success:     true,
+		SessionID:   sessionID,
+		Reply:       finalText,
+		TraceID:     traceID,
+		Attachments: attachments,
 	})
 }
 
@@ -427,29 +572,50 @@ func userDockerManagerToolDefinition() map[string]any {
 	}
 }
 
-func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string) (string, *usage, error) {
+func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string, forcePlanOnly bool) (string, *usage, []chatAttachment, error) {
 	tools := make([]map[string]any, 0, 1)
 	if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 		tools = append(tools, userDockerManagerToolDefinition())
 	}
 	params := map[string]any{
 		"temperature": 0.4,
-		"max_tokens":  1024.0,
+		"max_tokens":  1536.0,
 		"tool_choice": "auto",
 	}
 	totalUsage := &usage{}
 	hasUsage := false
+	lastToolSummary := ""
+	attachments := make([]chatAttachment, 0, 1)
 
 	for step := 0; step < s.maxSteps; step++ {
-		out, err := s.invokeChatModel(ctx, msgs, tools, params)
+		stepTools := tools
+		stepParams := cloneAnyMap(params)
+		if forcePlanOnly {
+			stepTools = nil
+			stepParams["tool_choice"] = "none"
+		}
+		// Force a text-only closing attempt at the last step to avoid silent ReAct exhaustion.
+		if step == s.maxSteps-1 {
+			stepTools = nil
+			stepParams["tool_choice"] = "none"
+		}
+		s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "react_step_start", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "react",
+			"phase":         "start",
+			"step":          strconv.Itoa(step + 1),
+			"forced_finish": strconv.FormatBool(step == s.maxSteps-1),
+		})
+		out, err := s.invokeChatModel(ctx, msgs, stepTools, stepParams)
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		if !out.Success {
 			if out.Error != "" {
-				return "", nil, errors.New(out.Error)
+				return "", nil, nil, errors.New(out.Error)
 			}
-			return "", nil, errors.New("chatmodel invoke failed")
+			return "", nil, nil, errors.New("chatmodel invoke failed")
 		}
 		if out.Usage != nil {
 			totalUsage.PromptTokens += out.Usage.PromptTokens
@@ -458,14 +624,31 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			hasUsage = true
 		}
 		assistant := out.Message
+		s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "react_model_response", map[string]string{
+			"trace_id":        traceID,
+			"session_id":      sessionID,
+			"module":          "react",
+			"phase":           "end",
+			"step":            strconv.Itoa(step + 1),
+			"tool_call_count": strconv.Itoa(len(assistant.ToolCalls)),
+			"content_chars":   strconv.Itoa(len(assistant.Content)),
+		})
 		if len(assistant.ToolCalls) == 0 {
 			if assistant.Content == "" {
-				return "", nil, errors.New("empty assistant message")
+				return "", nil, nil, errors.New("empty assistant message")
 			}
+			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "react_final_reply_ready", map[string]string{
+				"trace_id":      traceID,
+				"session_id":    sessionID,
+				"module":        "react",
+				"phase":         "end",
+				"step":          strconv.Itoa(step + 1),
+				"content_chars": strconv.Itoa(len(assistant.Content)),
+			})
 			if hasUsage {
-				return assistant.Content, totalUsage, nil
+				return assistant.Content, totalUsage, attachments, nil
 			}
-			return assistant.Content, nil, nil
+			return assistant.Content, nil, attachments, nil
 		}
 
 		msgs = append(msgs, assistant)
@@ -488,9 +671,11 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "tool_call_start", startFields)
 
 			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
+			resForModel := sanitizeToolResultTextForModel(resText)
 			durationMS := time.Since(callStart).Milliseconds()
 			if err != nil {
 				resText = toolJSON(false, nil, err.Error())
+				resForModel = sanitizeToolResultTextForModel(resText)
 				errFields := map[string]string{
 					"trace_id":      traceID,
 					"session_id":    sessionID,
@@ -501,12 +686,12 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 					"step":          strconv.Itoa(step + 1),
 					"duration_ms":   strconv.FormatInt(durationMS, 10),
 					"args":          tc.Function.Arguments,
-					"result":        resText,
+					"result":        resForModel,
 					"error_message": err.Error(),
 				}
 				s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "error", "tool_call_error", errFields)
 			} else {
-				ok, errMsg := decodeToolResult(resText)
+				ok, errMsg := decodeToolResult(resForModel)
 				phase := "end"
 				level := "info"
 				eventName := "tool_call_end"
@@ -525,21 +710,40 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 					"step":         strconv.Itoa(step + 1),
 					"duration_ms":  strconv.FormatInt(durationMS, 10),
 					"args":         tc.Function.Arguments,
-					"result":       resText,
+					"result":       resForModel,
 				}
 				if errMsg != "" {
 					endFields["error_message"] = errMsg
 				}
 				s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, level, eventName, endFields)
 			}
+			attachments = mergeAttachments(attachments, extractAttachmentsFromToolCall(tc.Function.Name, tc.Function.Arguments, resText))
 			msgs = append(msgs, cmMessage{
 				Role:       "tool",
 				ToolCallID: tc.ID,
-				Content:    resText,
+				Content:    resForModel,
 			})
+			lastToolSummary = summarizeToolResultForFallback(tc.Function.Name, resForModel)
 		}
 	}
-	return "", nil, errors.New("reached max ReAct steps without a final reply")
+	fallback := "我已完成多轮工具执行，但达到当前 ReAct 步数上限，先返回已获得结果。"
+	if lastToolSummary != "" {
+		fallback += "\n\n最近一次工具结果：\n" + lastToolSummary
+	}
+	fallback += "\n\n如需继续自动执行，请提高 REACT_MAX_STEPS 后重试。"
+	s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "warn", "react_step_limit_fallback", map[string]string{
+		"trace_id":       traceID,
+		"session_id":     sessionID,
+		"module":         "react",
+		"phase":          "error",
+		"max_steps":      strconv.Itoa(s.maxSteps),
+		"last_tool":      truncate(lastToolSummary, 500),
+		"fallback_chars": strconv.Itoa(len(fallback)),
+	})
+	if hasUsage {
+		return fallback, totalUsage, attachments, nil
+	}
+	return fallback, nil, attachments, nil
 }
 
 func toolJSON(ok bool, data any, errMsg string) string {
@@ -567,30 +771,30 @@ func (s *reactService) dispatchTool(ctx context.Context, routes availableRoutes,
 
 func (s *reactService) manageUserDocker(ctx context.Context, routes availableRoutes, argsJSON, runtimeSessionID string) (string, error) {
 	var args struct {
-		Action       string            `json:"action"`
-		Name         string            `json:"name"`
-		Image        string            `json:"image"`
-		Cmd          []string          `json:"cmd"`
-		Env          map[string]string `json:"env"`
-		Labels       map[string]string `json:"labels"`
-		Network      string            `json:"network"`
-		AutoRegister *bool             `json:"auto_register"`
-		IncludeStop  *bool             `json:"include_stopped"`
-		Force        *bool             `json:"force"`
-		TimeoutSec   int               `json:"timeout_sec"`
-		Port         int               `json:"port"`
-		Scope        string            `json:"scope"`
-		TargetScope  string            `json:"target_scope"`
-		SessionID    string            `json:"session_id"`
-		Workspace    string            `json:"workspace"`
-		ExternalImageApprovedByUser *bool `json:"external_image_approved_by_user"`
-		Path         string            `json:"path"`
-		From         string            `json:"from"`
-		To           string            `json:"to"`
-		ContentB64   string            `json:"content_base64"`
-		Command      []string          `json:"command"`
-		CommandSh    string            `json:"command_sh"`
-		Cwd          string            `json:"cwd"`
+		Action                      string            `json:"action"`
+		Name                        string            `json:"name"`
+		Image                       string            `json:"image"`
+		Cmd                         []string          `json:"cmd"`
+		Env                         map[string]string `json:"env"`
+		Labels                      map[string]string `json:"labels"`
+		Network                     string            `json:"network"`
+		AutoRegister                *bool             `json:"auto_register"`
+		IncludeStop                 *bool             `json:"include_stopped"`
+		Force                       *bool             `json:"force"`
+		TimeoutSec                  int               `json:"timeout_sec"`
+		Port                        int               `json:"port"`
+		Scope                       string            `json:"scope"`
+		TargetScope                 string            `json:"target_scope"`
+		SessionID                   string            `json:"session_id"`
+		Workspace                   string            `json:"workspace"`
+		ExternalImageApprovedByUser *bool             `json:"external_image_approved_by_user"`
+		Path                        string            `json:"path"`
+		From                        string            `json:"from"`
+		To                          string            `json:"to"`
+		ContentB64                  string            `json:"content_base64"`
+		Command                     []string          `json:"command"`
+		CommandSh                   string            `json:"command_sh"`
+		Cwd                         string            `json:"cwd"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return toolJSON(false, nil, "invalid tool arguments: "+err.Error()), nil
@@ -710,11 +914,11 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			return toolJSON(false, nil, "name is required for action=exec"), nil
 		}
 		body := map[string]any{
-			"session_id": sessionID,
-			"command":    args.Command,
-			"command_sh": args.CommandSh,
-			"cwd":        args.Cwd,
-			"env":        args.Env,
+			"session_id":  sessionID,
+			"command":     args.Command,
+			"command_sh":  args.CommandSh,
+			"cwd":         args.Cwd,
+			"env":         args.Env,
 			"timeout_sec": args.TimeoutSec,
 		}
 		return s.userDockerPost(ctx, args.Name, "exec", body)
@@ -1272,6 +1476,266 @@ func decodeToolResult(raw string) (ok bool, errMsg string) {
 	return payload.Success, payload.Error
 }
 
+func shouldForcePlanFirst(message string, history []sessionMessage) bool {
+	msg := strings.TrimSpace(strings.ToLower(message))
+	if msg == "" {
+		return false
+	}
+	if isPlanConfirmationMessage(msg, history) {
+		return false
+	}
+	keywords := []string{
+		"执行", "运行", "编译", "构建", "创建", "上传", "部署", "测试",
+		"run", "exec", "build", "compile", "create", "deploy", "upload", "download",
+	}
+	for _, k := range keywords {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func isToolInventoryQuery(message string) bool {
+	msg := strings.TrimSpace(strings.ToLower(message))
+	if msg == "" {
+		return false
+	}
+	keywords := []string{
+		"列举工具", "有哪些工具", "可用工具", "现在有的工具", "工具清单", "tool list", "available tools", "what tools",
+	}
+	for _, k := range keywords {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderToolInventoryReply(c runtimeCatalog) string {
+	if len(c.Tools) == 0 {
+		return "我当前没有可用工具（runtime 未发现健康 tool 组件）。"
+	}
+	lines := []string{"我当前仅能使用以下 runtime 注册工具（不会使用未列出的工具）："}
+	for i, t := range c.Tools {
+		lines = append(lines, fmt.Sprintf("%d. `%s`", i+1, t.Name))
+		lines = append(lines, "   - "+t.Description)
+		if t.Name == "manage_user_docker" {
+			lines = append(lines, "   - actions: list_images, list, create, start, stop, touch, switch_scope, remove, restart, get_interface, exec, list_files, read_file, write_file, delete_file, mkdir, move, export_artifact")
+		}
+	}
+	lines = append(lines, "如果你看到我提到未在上面出现的工具名称，那就是错误输出，请直接指出。")
+	return joinLines(lines)
+}
+
+func isPlanConfirmationMessage(message string, history []sessionMessage) bool {
+	msg := strings.TrimSpace(strings.ToLower(message))
+	if msg == "" {
+		return false
+	}
+	strongConfirm := []string{
+		"确认", "按计划", "开始执行", "执行吧", "继续执行", "同意",
+		"confirm", "approved", "go ahead", "proceed", "execute now",
+	}
+	for _, k := range strongConfirm {
+		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	if !hasPendingPlanPrompt(history) {
+		return false
+	}
+	softConfirm := []string{
+		"执行", "继续", "开始", "可以", "好的", "ok", "yes", "y",
+	}
+	for _, k := range softConfirm {
+		if msg == k {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPendingPlanPrompt(history []sessionMessage) bool {
+	if len(history) == 0 {
+		return false
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		text := strings.ToLower(strings.TrimSpace(m.Content))
+		if text == "" {
+			continue
+		}
+		if strings.Contains(text, "是否按此计划执行") ||
+			strings.Contains(text, "是否按这个计划执行") ||
+			(strings.Contains(text, "计划") && strings.Contains(text, "执行") && strings.Contains(text, "是否")) {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+func sanitizeToolResultTextForModel(raw string) string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return truncate(raw, 4000)
+	}
+	cleaned := sanitizeToolPayloadForModel(payload, "")
+	b, err := json.Marshal(cleaned)
+	if err != nil {
+		return truncate(raw, 4000)
+	}
+	return string(b)
+}
+
+func extractAttachmentsFromToolCall(toolName, argsJSON, toolRaw string) []chatAttachment {
+	if toolName != "manage_user_docker" {
+		return nil
+	}
+	var args struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil || args.Action != "export_artifact" {
+		return nil
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Success     bool   `json:"success"`
+			Filename    string `json:"filename"`
+			Path        string `json:"path"`
+			ContentBase string `json:"content_base64"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(toolRaw), &payload); err != nil {
+		return nil
+	}
+	if !payload.Success || !payload.Data.Success || strings.TrimSpace(payload.Data.ContentBase) == "" {
+		return nil
+	}
+	filename := strings.TrimSpace(payload.Data.Filename)
+	if filename == "" {
+		filename = "artifact.tar.gz"
+	}
+	return []chatAttachment{
+		{
+			Filename:      filename,
+			MimeType:      "application/gzip",
+			ContentBase64: payload.Data.ContentBase,
+			SourcePath:    payload.Data.Path,
+		},
+	}
+}
+
+func mergeAttachments(existing, incoming []chatAttachment) []chatAttachment {
+	if len(incoming) == 0 {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing))
+	for _, a := range existing {
+		key := a.Filename + "|" + a.SourcePath + "|" + strconv.Itoa(len(a.ContentBase64))
+		seen[key] = struct{}{}
+	}
+	for _, a := range incoming {
+		key := a.Filename + "|" + a.SourcePath + "|" + strconv.Itoa(len(a.ContentBase64))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		existing = append(existing, a)
+	}
+	return existing
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+func summarizeToolResultForFallback(toolName, raw string) string {
+	var payload struct {
+		Success bool           `json:"success"`
+		Error   string         `json:"error,omitempty"`
+		Data    map[string]any `json:"data,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return fmt.Sprintf("%s: %s", toolName, truncate(raw, 900))
+	}
+	if !payload.Success {
+		if payload.Error == "" {
+			payload.Error = "tool returned success=false"
+		}
+		return fmt.Sprintf("%s 失败：%s", toolName, payload.Error)
+	}
+	if len(payload.Data) == 0 {
+		return fmt.Sprintf("%s 成功。", toolName)
+	}
+	b, err := json.Marshal(payload.Data)
+	if err != nil {
+		return fmt.Sprintf("%s 成功。", toolName)
+	}
+	return fmt.Sprintf("%s 成功：%s", toolName, truncate(string(b), 1200))
+}
+
+func sanitizeToolPayloadForModel(payload map[string]any, requestPath string) map[string]any {
+	cleaned, ok := sanitizeAnyForModel(payload, "", strings.Contains(requestPath, "/artifacts/export")).(map[string]any)
+	if !ok {
+		return payload
+	}
+	return cleaned
+}
+
+func sanitizeAnyForModel(v any, key string, artifactExport bool) any {
+	switch val := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(val))
+		for k, item := range val {
+			out[k] = sanitizeAnyForModel(item, k, artifactExport)
+		}
+		return out
+	case []any:
+		maxItems := 80
+		if len(val) <= maxItems {
+			out := make([]any, 0, len(val))
+			for _, item := range val {
+				out = append(out, sanitizeAnyForModel(item, key, artifactExport))
+			}
+			return out
+		}
+		out := make([]any, 0, maxItems+1)
+		for i := 0; i < maxItems; i++ {
+			out = append(out, sanitizeAnyForModel(val[i], key, artifactExport))
+		}
+		out = append(out, fmt.Sprintf("... truncated %d items", len(val)-maxItems))
+		return out
+	case string:
+		limit := 4000
+		switch key {
+		case "stdout", "stderr", "content":
+			limit = 3000
+		case "content_base64":
+			if artifactExport {
+				limit = 1024
+			} else {
+				limit = 2048
+			}
+		}
+		if len(val) <= limit {
+			return val
+		}
+		return val[:limit] + fmt.Sprintf("... [truncated %d chars]", len(val)-limit)
+	default:
+		return v
+	}
+}
+
 func hasCapability(caps []string, target string) bool {
 	for _, c := range caps {
 		if c == target {
@@ -1298,6 +1762,9 @@ func buildSystemPrompt(c runtimeCatalog) string {
 		"创建容器优先使用框架镜像（例如 whalesbot/*）；如需外部镜像，必须先明确征得用户同意后再继续。",
 		"在选择镜像前，先使用 manage_user_docker(action=list_images) 获取框架可用镜像列表。",
 		"Go 编译任务优先使用 whalesbot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
+		"当关键结果（例如编译日志、访问结果、产物导出结果）已拿到时，立即停止继续调用工具并输出最终回复。",
+		"当 export_artifact 已返回成功时，不要再次调用 export_artifact；应直接总结并回复用户。",
+		"你绝对不能虚构任何工具名。只能使用和描述当前 runtime 显示的工具清单；禁止提及未注册工具。",
 	}
 	if len(c.Tools) == 0 {
 		lines = append(lines, "- 暂无可用 tool，只能直接回答。")

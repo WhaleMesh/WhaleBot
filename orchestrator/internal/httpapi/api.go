@@ -26,11 +26,14 @@ type Server struct {
 	HTTP     *http.Client
 }
 
-func NewServer(r *registry.Registry, lg *logs.Ring) *Server {
+func NewServer(r *registry.Registry, lg *logs.Ring, upstreamTimeout time.Duration) *Server {
+	if upstreamTimeout <= 0 {
+		upstreamTimeout = 60 * time.Second
+	}
 	return &Server{
 		Registry: r,
 		Logs:     lg,
-		HTTP:     &http.Client{Timeout: 60 * time.Second},
+		HTTP:     &http.Client{Timeout: upstreamTimeout},
 	}
 }
 
@@ -177,7 +180,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.Channel == "" {
 		req.Channel = "web"
 	}
-	traceID := randomHex(8)
+	traceID := req.TraceID
+	if traceID == "" {
+		traceID = randomHex(8)
+	}
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
 	if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {

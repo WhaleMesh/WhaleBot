@@ -38,6 +38,7 @@ func main() {
 	port := getenv("ORCHESTRATOR_PORT", "8080")
 	interval := time.Duration(getenvInt("HEALTHCHECK_INTERVAL_SEC", 5)) * time.Second
 	threshold := getenvInt("HEALTHCHECK_FAIL_THRESHOLD", 3)
+	upstreamTimeout := time.Duration(getenvInt("ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC", 240)) * time.Second
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -62,7 +63,7 @@ func main() {
 	})
 	hc.Start(ctx)
 
-	srv := httpapi.NewServer(reg, ring)
+	srv := httpapi.NewServer(reg, ring, upstreamTimeout)
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           srv.Router(),
@@ -70,7 +71,7 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("orchestrator listening", "port", port, "interval", interval.String(), "threshold", threshold)
+		slog.Info("orchestrator listening", "port", port, "interval", interval.String(), "threshold", threshold, "upstream_timeout", upstreamTimeout.String())
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server failed", "err", err)
 			os.Exit(1)

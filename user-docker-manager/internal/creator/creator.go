@@ -23,18 +23,18 @@ const (
 )
 
 type CreateRequest struct {
-	Name         string            `json:"name"`
-	Image        string            `json:"image"`
-	Cmd          []string          `json:"cmd"`
-	Env          map[string]string `json:"env"`
-	Labels       map[string]string `json:"labels"`
-	Network      string            `json:"network"`
-	AutoRegister bool              `json:"auto_register"`
-	Port         int               `json:"port,omitempty"`
-	Scope        string            `json:"scope,omitempty"`
-	SessionID    string            `json:"session_id,omitempty"`
-	Workspace    string            `json:"workspace,omitempty"`
-	ExternalImageApprovedByUser bool `json:"external_image_approved_by_user,omitempty"`
+	Name                        string            `json:"name"`
+	Image                       string            `json:"image"`
+	Cmd                         []string          `json:"cmd"`
+	Env                         map[string]string `json:"env"`
+	Labels                      map[string]string `json:"labels"`
+	Network                     string            `json:"network"`
+	AutoRegister                bool              `json:"auto_register"`
+	Port                        int               `json:"port,omitempty"`
+	Scope                       string            `json:"scope,omitempty"`
+	SessionID                   string            `json:"session_id,omitempty"`
+	Workspace                   string            `json:"workspace,omitempty"`
+	ExternalImageApprovedByUser bool              `json:"external_image_approved_by_user,omitempty"`
 }
 
 type CreateResult struct {
@@ -235,6 +235,10 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	if scope == ScopeSessionScoped && req.SessionID == "" {
 		return CreateResult{}, errors.New("session_id is required for session_scoped containers")
 	}
+	containerName := req.Name
+	if scope == ScopeSessionScoped {
+		containerName = appendSessionSuffix(req.Name, req.SessionID)
+	}
 	img := req.Image
 	if img == "" {
 		img = c.DefaultImage
@@ -304,7 +308,7 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	if req.AutoRegister {
 		envList = append(envList,
 			"ORCHESTRATOR_URL="+c.OrchestratorURL,
-			"COMPONENT_NAME="+req.Name,
+			"COMPONENT_NAME="+containerName,
 			"COMPONENT_TYPE="+labels["mvp.type"],
 		)
 	}
@@ -328,7 +332,7 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	}
 
 	body, _ := json.Marshal(cfg)
-	createURL := c.baseURL + "/containers/create?name=" + url.QueryEscape(req.Name)
+	createURL := c.baseURL + "/containers/create?name=" + url.QueryEscape(containerName)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(body))
 	if err != nil {
 		return CreateResult{}, err
@@ -363,9 +367,9 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 		return CreateResult{}, dockerAPIError("container start", startResp.StatusCode, bodyBytes)
 	}
 
-	contract, err := c.waitForContract(ctx, req.Name, port)
+	contract, err := c.waitForContract(ctx, containerName, port)
 	if err != nil {
-		_ = c.Remove(context.Background(), req.Name, true)
+		_ = c.Remove(context.Background(), containerName, true)
 		if strings.Contains(err.Error(), "contract endpoint returned 404") {
 			return CreateResult{}, fmt.Errorf(
 				"userdocker contract validation failed: image %q is incompatible (missing /api/v1/userdocker/interface). use a userdocker-compatible image such as %q",
@@ -374,9 +378,93 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 		}
 		return CreateResult{}, fmt.Errorf("userdocker contract validation failed: %w", err)
 	}
-	c.markActive(req.Name, time.Now().UTC())
+	c.markActive(containerName, time.Now().UTC())
 
-	return CreateResult{ContainerID: cr.ID, Name: req.Name, Port: port, Interface: contract}, nil
+	return CreateResult{ContainerID: cr.ID, Name: containerName, Port: port, Interface: contract}, nil
+}
+
+func appendSessionSuffix(baseName, sessionID string) string {
+	baseName = strings.TrimSpace(baseName)
+	if baseName == "" {
+		baseName = "userdocker"
+	}
+	token := sanitizeSessionToken(sessionID)
+	if token == "" {
+		return baseName
+	}
+	suffix := "-" + token
+	if strings.HasSuffix(baseName, suffix) {
+		return baseName
+	}
+	const maxNameLen = 120
+	maxBaseLen := maxNameLen - len(suffix)
+	if maxBaseLen < 1 {
+		maxBaseLen = 1
+	}
+	if len(baseName) > maxBaseLen {
+		baseName = baseName[:maxBaseLen]
+	}
+	baseName = strings.Trim(baseName, "-_.")
+	if baseName == "" {
+		baseName = "userdocker"
+	}
+	return baseName + suffix
+}
+
+func sanitizeSessionToken(sessionID string) string {
+	const maxTokenLen = 16
+	source := extractTailRandomToken(sessionID)
+	if source == "" {
+		source = sessionID
+	}
+	var b strings.Builder
+	b.Grow(len(source))
+	for _, r := range strings.ToLower(source) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if r == '-' || r == '_' || r == '.' {
+			b.WriteByte('-')
+		}
+		if b.Len() >= maxTokenLen {
+			break
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "session"
+	}
+	return out
+}
+
+func extractTailRandomToken(sessionID string) string {
+	raw := strings.TrimSpace(sessionID)
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, "-")
+	for i := len(parts) - 1; i >= 0; i-- {
+		p := strings.TrimSpace(parts[i])
+		if p == "" {
+			continue
+		}
+		if isAlphaNumToken(p) && len(p) >= 8 {
+			if len(p) > 16 {
+				return p[len(p)-16:]
+			}
+			return p
+		}
+	}
+	return ""
+}
+
+func isAlphaNumToken(s string) bool {
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSummary, error) {

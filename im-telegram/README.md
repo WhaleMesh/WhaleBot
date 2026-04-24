@@ -58,6 +58,8 @@ Notes:
 - Session switching is managed inside `im-telegram` (in-memory state per Telegram chat).
 - `/new` now generates a unique logical session key in format `chatID-timestamp-randomhex` to avoid reusing old IDs after service restarts.
 - Session history content stays as standard Markdown in backend storage; only Telegram egress rendering is converted.
+- During long-running tasks, gateway polls logger events by `trace_id` and sends step-level progress updates.
+- When backend returns attachments (for example exported artifacts), gateway uploads them as Telegram documents.
 
 ## Environment Variables
 ### IM_TELEGRAM_PORT
@@ -82,6 +84,22 @@ name: ORCHESTRATOR_URL
 default: http://orchestrator:8080
 required: false
 effect: target_for_chat_forwarding_and_registration
+```
+
+### SESSION_URL
+```yaml
+name: SESSION_URL
+default: http://session:8090
+required: false
+effect: append_progress_messages_to_session_so_webui_stays_in_sync_with_im_updates
+```
+
+### IM_TELEGRAM_CHAT_TIMEOUT_SEC
+```yaml
+name: IM_TELEGRAM_CHAT_TIMEOUT_SEC
+default: "240"
+required: false
+effect: timeout_seconds_waiting_for_orchestrator_chat_response_before_returning_timeout_feedback
 ```
 
 ### SERVICE_HOST
