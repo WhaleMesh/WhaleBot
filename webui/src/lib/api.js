@@ -24,6 +24,8 @@ export const api = {
     req(`/api/v1/logger/events/recent?limit=${encodeURIComponent(limit)}`),
   sessions: () => req("/api/v1/sessions"),
   session: (id) => req("/api/v1/sessions/" + encodeURIComponent(id)),
+  deleteSession: (id) =>
+    req("/api/v1/sessions/" + encodeURIComponent(id), { method: "DELETE" }),
   chat: (body) =>
     req("/api/v1/chat", { method: "POST", body: JSON.stringify(body) }),
   userDockerContract: () => req("/api/v1/tools/user-dockers/interface-contract"),

@@ -13,7 +13,14 @@
   let lastMessageCount = 0;
   let latestAnchorEl;
   let shouldAutoScroll = true;
+  let deletingCurrent = false;
   const AUTO_SCROLL_THRESHOLD_PX = 180;
+  const channelThoughtRe = /<\|channel\|?>([\s\S]*?)(?=<\|message\|?>|$)/gi;
+  const messageTagRe = /<\|\/?message\|?>/gi;
+  const thinkTagRe = /<think>([\s\S]*?)<\/think>/gi;
+  const thoughtTagRe = /<thought>([\s\S]*?)<\/thought>/gi;
+  const reasoningTagRe = /<reasoning>([\s\S]*?)<\/reasoning>/gi;
+  const looseMarkerTagRe = /<\/?\|?(?:channel|message|think|thought|reasoning)\|?>/gi;
 
   const emptySession = { id: sessionId, messages: [] };
 
@@ -22,6 +29,37 @@
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return '—';
     return d.toLocaleString();
+  }
+
+  function splitMessageContent(content) {
+    const raw = String(content || '');
+    if (!raw) {
+      return { visible: '', thought: '' };
+    }
+    const thoughts = [];
+    let visible = raw;
+
+    visible = visible.replace(channelThoughtRe, (_all, thought) => {
+      const t = String(thought || '').trim();
+      if (t) thoughts.push(t);
+      return '';
+    });
+
+    const captureTaggedThought = (_all, thought) => {
+      const t = String(thought || '').trim();
+      if (t) thoughts.push(t);
+      return '';
+    };
+    visible = visible.replace(thinkTagRe, captureTaggedThought);
+    visible = visible.replace(thoughtTagRe, captureTaggedThought);
+    visible = visible.replace(reasoningTagRe, captureTaggedThought);
+    visible = visible.replace(messageTagRe, '');
+    visible = visible.replace(looseMarkerTagRe, '').trim();
+
+    return {
+      visible,
+      thought: thoughts.join('\n\n').trim(),
+    };
   }
 
   $: messages = session?.messages || [];
@@ -62,6 +100,23 @@
     } catch (e) { error = String(e); }
   }
 
+  async function removeCurrentSession() {
+    if (!sessionId) return;
+    if (!window.confirm(`Delete session "${sessionId}"? This cannot be undone.`)) return;
+    deletingCurrent = true;
+    try {
+      const r = await api.deleteSession(sessionId);
+      if (r && r.success === false) {
+        throw new Error(r.error || 'delete session api returned success=false');
+      }
+      goto('sessions');
+    } catch (e) {
+      error = String(e);
+    } finally {
+      deletingCurrent = false;
+    }
+  }
+
   async function scrollToLatestMessage() {
     await tick();
     latestAnchorEl?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -94,6 +149,9 @@
 <div class="sticky-header">
   <div class="top">
     <button on:click={() => goto('sessions')}>← Back</button>
+    <button class="danger" disabled={deletingCurrent} on:click={removeCurrentSession}>
+      {deletingCurrent ? 'Deleting...' : 'Delete Session'}
+    </button>
     <h1>Session <span class="mono">{sessionId}</span></h1>
   </div>
 
@@ -130,6 +188,7 @@
 <div class="thread">
   {#if session}
     {#each session.messages || [] as m}
+      {@const parts = m.role === 'assistant' ? splitMessageContent(m.content || '') : null}
       <div class="msg {m.role}">
         <div class="msg-head">
           <div class="role">{m.role}</div>
@@ -141,7 +200,15 @@
             {/if}
           </div>
         </div>
-        <div class="content markdown" dir="auto">{@html renderMarkdown(m.content || '')}</div>
+        {#if m.role === 'assistant' && parts?.thought}
+          <details class="thought">
+            <summary>Thought (click to expand)</summary>
+            <div class="content markdown thought-body" dir="auto">{@html renderMarkdown(parts.thought)}</div>
+          </details>
+        {/if}
+        <div class="content markdown" dir="auto">
+          {@html renderMarkdown(m.role === 'assistant' ? parts?.visible || '' : m.content || '')}
+        </div>
       </div>
     {:else}
       <div class="empty">No messages in this session.</div>
@@ -164,6 +231,15 @@
   h1 { margin: 0; }
   h1 .mono { font-family: ui-monospace, monospace; font-size: 1rem; color: #8ea6ff; }
   button { background: #1c2130; color: #dfe3ee; border: 1px solid #2d3448; border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; }
+  .danger {
+    background: #33141a;
+    border: 1px solid #7f2936;
+    color: #ffd8dd;
+  }
+  .danger:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
   .meta-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
   .meta-item { background: #151923; border: 1px solid #232838; border-radius: 8px; padding: 0.6rem 0.7rem; }
   .meta-item .k { font-size: 0.74rem; color: #8f98ae; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.2rem; }
@@ -177,6 +253,24 @@
   .role { font-size: 0.72rem; color: #8ea6ff; text-transform: uppercase; letter-spacing: 0.05em; }
   .sub { font-size: 0.76rem; color: #95a0b8; display: inline-flex; gap: 0.55rem; flex-wrap: wrap; }
   .content { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.45; }
+  .thought {
+    margin: 0.2rem 0 0.6rem;
+    border: 1px dashed #2c3548;
+    border-radius: 6px;
+    background: #121621;
+    padding: 0.35rem 0.55rem;
+  }
+  .thought summary {
+    cursor: pointer;
+    color: #9cb0de;
+    font-size: 0.82rem;
+    user-select: none;
+  }
+  .thought-body {
+    margin-top: 0.45rem;
+    color: #c2cbdf;
+    font-size: 0.9rem;
+  }
   .markdown :global(pre) { margin: 0.5rem 0; background: #0c0f15; border: 1px solid #232838; border-radius: 6px; padding: 0.6rem; overflow: auto; }
   .markdown :global(code) { background: #0c0f15; border: 1px solid #232838; border-radius: 4px; padding: 0.08rem 0.3rem; font-family: ui-monospace, monospace; font-size: 0.85em; }
   .markdown :global(pre code) { border: 0; padding: 0; background: transparent; }

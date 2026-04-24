@@ -45,6 +45,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
   - host exposed: no
+  - note: supports `DELETE /sessions/{id}` hard-delete in addition to legacy `POST /clear_context`
   - note: message metadata may include real `prompt_tokens` / `completion_tokens` / `total_tokens` and `reply_latency_ms` when upstream provides usage
 - `chatmodel`
   - purpose: OpenAI-compatible chat completions client
@@ -61,6 +62,8 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `im-telegram/cmd/server/main.go`
   - host exposed: no
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
+  - note: outbound send path strips internal thought/channel markers (for example `<|channel|>...`) before Telegram delivery
+  - note: send flow includes retry + format-fallback (HTML -> plain text) and best-effort failure notice to avoid silent drops
   - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
@@ -94,6 +97,8 @@ Read this first, then read only the referenced source-of-truth files.
   - note: includes dedicated `Logger` page in addition to overview logs
   - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
+  - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`
+  - note: session detail keeps thought traces and renders them collapsed by default
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances

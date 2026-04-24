@@ -56,6 +56,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/logger/events/recent", s.handleLoggerEventsRecent)
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
+		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
 		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
 		r.Get("/tools/user-dockers", s.handleUserDockerList)
@@ -143,6 +144,20 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	s.proxyGet(w, r, sess.Endpoint+"/sessions/"+id)
+}
+
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	sess := s.Registry.FirstHealthyByType("session")
+	if sess == nil {
+		writeError(w, 503, "no healthy session service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, 400, "session id is required")
+		return
+	}
+	s.proxyDelete(w, r, sess.Endpoint+"/sessions/"+id)
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {

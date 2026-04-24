@@ -112,6 +112,15 @@ func main() {
 		}
 		writeJSON(w, 200, map[string]any{"success": true, "session": sess})
 	})
+	r.Delete("/sessions/{id}", func(w http.ResponseWriter, req *http.Request) {
+		id := chi.URLParam(req, "id")
+		if id == "" {
+			writeError(w, 400, "session id is required")
+			return
+		}
+		st.Clear(id)
+		writeJSON(w, 200, map[string]any{"success": true})
+	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
