@@ -2,11 +2,9 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -87,7 +85,18 @@ func (s *Server) Router() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"status": "ok", "service": "orchestrator"})
+	ready, chatErr := evalChatMinStack(s.Registry)
+	payload := map[string]any{
+		"status":     "ok",
+		"service":    "orchestrator",
+		"chat_ready": ready,
+	}
+	if !ready {
+		payload["chat_error"] = chatErr
+	} else {
+		payload["chat_error"] = ""
+	}
+	writeJSON(w, 200, payload)
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +176,6 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "invalid json: "+err.Error())
@@ -189,98 +197,51 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
-	if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
-		req.TraceID = traceID
-		body, err := json.Marshal(req)
-		if err != nil {
-			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		r2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, wk.Endpoint+"/run", bytes.NewReader(body))
-		if err != nil {
-			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		r2.Header.Set("Content-Type", "application/json")
-		resp, err := s.HTTP.Do(r2)
-		if err != nil {
-			s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-			writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-		return
-	}
-
-	sess := s.Registry.FirstHealthyByType("session")
-	model := s.Registry.FirstHealthyByType("chat_model")
-	if sess == nil || model == nil {
-		msg := "no healthy session or chat_model available"
-		s.log("error", msg, map[string]string{"trace_id": traceID})
-		writeJSON(w, 200, ChatResponse{Success: false, Error: msg, TraceID: traceID})
-		return
-	}
-
-	history, expired, err := s.fetchContext(sess.Endpoint, sessionID)
-	if err != nil {
-		s.log("error", "get_context failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-	}
-	if expired {
+	ready, minStackErr := evalChatMinStack(s.Registry)
+	if !ready {
+		s.log("error", "chat min stack not ready", map[string]string{"trace_id": traceID})
 		writeJSON(w, 200, ChatResponse{
 			Success:   false,
-			Error:     "session expired; start a new session or continue in a new IM session",
+			Error:     minStackErr,
 			TraceID:   traceID,
 			SessionID: sessionID,
 		})
 		return
 	}
 
-	userMsg := Message{Role: "user", Content: req.Message}
-	invokeMsgs := make([]Message, 0, len(history)+2)
-	invokeMsgs = append(invokeMsgs, Message{Role: "system", Content: "你是一个简洁友好的 AI 助手。"})
-	invokeMsgs = append(invokeMsgs, history...)
-	invokeMsgs = append(invokeMsgs, userMsg)
-
-	assistantMsg, usage, err := s.invokeChatModel(model.Endpoint, invokeMsgs)
+	wk := s.Registry.FirstHealthyByType("runtime")
+	if wk == nil {
+		s.log("error", "runtime missing after min stack check", map[string]string{"trace_id": traceID})
+		writeJSON(w, 200, ChatResponse{
+			Success:   false,
+			Error:     "Internal error: runtime became unavailable after readiness check; please retry.",
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
+		return
+	}
+	req.TraceID = traceID
+	body, err := json.Marshal(req)
 	if err != nil {
-		s.log("error", "chatmodel invoke failed", map[string]string{"err": err.Error(), "trace_id": traceID})
 		writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
 		return
 	}
-
-	now := time.Now()
-	assistantMsg.Timestamp = now
-	assistantMsg.ReplyLatencyMS = now.Sub(start).Milliseconds()
-	userMsg.Timestamp = start
-	if usage != nil {
-		assistantMsg.PromptTokens = usage.PromptTokens
-		assistantMsg.CompletionTokens = usage.CompletionTokens
-		assistantMsg.TotalTokens = usage.TotalTokens
+	r2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, wk.Endpoint+"/run", bytes.NewReader(body))
+	if err != nil {
+		writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
+		return
 	}
-
-	if err := s.appendMessages(sess.Endpoint, sessionID, []Message{userMsg, assistantMsg}); err != nil {
-		s.log("error", "append_messages failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-	} else {
-		msgs := []Message{userMsg, assistantMsg}
-		go s.emitStatsMessagesDetached(msgs)
+	r2.Header.Set("Content-Type", "application/json")
+	resp, err := s.HTTP.Do(r2)
+	if err != nil {
+		s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+		writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
+		return
 	}
-
-	s.log("info", "chat completed", map[string]string{
-		"trace_id":   traceID,
-		"session_id": sessionID,
-		"channel":    req.Channel,
-		"chat_id":    req.ChatID,
-	})
-
-	writeJSON(w, 200, ChatResponse{
-		Success:   true,
-		SessionID: sessionID,
-		Reply:     assistantMsg.Content,
-		TraceID:   traceID,
-	})
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *http.Request) {
@@ -534,103 +495,7 @@ func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, r, target)
 }
 
-func (s *Server) emitStatsMessagesDetached(msgs []Message) {
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	s.emitStatsMessages(ctx, msgs)
-}
-
-func (s *Server) emitStatsMessages(ctx context.Context, msgs []Message) {
-	st := s.Registry.FirstHealthyByType("stats")
-	if st == nil || len(msgs) == 0 {
-		return
-	}
-	evs := make([]map[string]any, 0, len(msgs))
-	for _, m := range msgs {
-		ts := m.Timestamp
-		if ts.IsZero() {
-			ts = time.Now()
-		}
-		evs = append(evs, map[string]any{"kind": "message", "ts": ts.UTC().Format(time.RFC3339Nano)})
-	}
-	body, err := json.Marshal(map[string]any{"events": evs})
-	if err != nil {
-		return
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, st.Endpoint+"/events", bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.HTTP.Do(req)
-	if err != nil {
-		slog.Debug("stats ingest failed", "err", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		slog.Debug("stats ingest rejected", "status", resp.StatusCode, "body", string(b))
-	}
-}
-
 // --- helpers ---
-
-func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, bool, error) {
-	body, _ := json.Marshal(GetContextRequest{SessionID: sessionID})
-	resp, err := s.HTTP.Post(sessionURL+"/get_context", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return nil, false, fmt.Errorf("session returned %d", resp.StatusCode)
-	}
-	var gr GetContextResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, false, err
-	}
-	return gr.Messages, gr.Expired, nil
-}
-
-func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, *Usage, error) {
-	body, _ := json.Marshal(ChatModelInvokeRequest{
-		Messages: messages,
-		Params:   map[string]any{"temperature": 0.7, "max_tokens": 512},
-	})
-	resp, err := s.HTTP.Post(modelURL+"/invoke", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return Message{}, nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return Message{}, nil, fmt.Errorf("chatmodel returned %d", resp.StatusCode)
-	}
-	var ir ChatModelInvokeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ir); err != nil {
-		return Message{}, nil, err
-	}
-	if !ir.Success {
-		return Message{}, nil, errors.New(ir.Error)
-	}
-	return ir.Message, ir.Usage, nil
-}
-
-func (s *Server) appendMessages(sessionURL, sessionID string, msgs []Message) error {
-	body, _ := json.Marshal(AppendMessagesRequest{SessionID: sessionID, Messages: msgs})
-	resp, err := s.HTTP.Post(sessionURL+"/append_messages", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 409 {
-		return fmt.Errorf("session expired")
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("session append returned %d", resp.StatusCode)
-	}
-	return nil
-}
 
 func (s *Server) proxyGet(w http.ResponseWriter, r *http.Request, target string) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)

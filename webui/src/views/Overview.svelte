@@ -13,6 +13,8 @@
   let statsError = '';
   let statsDisabled = false;
   let error = '';
+  /** Non-empty when GET /health reports chat_ready === false or health fetch failed. */
+  let chatBlockedMessage = '';
   let timer;
   let tick = 0;
   let tickTimer;
@@ -62,13 +64,23 @@
 
   async function refresh() {
     try {
-      const [c, u, s] = await Promise.all([
+      const [c, u, s, h] = await Promise.all([
         api.components(),
         api.userDockerList(true),
         api.statsOverview().catch((e) => ({ _err: String(e) })),
+        api.health().catch((e) => ({ _health_err: String(e) })),
       ]);
       components = c.components || [];
       userdockers = u.containers || [];
+      if (h && h._health_err) {
+        chatBlockedMessage = `Could not read orchestrator health: ${h._health_err}`;
+      } else if (h && h.chat_ready === false) {
+        chatBlockedMessage =
+          String(h.chat_error || '').trim() ||
+          'Chat dependencies are not ready (runtime, session, and chat_model must all be healthy).';
+      } else {
+        chatBlockedMessage = '';
+      }
       if (s && s.disabled) {
         statsDisabled = true;
         stats = null;
@@ -141,6 +153,9 @@
 </script>
 
 <h1>Overview</h1>
+{#if chatBlockedMessage}
+  <div class="chat-blocked" role="alert">{chatBlockedMessage}</div>
+{/if}
 {#if error}<div class="err">{error}</div>{/if}
 {#if statsDisabled}
   <div class="stats-disabled" role="status">
@@ -331,6 +346,17 @@
     padding: 0.8rem 0.9rem;
   }
   .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
+  .chat-blocked {
+    background: #3a1518;
+    border: 2px solid #c44a54;
+    color: #ffd6d9;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    font-weight: 500;
+  }
   .stats-err {
     background: #2a2112;
     border: 1px solid #6b5422;

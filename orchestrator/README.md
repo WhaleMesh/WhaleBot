@@ -21,6 +21,7 @@ last_verified_from:
   - docker-compose.yml
   - orchestrator/cmd/server/main.go
   - orchestrator/internal/httpapi/api.go
+  - orchestrator/internal/httpapi/chat_min_stack.go
   - orchestrator/internal/httpapi/types.go
   - orchestrator/internal/registry/registry.go
 ```
@@ -28,7 +29,7 @@ last_verified_from:
 ## Purpose
 - Owns the component registry and health lifecycle.
 - Exposes the stable northbound API used by `webui` and `im-telegram`.
-- Routes chat requests to `worker` when available, otherwise falls back to direct `session + chatmodel`.
+- `POST /api/v1/chat` requires healthy `runtime`, `session`, and `chat_model` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+chatmodel path).
 
 ## External API
 ### Endpoint: GET /health
@@ -39,6 +40,12 @@ request: none
 response:
   status: ok
   service: orchestrator
+  chat_ready: boolean
+  chat_error: string
+notes:
+  - HTTP status is always 200 when the orchestrator process is up (including when chat_ready is false), so container healthchecks that hit /health still pass.
+  - chat_ready is true only when registry has healthy components for types runtime, session, and chat_model (same gate as POST /api/v1/chat).
+  - chat_error is empty when chat_ready is true; when false, an English explanation (same text as chat rejection error).
 error_behavior: standard_http_status
 ```
 
@@ -86,7 +93,7 @@ request:
     channel: string
     chat_id: string
     message: string (required)
-    trace_id: string (optional; injected internally for worker path)
+    trace_id: string (optional)
 response:
   success: boolean
   session_id: string
@@ -94,8 +101,8 @@ response:
   trace_id: string
   error: string
 error_behavior:
-  worker_path: upstream_worker_status_and_body_passthrough
-  fallback_path: often_http_200_with_success_false
+  min_stack_not_ready: http_200_with_success_false_and_error_message
+  runtime_proxy: upstream_runtime_status_and_body_passthrough
 ```
 
 ### Endpoint: GET /api/v1/logs/recent
