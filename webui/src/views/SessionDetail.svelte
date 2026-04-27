@@ -23,7 +23,9 @@
   const reasoningTagRe = /<reasoning>([\s\S]*?)<\/reasoning>/gi;
   const looseMarkerTagRe = /<\/?\|?(?:channel|message|think|thought|reasoning)\|?>/gi;
 
-  const emptySession = { id: sessionId, messages: [] };
+  const emptySession = { id: sessionId, messages: [], expired: false };
+  let t = 0;
+  let tickTimer;
 
   function fmtTs(ts) {
     if (!ts) return '—';
@@ -165,15 +167,40 @@
     shouldAutoScroll = isNearPageBottom();
   }
 
+  function formatCountdown(sec) {
+    if (sec == null || sec < 0) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  $: expiresAt = session?.expires_at;
+  $: expired = session?.expired;
+  $: secLeft = (() => {
+    t;
+    if (expired) return 0;
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) return 0;
+    return Math.floor(ms / 1000);
+  })();
+
   onMount(() => {
     refresh();
     timer = setInterval(refresh, 3000);
+    tickTimer = setInterval(() => {
+      t += 1;
+    }, 1000);
     syncAutoScrollState();
     window.addEventListener('scroll', syncAutoScrollState, { passive: true });
   });
 
   onDestroy(() => {
     clearInterval(timer);
+    if (tickTimer) clearInterval(tickTimer);
     window.removeEventListener('scroll', syncAutoScrollState);
   });
 </script>
@@ -201,6 +228,16 @@
     <div class="meta-item">
       <div class="k">Messages</div>
       <div class="v">{messages.length}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Session status</div>
+      <div class="v" class:warn={expired}>{expired ? 'Expired' : 'Active'}</div>
+    </div>
+    <div class="meta-item">
+      <div class="k">Idle expiry countdown</div>
+      <div class="v" class:warn={secLeft === 0 && !expired}>
+        {expired ? '—' : formatCountdown(secLeft)}
+      </div>
     </div>
     <div class="meta-item">
       <div class="k">Total Tokens (Real)</div>
@@ -319,6 +356,7 @@
   .meta-item { background: #151923; border: 1px solid #232838; border-radius: 8px; padding: 0.6rem 0.7rem; }
   .meta-item .k { font-size: 0.74rem; color: #8f98ae; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.2rem; }
   .meta-item .v { font-size: 0.92rem; color: #dfe3ee; }
+  .meta-item .v.warn { color: #e8a854; }
   .thread { display: flex; flex-direction: column; gap: 0.75rem; }
   .trace-panel {
     margin: 0.4rem 0 1rem;

@@ -30,6 +30,7 @@ services:
     environment:
       SESSION_PORT: ${SESSION_PORT:-8090}
       SESSION_MAX_MESSAGES: ${SESSION_MAX_MESSAGES:-40}
+      SESSION_IDLE_SEC: ${SESSION_IDLE_SEC:-86400}
       SESSION_DB_PATH: /data/session.db
       ORCHESTRATOR_URL: http://orchestrator:8080
       SERVICE_HOST: session
@@ -133,6 +134,7 @@ services:
       DOCKER_NETWORK: mvp_net
       USERDOCKER_IDLE_HOURS: ${USERDOCKER_IDLE_HOURS:-24}
       USERDOCKER_IDLE_CHECK_SEC: ${USERDOCKER_IDLE_CHECK_SEC:-300}
+      USERDOCKER_TEMP_TTL_SEC: ${USERDOCKER_TEMP_TTL_SEC:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [mvp_net]

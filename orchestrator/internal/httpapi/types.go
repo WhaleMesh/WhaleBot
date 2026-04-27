@@ -44,6 +44,8 @@ type GetContextResponse struct {
 	Success   bool      `json:"success"`
 	SessionID string    `json:"session_id"`
 	Messages  []Message `json:"messages"`
+	Expired   bool      `json:"expired"`
+	ExpiresAt *string   `json:"expires_at,omitempty"`
 }
 
 type AppendMessagesRequest struct {

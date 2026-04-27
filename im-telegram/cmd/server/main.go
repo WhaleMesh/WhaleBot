@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -102,8 +103,9 @@ type sessionMessage struct {
 }
 
 type chatState struct {
-	CurrentSessionID string
-	Ended            bool
+	CurrentSessionID  string
+	Ended             bool
+	NotifiedExpiredID string
 }
 
 type commandResult struct {
@@ -125,9 +127,8 @@ func (m *conversationManager) getOrCreate(chatID int64) *chatState {
 	if ok {
 		return st
 	}
-	base := strconv.FormatInt(chatID, 10)
 	st = &chatState{
-		CurrentSessionID: base,
+		CurrentSessionID: buildSessionID(chatID),
 		Ended:            false,
 	}
 	m.chats[chatID] = st
@@ -140,11 +141,17 @@ func (m *conversationManager) resolveSessionID(chatID int64) string {
 	return m.getOrCreate(chatID).CurrentSessionID
 }
 
-func (m *conversationManager) isEnded(chatID int64) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	st, ok := m.chats[chatID]
-	return ok && st.Ended
+// ensureActiveForMessage starts a new logical session if the user had ended the previous one.
+func (m *conversationManager) ensureActiveForMessage(chatID int64) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.getOrCreate(chatID)
+	if st.Ended {
+		st.Ended = false
+		st.CurrentSessionID = buildSessionID(chatID)
+		st.NotifiedExpiredID = ""
+	}
+	return st.CurrentSessionID
 }
 
 func (m *conversationManager) newSession(chatID int64) string {
@@ -152,6 +159,7 @@ func (m *conversationManager) newSession(chatID int64) string {
 	defer m.mu.Unlock()
 	st := m.getOrCreate(chatID)
 	st.Ended = false
+	st.NotifiedExpiredID = ""
 	st.CurrentSessionID = buildSessionID(chatID)
 	return st.CurrentSessionID
 }
@@ -178,9 +186,103 @@ func (m *conversationManager) status(chatID int64) (string, bool) {
 	defer m.mu.RUnlock()
 	st, ok := m.chats[chatID]
 	if !ok {
-		return strconv.FormatInt(chatID, 10), false
+		return "（尚未开始）", false
 	}
 	return st.CurrentSessionID, st.Ended
+}
+
+func (m *conversationManager) snapshotSessions() []struct {
+	ChatID    int64
+	SessionID string
+	Ended     bool
+} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]struct {
+		ChatID    int64
+		SessionID string
+		Ended     bool
+	}, 0, len(m.chats))
+	for id, st := range m.chats {
+		out = append(out, struct {
+			ChatID    int64
+			SessionID string
+			Ended     bool
+		}{id, st.CurrentSessionID, st.Ended})
+	}
+	return out
+}
+
+func fetchSessionExpired(ctx context.Context, cli *http.Client, orchURL, sessionID string) (bool, error) {
+	u := strings.TrimRight(orchURL, "/") + "/api/v1/sessions/" + url.PathEscape(sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return false, fmt.Errorf("sessions status %d", resp.StatusCode)
+	}
+	var out struct {
+		Session struct {
+			Expired bool `json:"expired"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return false, err
+	}
+	return out.Session.Expired, nil
+}
+
+func sessionExpiryLoop(ctx context.Context, bot *tgbotapi.BotAPI, conv *conversationManager, cli *http.Client, orchURL string) {
+	tick := time.NewTicker(25 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			snaps := conv.snapshotSessions()
+			for _, sn := range snaps {
+				if sn.Ended {
+					continue
+				}
+				full := "telegram_" + sn.SessionID
+				expired, err := fetchSessionExpired(ctx, cli, orchURL, full)
+				if err != nil || !expired {
+					continue
+				}
+				var newID string
+				conv.mu.Lock()
+				st, ok := conv.chats[sn.ChatID]
+				if !ok || st.CurrentSessionID != sn.SessionID {
+					conv.mu.Unlock()
+					continue
+				}
+				if st.NotifiedExpiredID == full {
+					conv.mu.Unlock()
+					continue
+				}
+				st.NotifiedExpiredID = full
+				newID = buildSessionID(sn.ChatID)
+				st.CurrentSessionID = newID
+				st.Ended = false
+				conv.mu.Unlock()
+				text := fmt.Sprintf(
+					"会话已因闲置过期（`%s`）。\n已自动开启新会话。\n新 session_id: `%s`",
+					full,
+					newID,
+				)
+				if err := sendTelegramReply(ctx, bot, sn.ChatID, text, "", ""); err != nil {
+					slog.Error("session expiry notice failed", "chat_id", sn.ChatID, "err", err)
+				}
+			}
+		}
+	}
 }
 
 func main() {
@@ -246,9 +348,11 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 
 	chatTimeoutSec := getenvInt("IM_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
 	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
+	orchSessCLI := &http.Client{Timeout: 15 * time.Second}
 	sessionURL := getenv("SESSION_URL", "http://session:8090")
 	sessionCLI := &http.Client{Timeout: 20 * time.Second}
 	conv := newConversationManager()
+	go sessionExpiryLoop(ctx, bot, conv, orchSessCLI, orchURL)
 
 	for {
 		select {
@@ -267,13 +371,7 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 				}
 				continue
 			}
-			if conv.isEnded(msg.Chat.ID) {
-				if err := sendTelegramReply(ctx, bot, msg.Chat.ID, "当前会话已结束。发送 /new 开启新会话，或发送 /help 查看命令。", "", ""); err != nil {
-					slog.Error("telegram ended-session hint failed", "chat_id", msg.Chat.ID, "err", err)
-				}
-				continue
-			}
-			sessionID := conv.resolveSessionID(msg.Chat.ID)
+			sessionID := conv.ensureActiveForMessage(msg.Chat.ID)
 			traceID := newTraceID()
 			progressDone := make(chan struct{})
 			go streamProgressUpdates(ctx, cli, orchURL, bot, msg.Chat.ID, sessionID, traceID, progressDone, sessionCLI, sessionURL)
@@ -640,7 +738,7 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 			Reply: strings.TrimSpace(`
 可用命令：
 - /new: 开启新会话（不复用旧上下文）
-- /end: 结束当前会话（普通消息将暂停处理）
+- /end: 结束当前会话（下一条普通消息将自动开始新会话）
 - /status: 查看当前会话状态
 - /help: 查看命令帮助
 `),
@@ -655,7 +753,7 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 		sessionID := conv.endSession(msg.Chat.ID)
 		return commandResult{
 			Handled: true,
-			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n发送 /new 可开启新会话。", sessionID),
+			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n下一条消息将自动开始新会话，或发送 /new 立即开启。", sessionID),
 		}
 	case "/status":
 		sessionID, ended := conv.status(msg.Chat.ID)

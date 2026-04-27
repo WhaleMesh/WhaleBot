@@ -70,6 +70,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/tools/user-dockers/{name}/start", s.handleUserDockerStart)
 		r.Post("/tools/user-dockers/{name}/stop", s.handleUserDockerStop)
 		r.Post("/tools/user-dockers/{name}/touch", s.handleUserDockerTouch)
+		r.Post("/tools/user-dockers/touch-creator-session", s.handleUserDockerTouchCreatorSession)
 		r.Post("/tools/user-dockers/{name}/switch-scope", s.handleUserDockerSwitchScope)
 		r.Post("/tools/user-dockers/{name}/exec", s.handleUserDockerExec)
 		r.Get("/tools/user-dockers/{name}/files", s.handleUserDockerFilesList)
@@ -221,9 +222,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := s.fetchContext(sess.Endpoint, sessionID)
+	history, expired, err := s.fetchContext(sess.Endpoint, sessionID)
 	if err != nil {
 		s.log("error", "get_context failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+	}
+	if expired {
+		writeJSON(w, 200, ChatResponse{
+			Success:   false,
+			Error:     "session expired; start a new session or continue in a new IM session",
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
+		return
 	}
 
 	userMsg := Message{Role: "user", Content: req.Message}
@@ -382,6 +392,15 @@ func (s *Server) handleUserDockerTouch(w http.ResponseWriter, r *http.Request) {
 	s.proxyPost(w, r, target)
 }
 
+func (s *Server) handleUserDockerTouchCreatorSession(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_touch_creator")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers/touch-creator-session")
+}
+
 func (s *Server) handleUserDockerSwitchScope(w http.ResponseWriter, r *http.Request) {
 	tool := s.Registry.FirstHealthyByCapability("userdocker_switch_scope")
 	if tool == nil {
@@ -495,21 +514,21 @@ func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.R
 
 // --- helpers ---
 
-func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, error) {
+func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, bool, error) {
 	body, _ := json.Marshal(GetContextRequest{SessionID: sessionID})
 	resp, err := s.HTTP.Post(sessionURL+"/get_context", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("session returned %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("session returned %d", resp.StatusCode)
 	}
 	var gr GetContextResponse
 	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return gr.Messages, nil
+	return gr.Messages, gr.Expired, nil
 }
 
 func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, *Usage, error) {
@@ -542,6 +561,9 @@ func (s *Server) appendMessages(sessionURL, sessionID string, msgs []Message) er
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 409 {
+		return fmt.Errorf("session expired")
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("session append returned %d", resp.StatusCode)
 	}

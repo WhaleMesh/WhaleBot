@@ -268,10 +268,21 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
-	history, err := s.fetchContext(sessionID)
+	s.touchUserDockerByCreator(r.Context(), sessionID)
+
+	history, ctxExpired, err := s.fetchContext(sessionID)
 	contextErr := err
 	if err != nil {
 		slog.Error("get_context failed", "err", err, "trace_id", traceID)
+	}
+	if ctxExpired {
+		writeJSON(w, 200, chatResponse{
+			Success:   false,
+			Error:     "session expired; start a new chat session in the app",
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
+		return
 	}
 
 	catalog, routes, err := s.fetchRuntimeCatalog(r.Context())
@@ -1287,25 +1298,45 @@ func (s *reactService) invokeChatModel(ctx context.Context, msgs []cmMessage, to
 	return out, nil
 }
 
-func (s *reactService) fetchContext(sessionID string) ([]sessionMessage, error) {
+func (s *reactService) fetchContext(sessionID string) ([]sessionMessage, bool, error) {
 	body, _ := json.Marshal(map[string]string{"session_id": sessionID})
 	resp, err := s.http.Post(s.sessionURL+"/get_context", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("session get_context %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("session get_context %d", resp.StatusCode)
 	}
 	var gr struct {
 		Success   bool             `json:"success"`
 		Messages  []sessionMessage `json:"messages"`
 		SessionID string           `json:"session_id"`
+		Expired   bool             `json:"expired"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return gr.Messages, nil
+	return gr.Messages, gr.Expired, nil
+}
+
+func (s *reactService) touchUserDockerByCreator(ctx context.Context, sessionID string) {
+	if strings.TrimSpace(s.orchURL) == "" {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"session_id": sessionID})
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost, s.orchURL+"/api/v1/tools/user-dockers/touch-creator-session", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 func (s *reactService) appendMessages(sessionID string, msgs []sessionMessage) error {
@@ -1318,6 +1349,9 @@ func (s *reactService) appendMessages(sessionID string, msgs []sessionMessage) e
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 409 {
+		return fmt.Errorf("session expired")
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("append_messages %d", resp.StatusCode)
 	}

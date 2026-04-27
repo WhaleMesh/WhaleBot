@@ -1,11 +1,18 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
+  import {
+    parseUserDockerManagerMeta,
+    tempRemovalCountdown,
+    formatDurationSec,
+  } from '../lib/userdockerPolicy.js';
 
   let components = [];
   let userdockers = [];
   let error = '';
   let timer;
+  let tick = 0;
+  let tickTimer;
 
   function fmtTs(ts) {
     if (!ts) return '—';
@@ -56,16 +63,41 @@
   onMount(() => {
     refresh();
     timer = setInterval(refresh, 3000);
+    tickTimer = setInterval(() => {
+      tick += 1;
+    }, 1000);
   });
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => {
+    clearInterval(timer);
+    if (tickTimer) clearInterval(tickTimer);
+  });
 
   $: systemComponents = components.filter((c) => !isUserDockerType(c?.type));
+  $: udPolicy = parseUserDockerManagerMeta(components);
+
+  function removalLine(d) {
+    tick;
+    const r = tempRemovalCountdown(d, udPolicy.ttlSec);
+    if (r.kind === 'persistent') return 'Persistent (no idle removal)';
+    if (r.kind === 'temp') return `~${formatDurationSec(r.seconds)} until idle removal`;
+    return '—';
+  }
+
+  $: policyLine =
+    udPolicy.ttlSec != null && udPolicy.sweepSec != null
+      ? `Temporary userdocker idle removal: ${formatDurationSec(udPolicy.ttlSec)} · sweeper every ${formatDurationSec(udPolicy.sweepSec)}`
+      : udPolicy.ttlSec != null
+        ? `Temporary userdocker idle removal: ${formatDurationSec(udPolicy.ttlSec)}`
+        : '';
 </script>
 
 <h1>Overview</h1>
 {#if error}<div class="err">{error}</div>{/if}
 
 <h2>Userdocker</h2>
+{#if policyLine}
+  <p class="policy-hint">{policyLine}</p>
+{/if}
 <div class="grid">
   {#each userdockers as d}
     <div class="card {normalizeStatus(d.status || d.state)}">
@@ -75,6 +107,9 @@
       </div>
       <div class="rows">
         <div class="row"><span class="k">Image</span><span class="v mono">{d.image || '—'}</span></div>
+        <div class="row"><span class="k">Scope</span><span class="v">{d.scope || '—'}</span></div>
+        <div class="row"><span class="k">Last active</span><span class="v">{fmtTs(d.last_active_at)}</span></div>
+        <div class="row"><span class="k">Idle removal</span><span class="v warn">{removalLine(d)}</span></div>
         <div class="row"><span class="k">State</span><span class="v">{d.state || '—'}</span></div>
         <div class="row"><span class="k">Raw Status</span><span class="v">{d.status || '—'}</span></div>
         <div class="row"><span class="k">Container ID</span><span class="v mono">{shortId(d.id)}</span></div>
@@ -198,6 +233,15 @@
     font-size: 0.86rem;
     text-align: right;
     word-break: break-all;
+  }
+  .v.warn {
+    color: #e8a854;
+  }
+  .policy-hint {
+    margin: 0 0 0.65rem;
+    font-size: 0.82rem;
+    color: #9aa3bb;
+    line-height: 1.35;
   }
   .mono {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;

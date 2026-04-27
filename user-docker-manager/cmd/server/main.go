@@ -72,6 +72,14 @@ func main() {
 	if idleCheckValue <= 0 {
 		idleCheckValue = 300
 	}
+	tempTTLSec, _ := strconv.Atoi(getenv("USERDOCKER_TEMP_TTL_SEC", ""))
+	if tempTTLSec <= 0 {
+		tempTTLSec = idleHourValue * 3600
+	}
+	if tempTTLSec <= 0 {
+		tempTTLSec = 86400
+	}
+	tempIdle := time.Duration(tempTTLSec) * time.Second
 
 	cr, err := creator.New(defaultImage, defaultNet, orchURL, allowedImages)
 	if err != nil {
@@ -150,6 +158,28 @@ func main() {
 		})
 	}
 	r.Post("/api/v1/user-dockers", createHandler)
+
+	r.Post("/api/v1/user-dockers/touch-creator-session", func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "invalid json: " + err.Error()})
+			return
+		}
+		if strings.TrimSpace(body.SessionID) == "" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "session_id is required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		n, err := cr.TouchByCreatorSessionID(ctx, body.SessionID)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "touched": n})
+	})
 
 	r.Post("/api/v1/user-dockers/{name}/start", func(w http.ResponseWriter, req *http.Request) {
 		name := chi.URLParam(req, "name")
@@ -492,19 +522,22 @@ func main() {
 			"userdocker_interface_contract",
 			"userdocker_images",
 			"userdocker_interface_discovery",
+			"userdocker_touch_creator",
 		},
 		Meta: map[string]string{
-			"default_image":    defaultImage,
-			"default_network":  defaultNet,
-			"contract_version": "userdocker.v1",
+			"default_image":               defaultImage,
+			"default_network":           defaultNet,
+			"contract_version":            "userdocker.v1",
+			"userdocker_temp_ttl_sec":     strconv.Itoa(tempTTLSec),
+			"userdocker_idle_check_sec": strconv.Itoa(idleCheckValue),
 		},
 	})
 	rc.Start(ctx)
-	go runIdleSweeper(ctx, cr, time.Duration(idleHourValue)*time.Hour, time.Duration(idleCheckValue)*time.Second)
+	go runIdleSweeper(ctx, cr, tempIdle, time.Duration(idleCheckValue)*time.Second)
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("user-docker-manager listening", "port", port, "default_image", defaultImage, "default_network", defaultNet)
+		slog.Info("user-docker-manager listening", "port", port, "default_image", defaultImage, "default_network", defaultNet, "temp_ttl", tempIdle.String())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)
@@ -542,9 +575,6 @@ func authorizeSession(meta creator.ContainerMeta, sessionID string) error {
 	}
 	if sessionID == "" {
 		return errors.New("session_id is required for session_scoped containers")
-	}
-	if meta.SessionID != "" && meta.SessionID != sessionID {
-		return errors.New("session_id does not match container ownership")
 	}
 	return nil
 }

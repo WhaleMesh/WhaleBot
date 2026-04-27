@@ -291,8 +291,10 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	labels["mvp.userdocker.last_active_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	if scope == ScopeSessionScoped {
 		labels["mvp.userdocker.session_id"] = req.SessionID
+		labels["mvp.userdocker.creator_session_id"] = req.SessionID
 	} else {
 		delete(labels, "mvp.userdocker.session_id")
+		delete(labels, "mvp.userdocker.creator_session_id")
 	}
 
 	envList := make([]string, 0, len(req.Env)+4)
@@ -636,6 +638,40 @@ func (c *Creator) Touch(ctx context.Context, name string) (time.Time, error) {
 	now := time.Now().UTC()
 	c.markActive(name, now)
 	return now, nil
+}
+
+// TouchByCreatorSessionID extends last-activity for all session_scoped (temporary) userdockers
+// created under the given runtime session id, so the idle removal timer resets.
+func (c *Creator) TouchByCreatorSessionID(ctx context.Context, creatorSessionID string) (int, error) {
+	creatorSessionID = strings.TrimSpace(creatorSessionID)
+	if creatorSessionID == "" {
+		return 0, errors.New("session_id is required")
+	}
+	items, err := c.List(ctx, true)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, it := range items {
+		if it.Scope != ScopeSessionScoped {
+			continue
+		}
+		cid := ""
+		if it.Labels != nil {
+			cid = it.Labels["mvp.userdocker.creator_session_id"]
+			if cid == "" {
+				cid = it.Labels["mvp.userdocker.session_id"]
+			}
+		}
+		if cid != creatorSessionID {
+			continue
+		}
+		if _, err := c.Touch(ctx, it.Name); err != nil {
+			continue
+		}
+		n++
+	}
+	return n, nil
 }
 
 func (c *Creator) SwitchScope(ctx context.Context, name, targetScope, sessionID string) (CreateResult, error) {

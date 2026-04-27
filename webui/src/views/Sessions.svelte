@@ -39,6 +39,19 @@
 
   onMount(() => { refresh(); timer = setInterval(refresh, 3000); });
   onDestroy(() => clearInterval(timer));
+
+  function fmtRemaining(s) {
+    if (s == null) return '—';
+    if (s.expired) return 'Expired';
+    const sec = s.seconds_remaining;
+    if (sec == null) return '—';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const rs = sec % 60;
+    if (h > 0) return `${h}h${m}m`;
+    if (m > 0) return `${m}m${rs}s`;
+    return `${rs}s`;
+  }
 </script>
 
 <h1>Sessions</h1>
@@ -46,13 +59,14 @@
 
 <table>
   <thead>
-    <tr><th>Session ID</th><th>Updated</th><th>Length</th><th>Last Message</th><th>Actions</th></tr>
+    <tr><th>Session ID</th><th>Updated</th><th>Idle expiry</th><th>Length</th><th>Last Message</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {#each sessions as s}
       <tr on:click={() => goto('session', { id: s.id })} class="clickable">
         <td class="mono">{s.id}</td>
         <td>{s.updated_at ? new Date(s.updated_at).toLocaleString() : '—'}</td>
+        <td class="mono sm">{fmtRemaining(s)}</td>
         <td>{s.length}</td>
         <td class="snippet">{s.last_snippet || ''}</td>
         <td class="actions">
@@ -66,7 +80,7 @@
         </td>
       </tr>
     {:else}
-      <tr><td colspan="5" class="empty">No sessions yet. Send a message to the bot to start one.</td></tr>
+      <tr><td colspan="6" class="empty">No sessions yet. Send a message to the bot to start one.</td></tr>
     {/each}
   </tbody>
 </table>
@@ -78,6 +92,7 @@
   thead th { background: #1b2030; color: #9aa3bb; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
   tbody tr:nth-child(even) { background: #181c27; }
   .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; color: #b9c0d4; }
+  .mono.sm { font-size: 0.78rem; color: #9aa3bb; }
   .snippet { color: #9aa3bb; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .clickable { cursor: pointer; }
   .clickable:hover { background: #1d2333; }

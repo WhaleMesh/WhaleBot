@@ -41,11 +41,13 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: registry + health loop + API gateway + chat orchestration
   - entry: `orchestrator/cmd/server/main.go`
   - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
+  - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
   - host exposed: no
   - note: supports `DELETE /sessions/{id}` hard-delete in addition to legacy `POST /clear_context`
+  - note: per-session **idle expiry** via `SESSION_IDLE_SEC` (extends on each `append_messages`; `get_context` returns `expired` + `expires_at`; append on expired id returns 409)
   - note: message metadata may include real `prompt_tokens` / `completion_tokens` / `total_tokens` and `reply_latency_ms` when upstream provides usage
 - `chatmodel`
   - purpose: OpenAI-compatible chat completions client
@@ -61,6 +63,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available
   - note: execution-oriented requests now default to plan-first mode (ask for user confirmation before tool execution)
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
+  - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
 - `im-telegram`
   - purpose: Telegram gateway
   - entry: `im-telegram/cmd/server/main.go`
@@ -73,7 +76,8 @@ Read this first, then read only the referenced source-of-truth files.
   - note: writes progress/attachment status messages to `session` via `SESSION_URL` so Session page stays aligned with IM timeline
   - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
-  - note: `/new` generates unique logical session keys (`chatID-timestamp-randomhex`) to avoid historical ID reuse after restart
+  - note: first contact uses an auto-generated session id (same key shape as `/new`, not a bare `chat_id` string); when a local chat is `/end`ed, the next plain message auto-starts a new session; background poll notifies IM when the **server** marks a session idle-expired and rotates to a new id
+  - note: `/new` still generates a fresh `chatID-…` key for manual resets
 - `user-docker-manager`
   - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations)
   - entry: `user-docker-manager/cmd/server/main.go`
@@ -83,8 +87,9 @@ Read this first, then read only the referenced source-of-truth files.
   - note: raw language images (for example official `golang:*`) are rejected unless they expose `/api/v1/userdocker/interface`
   - note: pulling non-framework images requires explicit user approval flag (`external_image_approved_by_user=true`)
   - note: supports `session_scoped` and `global_service` container scopes with `switch-scope`
-  - note: session-scoped container names append a sanitized `session_id` suffix to reduce naming conflicts across sessions
-  - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for session-scoped containers (default 24h)
+  - note: session-scoped container names append a sanitized `session_id` suffix to reduce naming conflicts across runs
+  - note: `session_scoped` containers store `mvp.userdocker.creator_session_id` (same as create-time `session_id`); **any** request that supplies `session_id` may operate them (no per-container session ownership check); temporary removal TTL from `USERDOCKER_TEMP_TTL_SEC` (or `USERDOCKER_IDLE_HOURS*3600`); `POST /api/v1/user-dockers/touch-creator-session` touches all temp dockers for a creator `session_id`
+  - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for `session_scoped` containers; `global_service` is not subject to this sweeper
 - `logger`
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`
@@ -105,7 +110,8 @@ Read this first, then read only the referenced source-of-truth files.
   - note: includes dedicated `Logger` page in addition to overview logs
   - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
-  - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`
+  - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`; list shows idle-expiry column; session detail shows expiry countdown
+  - note: Overview + Components read `user-docker-manager` registry `meta.userdocker_temp_ttl_sec` / `meta.userdocker_idle_check_sec` and combine with `GET /api/v1/tools/user-dockers` list (`last_active_at`, `scope`) for temporary-container idle-removal countdown; Components type badges use a string-hash palette
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
@@ -140,11 +146,12 @@ Read this first, then read only the referenced source-of-truth files.
 - Telegram progress stream:
   - enabled by default via logger polling during chat execution (no extra env required)
 - Userdocker manager lifecycle:
+  - `USERDOCKER_TEMP_TTL_SEC` (optional; temp `session_scoped` removal idle; default `USERDOCKER_IDLE_HOURS*3600`)
   - `USERDOCKER_IDLE_HOURS`, `USERDOCKER_IDLE_CHECK_SEC`, `USERDOCKER_ALLOWED_IMAGES`
 - Health loop:
   - `HEALTHCHECK_INTERVAL_SEC`, `HEALTHCHECK_FAIL_THRESHOLD`
 - Session:
-  - `SESSION_MAX_MESSAGES`
+  - `SESSION_MAX_MESSAGES`, `SESSION_IDLE_SEC` (idle expiry window in seconds, default 86400)
 
 ## 5) Current State / Drift Notes
 
