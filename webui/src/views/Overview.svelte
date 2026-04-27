@@ -9,10 +9,21 @@
 
   let components = [];
   let userdockers = [];
+  let stats = null;
+  let statsError = '';
+  let statsDisabled = false;
   let error = '';
   let timer;
   let tick = 0;
   let tickTimer;
+
+  function fmtCount(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v) || v < 0) return '0';
+    if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
+    if (v >= 10_000) return (v / 1_000).toFixed(1) + 'k';
+    return String(Math.trunc(v));
+  }
 
   function fmtTs(ts) {
     if (!ts) return '—';
@@ -51,9 +62,29 @@
 
   async function refresh() {
     try {
-      const [c, u] = await Promise.all([api.components(), api.userDockerList(true)]);
+      const [c, u, s] = await Promise.all([
+        api.components(),
+        api.userDockerList(true),
+        api.statsOverview().catch((e) => ({ _err: String(e) })),
+      ]);
       components = c.components || [];
       userdockers = u.containers || [];
+      if (s && s.disabled) {
+        statsDisabled = true;
+        stats = null;
+        statsError = '';
+      } else if (s && s._err) {
+        statsDisabled = false;
+        statsError = s._err;
+      } else if (s && !s._err && s.success === false) {
+        statsDisabled = false;
+        stats = null;
+        statsError = s.error || '统计服务返回错误';
+      } else if (s && !s._err && s.success !== false) {
+        statsDisabled = false;
+        stats = s.stats || null;
+        statsError = '';
+      }
       error = '';
     } catch (e) {
       error = String(e);
@@ -74,6 +105,24 @@
 
   $: systemComponents = components.filter((c) => !isUserDockerType(c?.type));
   $: udPolicy = parseUserDockerManagerMeta(components);
+  $: messagesStat = stats
+    ? {
+        total: Number((stats.messages || {}).total || 0),
+        delta: Number((stats.messages || {}).last_24h || 0),
+      }
+    : { total: 0, delta: 0 };
+  $: toolCallsStat = stats
+    ? {
+        total: Number((stats.tool_calls || {}).total || 0),
+        delta: Number((stats.tool_calls || {}).last_24h || 0),
+      }
+    : { total: 0, delta: 0 };
+  $: tokensStat = stats
+    ? {
+        total: Number(((stats.tokens || {}).total || {}).total || 0),
+        delta: Number(((stats.tokens || {}).total || {}).last_24h || 0),
+      }
+    : { total: 0, delta: 0 };
 
   function removalLine(d) {
     tick;
@@ -93,6 +142,33 @@
 
 <h1>Overview</h1>
 {#if error}<div class="err">{error}</div>{/if}
+{#if statsDisabled}
+  <div class="stats-disabled" role="status">
+    未启用统计服务。在 <code>docker-compose.yml</code> 中启动 <code>stats</code> 服务并重建后，将显示对话数量、工具调用次数与 Token 消耗（近 24 小时对齐整点窗口）。
+  </div>
+{:else if statsError}
+  <div class="stats-err" role="status">统计数据不可用：{statsError}</div>
+{/if}
+
+{#if !statsDisabled}
+  <div class="stat-cards">
+    <div class="stat-card">
+      <div class="stat-label">对话数量</div>
+      <div class="stat-value">{fmtCount(messagesStat.total)}</div>
+      <div class="stat-delta">近24小时 +{fmtCount(messagesStat.delta)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">工具调用次数</div>
+      <div class="stat-value">{fmtCount(toolCallsStat.total)}</div>
+      <div class="stat-delta">近24小时 +{fmtCount(toolCallsStat.delta)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Token 消耗</div>
+      <div class="stat-value">{fmtCount(tokensStat.total)}</div>
+      <div class="stat-delta">近24小时 +{fmtCount(tokensStat.delta)}</div>
+    </div>
+  </div>
+{/if}
 
 <h2>Userdocker</h2>
 {#if policyLine}
@@ -255,4 +331,59 @@
     padding: 0.8rem 0.9rem;
   }
   .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
+  .stats-err {
+    background: #2a2112;
+    border: 1px solid #6b5422;
+    color: #f5c469;
+    padding: 0.45rem 0.75rem;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    font-size: 0.82rem;
+  }
+  .stats-disabled {
+    background: #1a2230;
+    border: 1px solid #2d3a52;
+    color: #9aa3bb;
+    padding: 0.55rem 0.85rem;
+    border-radius: 6px;
+    margin-bottom: 0.85rem;
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+  .stats-disabled code {
+    font-size: 0.8rem;
+    color: #c7d0e6;
+  }
+  .stat-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.8rem;
+    margin: 0.2rem 0 1.2rem;
+  }
+  .stat-card {
+    background: #151923;
+    border: 1px solid #232838;
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .stat-label {
+    color: #8f98ae;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stat-value {
+    color: #e5e9f5;
+    font-size: 1.85rem;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-delta {
+    color: #85d8a7;
+    font-size: 0.78rem;
+  }
 </style>

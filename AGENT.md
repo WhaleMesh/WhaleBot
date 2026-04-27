@@ -42,6 +42,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `orchestrator/cmd/server/main.go`
   - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
+  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered; after direct `POST /api/v1/chat` append, best-effort `POST` to stats `POST /events` for message rows
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
@@ -60,7 +61,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: discovers healthy tool/environment components via orchestrator and builds tool list per run
   - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
   - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
-  - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available
+  - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available; when `stats` (`stats_ingest`) is healthy, also posts batched overview metrics to `stats` `POST /events` (messages on successful session append, `tool_call` per tool start, `tokens` on `runtime_run_completed` when usage is present)
   - note: execution-oriented requests now default to plan-first mode (ask for user confirmation before tool execution)
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
@@ -94,6 +95,12 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`
   - host exposed: no
+  - note: registers capabilities `events_write`, `events_recent` only
+- `stats`
+  - purpose: optional Overview metrics (SQLite); ingests batched events from `runtime` / `orchestrator` and serves `GET /stats/overview` with rolling 24h window (hour-aligned)
+  - entry: `stats/cmd/server/main.go`
+  - host exposed: no
+  - note: registers `type=stats` with capabilities `stats_overview`, `stats_ingest`; compose includes the service; omit or stop the container if you do not want metrics
 - `memory`
   - purpose: lightweight memory KV/notes (SQLite)
   - entry: `memory/cmd/server/main.go`
@@ -112,6 +119,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
   - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`; list shows idle-expiry column; session detail shows expiry countdown
   - note: Overview + Components read `user-docker-manager` registry `meta.userdocker_temp_ttl_sec` / `meta.userdocker_idle_check_sec` and combine with `GET /api/v1/tools/user-dockers` list (`last_active_at`, `scope`) for temporary-container idle-removal countdown; Components type badges use a string-hash palette
+  - note: Overview top renders three stat cards (对话数量 / 工具调用次数 / Token 消耗) from `GET /api/v1/stats/overview` when the stats service is enabled; shows an explicit "未启用统计服务" banner on `503 stats_disabled`; values use k/M shorthand (>10k -> `Nk`, >1M -> `NM`, one decimal) and a small `近24小时 +N` delta line (`last_24h` from stats service window)
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
@@ -134,7 +142,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
   - localhost model endpoints are rewritten by `chatmodel` to `host.docker.internal`
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
 - IM/session sync:
@@ -155,10 +163,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 11 services including `runtime`, `logger`, `memory`, `workspace`.
+- `docker-compose.yml` contains 12 services including `runtime`, `logger`, `stats`, `memory`, `workspace`.
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `logger_data`, `memory_data`, `workspace_data`.
+- Named volumes in use: `session_data`, `logger_data`, `stats_data`, `memory_data`, `workspace_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
@@ -185,6 +193,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Quick diagnostics:
   - check components: `curl -s http://localhost:8080/api/v1/components`
   - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
+  - check stats overview (when stats service running): `curl -s http://localhost:8080/api/v1/stats/overview`
   - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
   - check userdocker allowed images: `curl -s http://localhost:8080/api/v1/tools/user-dockers/images`
   - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`

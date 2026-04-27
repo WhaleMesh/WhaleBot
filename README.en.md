@@ -28,6 +28,7 @@ flowchart LR
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
+  orchestrator --> stats["stats (optional)"]
 ```
 
 ## Quick Start (User Path)
@@ -65,6 +66,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `im-telegram/`: Telegram gateway
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `logger/`: logging service
+- `stats/`: optional Overview metrics service
 - `memory/`: memory service
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
