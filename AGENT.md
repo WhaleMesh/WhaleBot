@@ -42,7 +42,9 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `orchestrator/cmd/server/main.go`
   - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
-  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered; after direct `POST /api/v1/chat` append, best-effort `POST` to stats `POST /events` for message rows
+  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
+  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): all of `runtime`, `session`, `chat_model` must be healthy to chat; `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
+  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+chatmodel fallback)
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
@@ -191,6 +193,7 @@ Read this first, then read only the referenced source-of-truth files.
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
 - Quick diagnostics:
+  - check chat min stack: `curl -s http://localhost:8080/health` (`chat_ready`, `chat_error`)
   - check components: `curl -s http://localhost:8080/api/v1/components`
   - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
   - check stats overview (when stats service running): `curl -s http://localhost:8080/api/v1/stats/overview`

@@ -43,7 +43,7 @@ error_behavior: standard_http_status_from_caddy
 
 ## Internal Calls
 - Browser-side fetch calls to orchestrator:
-  - `GET /health`
+  - `GET /health` (Overview uses `chat_ready` / `chat_error` when `chat_ready` is false)
   - `GET /api/v1/components`
   - `GET /api/v1/logs/recent`
   - `GET /api/v1/logger/events/recent`
