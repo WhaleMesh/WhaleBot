@@ -26,11 +26,14 @@ type Server struct {
 	HTTP     *http.Client
 }
 
-func NewServer(r *registry.Registry, lg *logs.Ring) *Server {
+func NewServer(r *registry.Registry, lg *logs.Ring, upstreamTimeout time.Duration) *Server {
+	if upstreamTimeout <= 0 {
+		upstreamTimeout = 60 * time.Second
+	}
 	return &Server{
 		Registry: r,
 		Logs:     lg,
-		HTTP:     &http.Client{Timeout: 60 * time.Second},
+		HTTP:     &http.Client{Timeout: upstreamTimeout},
 	}
 }
 
@@ -56,13 +59,27 @@ func (s *Server) Router() http.Handler {
 		r.Get("/logger/events/recent", s.handleLoggerEventsRecent)
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
+		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
+		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
 		r.Get("/tools/user-dockers", s.handleUserDockerList)
 		r.Post("/tools/user-dockers", s.handleUserDockerCreate)
 		r.Get("/tools/user-dockers/{name}/interface", s.handleUserDockerInterface)
 		r.Delete("/tools/user-dockers/{name}", s.handleUserDockerRemove)
 		r.Post("/tools/user-dockers/{name}/restart", s.handleUserDockerRestart)
-		r.Post("/environments/golang/run", s.handleGolangRun)
+		r.Post("/tools/user-dockers/{name}/start", s.handleUserDockerStart)
+		r.Post("/tools/user-dockers/{name}/stop", s.handleUserDockerStop)
+		r.Post("/tools/user-dockers/{name}/touch", s.handleUserDockerTouch)
+		r.Post("/tools/user-dockers/touch-creator-session", s.handleUserDockerTouchCreatorSession)
+		r.Post("/tools/user-dockers/{name}/switch-scope", s.handleUserDockerSwitchScope)
+		r.Post("/tools/user-dockers/{name}/exec", s.handleUserDockerExec)
+		r.Get("/tools/user-dockers/{name}/files", s.handleUserDockerFilesList)
+		r.Get("/tools/user-dockers/{name}/file", s.handleUserDockerFileRead)
+		r.Put("/tools/user-dockers/{name}/file", s.handleUserDockerFileWrite)
+		r.Delete("/tools/user-dockers/{name}/file", s.handleUserDockerFileDelete)
+		r.Post("/tools/user-dockers/{name}/files/mkdir", s.handleUserDockerFilesMkdir)
+		r.Post("/tools/user-dockers/{name}/files/move", s.handleUserDockerFilesMove)
+		r.Get("/tools/user-dockers/{name}/artifacts/export", s.handleUserDockerArtifactExport)
 	})
 	return r
 }
@@ -133,6 +150,20 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, r, sess.Endpoint+"/sessions/"+id)
 }
 
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	sess := s.Registry.FirstHealthyByType("session")
+	if sess == nil {
+		writeError(w, 503, "no healthy session service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, 400, "session id is required")
+		return
+	}
+	s.proxyDelete(w, r, sess.Endpoint+"/sessions/"+id)
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var req ChatRequest
@@ -150,7 +181,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.Channel == "" {
 		req.Channel = "web"
 	}
-	traceID := randomHex(8)
+	traceID := req.TraceID
+	if traceID == "" {
+		traceID = randomHex(8)
+	}
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
 	if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
@@ -188,9 +222,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := s.fetchContext(sess.Endpoint, sessionID)
+	history, expired, err := s.fetchContext(sess.Endpoint, sessionID)
 	if err != nil {
 		s.log("error", "get_context failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+	}
+	if expired {
+		writeJSON(w, 200, ChatResponse{
+			Success:   false,
+			Error:     "session expired; start a new session or continue in a new IM session",
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
+		return
 	}
 
 	userMsg := Message{Role: "user", Content: req.Message}
@@ -235,15 +278,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleGolangRun(w http.ResponseWriter, r *http.Request) {
-	env := s.Registry.FirstHealthyByCapability("run_go")
-	if env == nil {
-		writeError(w, 503, "no healthy environment service")
-		return
-	}
-	s.proxyPost(w, r, env.Endpoint+"/run")
-}
-
 func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *http.Request) {
 	tool := s.Registry.FirstHealthyByCapability("userdocker_interface_contract")
 	if tool == nil {
@@ -251,6 +285,15 @@ func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *htt
 		return
 	}
 	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/interface-contract")
+}
+
+func (s *Server) handleUserDockerImages(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_images")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/images")
 }
 
 func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
@@ -313,23 +356,179 @@ func (s *Server) handleUserDockerRestart(w http.ResponseWriter, r *http.Request)
 	s.proxyPost(w, r, target)
 }
 
+func (s *Server) handleUserDockerStart(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_start")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/start", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerStop(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_stop")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/stop", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerTouch(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_touch")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/touch", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerTouchCreatorSession(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_touch_creator")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers/touch-creator-session")
+}
+
+func (s *Server) handleUserDockerSwitchScope(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_switch_scope")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/switch-scope", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerExec(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_exec")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/exec", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesList(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileRead(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileWrite(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	s.proxyPut(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileDelete(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyDelete(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesMkdir(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files/mkdir", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesMove(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files/move", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstHealthyByCapability("userdocker_artifact_export")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/artifacts/export", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
 // --- helpers ---
 
-func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, error) {
+func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, bool, error) {
 	body, _ := json.Marshal(GetContextRequest{SessionID: sessionID})
 	resp, err := s.HTTP.Post(sessionURL+"/get_context", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("session returned %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("session returned %d", resp.StatusCode)
 	}
 	var gr GetContextResponse
 	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return gr.Messages, nil
+	return gr.Messages, gr.Expired, nil
 }
 
 func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, *Usage, error) {
@@ -362,6 +561,9 @@ func (s *Server) appendMessages(sessionURL, sessionID string, msgs []Message) er
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 409 {
+		return fmt.Errorf("session expired")
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("session append returned %d", resp.StatusCode)
 	}
@@ -384,6 +586,21 @@ func (s *Server) proxyPost(w http.ResponseWriter, r *http.Request, target string
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(buf))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
+func (s *Server) proxyPut(w http.ResponseWriter, r *http.Request, target string) {
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, 400, "body read failed: "+err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, target, bytes.NewReader(buf))
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

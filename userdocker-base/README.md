@@ -18,6 +18,9 @@ component_registration:
   capabilities:
     - long_running
     - introspection
+    - exec
+    - files
+    - artifact_export
     - userdocker.v1
   meta:
     origin: user-docker-manager
@@ -32,6 +35,7 @@ last_verified_from:
 - Optionally self-registers to orchestrator when `ORCHESTRATOR_URL` is provided.
 - In compose, it is kept running as a build/helper container (`sleep infinity`).
 - Implements the public `userdocker.v1` interface descriptor endpoint.
+- Provides workspace-bounded exec/files/artifact APIs used by `user-docker-manager`.
 
 ## External API
 ### Endpoint: GET /health
@@ -72,6 +76,19 @@ response:
 error_behavior: standard_http_status
 ```
 
+### Endpoint Group: Workspace command and file APIs
+```yaml
+exec: POST /api/v1/userdocker/exec
+files_list: GET /api/v1/userdocker/files?path=.
+file_read: GET /api/v1/userdocker/file?path=...
+file_write: PUT /api/v1/userdocker/file
+file_delete: DELETE /api/v1/userdocker/file?path=...
+mkdir: POST /api/v1/userdocker/files/mkdir
+move: POST /api/v1/userdocker/files/move
+artifact_export: GET /api/v1/userdocker/artifacts/export?path=...
+path_policy: all paths are constrained under WORKSPACE_ROOT
+```
+
 ## Internal Calls
 - Optional `POST ${ORCHESTRATOR_URL}/api/v1/components/register` in periodic register loop.
 - No other upstream dependencies.
@@ -109,6 +126,14 @@ required: false
 effect: when_empty_no_self_registration_when_set_periodic_registration_enabled
 ```
 
+### WORKSPACE_ROOT
+```yaml
+name: WORKSPACE_ROOT
+default: /workspace
+required: false
+effect: root_dir_for_exec_and_file_operations
+```
+
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: none.
@@ -125,6 +150,9 @@ aliases:
 query_to_endpoint:
   health: GET /health
   root_info: GET /
+  exec: POST /api/v1/userdocker/exec
+  file_ops: /api/v1/userdocker/file(s)*
+  export_artifact: GET /api/v1/userdocker/artifacts/export
 used_by:
   user-docker-manager: as_default_spawn_image
 ```

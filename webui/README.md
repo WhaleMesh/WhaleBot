@@ -56,14 +56,11 @@ error_behavior: standard_http_status_from_caddy
   - `POST /api/v1/tools/user-dockers/{name}/restart`
   - `GET /api/v1/tools/user-dockers/interface-contract`
   - `GET /api/v1/tools/user-dockers/{name}/interface`
-  - `POST /api/v1/environments/golang/run`
 
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.
 - `Tools` page is a selector list for tool test pages.
   - Current item: `User Docker Manager`.
-- `Envs` page is a selector list for environment test pages.
-  - Current item: `Env · Go`.
 - `Logger` page provides dual-source diagnostics:
   - persistent logger events from `GET /api/v1/logger/events/recent`
   - recent orchestrator ring logs from `GET /api/v1/logs/recent`

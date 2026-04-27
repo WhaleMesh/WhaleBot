@@ -11,6 +11,7 @@ services:
       ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-8080}
       HEALTHCHECK_INTERVAL_SEC: ${HEALTHCHECK_INTERVAL_SEC:-5}
       HEALTHCHECK_FAIL_THRESHOLD: ${HEALTHCHECK_FAIL_THRESHOLD:-3}
+      ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC: ${ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC:-240}
     ports:
       - "${ORCHESTRATOR_PORT:-8080}:8080"
     networks: [mvp_net]
@@ -29,6 +30,7 @@ services:
     environment:
       SESSION_PORT: ${SESSION_PORT:-8090}
       SESSION_MAX_MESSAGES: ${SESSION_MAX_MESSAGES:-40}
+      SESSION_IDLE_SEC: ${SESSION_IDLE_SEC:-86400}
       SESSION_DB_PATH: /data/session.db
       ORCHESTRATOR_URL: http://orchestrator:8080
       SERVICE_HOST: session
@@ -78,7 +80,7 @@ services:
     container_name: runtime
     environment:
       RUNTIME_PORT: ${RUNTIME_PORT:-8085}
-      REACT_MAX_STEPS: ${REACT_MAX_STEPS:-8}
+      REACT_MAX_STEPS: ${REACT_MAX_STEPS:-16}
       ORCHESTRATOR_URL: http://orchestrator:8080
       SESSION_URL: http://session:8090
       CHATMODEL_URL: http://chatmodel:8081
@@ -105,6 +107,8 @@ services:
       IM_TELEGRAM_PORT: ${IM_TELEGRAM_PORT:-8084}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ORCHESTRATOR_URL: http://orchestrator:8080
+      SESSION_URL: http://session:8090
+      IM_TELEGRAM_CHAT_TIMEOUT_SEC: ${IM_TELEGRAM_CHAT_TIMEOUT_SEC:-240}
       SERVICE_HOST: im-telegram
     networks: [mvp_net]
     depends_on:
@@ -126,7 +130,11 @@ services:
       ORCHESTRATOR_URL: http://orchestrator:8080
       SERVICE_HOST: user-docker-manager
       USERDOCKER_DEFAULT_IMAGE: whalesbot/userdocker-base:latest
+      USERDOCKER_ALLOWED_IMAGES: ${USERDOCKER_ALLOWED_IMAGES:-whalesbot/userdocker-base:latest,whalesbot/userdocker-golang:latest}
       DOCKER_NETWORK: mvp_net
+      USERDOCKER_IDLE_HOURS: ${USERDOCKER_IDLE_HOURS:-24}
+      USERDOCKER_IDLE_CHECK_SEC: ${USERDOCKER_IDLE_CHECK_SEC:-300}
+      USERDOCKER_TEMP_TTL_SEC: ${USERDOCKER_TEMP_TTL_SEC:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [mvp_net]
@@ -135,25 +143,6 @@ services:
       userdocker-base: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${USER_DOCKER_MANAGER_PORT:-8082}/health || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-
-  env-golang:
-    build: ./env-golang
-    image: whalesbot/env-golang:latest
-    container_name: env-golang
-    environment:
-      ENV_GOLANG_PORT: ${ENV_GOLANG_PORT:-8083}
-      ORCHESTRATOR_URL: http://orchestrator:8080
-      SERVICE_HOST: env-golang
-    networks: [mvp_net]
-    depends_on:
-      orchestrator: { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${ENV_GOLANG_PORT:-8083}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -254,9 +243,26 @@ services:
   # real userdocker containers are created on demand via
   # POST /api/v1/tools/user-dockers.
   userdocker-base:
-    build: ./userdocker-base
+    build:
+      context: ./userdocker-base
+      args:
+        FINAL_BASE_IMAGE: alpine:3.20
     image: whalesbot/userdocker-base:latest
     container_name: userdocker-base
+    entrypoint: ["sleep"]
+    command: ["infinity"]
+    networks: [mvp_net]
+    restart: unless-stopped
+
+  # Build-only helper image with Go toolchain preinstalled for compile tasks.
+  # Must still satisfy userdocker interface contract.
+  userdocker-golang:
+    build:
+      context: ./userdocker-base
+      args:
+        FINAL_BASE_IMAGE: golang:1.22-alpine
+    image: whalesbot/userdocker-golang:latest
+    container_name: userdocker-golang
     entrypoint: ["sleep"]
     command: ["infinity"]
     networks: [mvp_net]

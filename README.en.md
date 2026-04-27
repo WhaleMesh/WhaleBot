@@ -25,7 +25,6 @@ flowchart LR
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
   orchestrator --> toolDocker["user-docker-manager"]
-  orchestrator --> envGolang["env-golang"]
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
@@ -65,11 +64,11 @@ Root README keeps framework-level info only; implementation details live in each
 - `chatmodel/`: model adapter/client
 - `im-telegram/`: Telegram gateway
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
-- `env-golang/`: Go execution environment
 - `logger/`: logging service
 - `memory/`: memory service
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
+- `whalesbot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks
 - `webui/`: frontend
 
 ## Documentation Priority

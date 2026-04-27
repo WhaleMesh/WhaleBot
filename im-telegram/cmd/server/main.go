@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,9 +27,33 @@ import (
 	"github.com/whalesbot/imtelegram/internal/registerclient"
 )
 
+var (
+	reChannelToMessage = regexp.MustCompile(`(?is)<\|channel\|?>[\s\S]*?<\|message\|?>`)
+	reChannelTailBlock = regexp.MustCompile(`(?is)<\|channel\|?>[\s\S]*$`)
+	reMessageTag       = regexp.MustCompile(`(?is)<\|/?message\|?>`)
+	reThinkTag         = regexp.MustCompile(`(?is)<think>(.*?)</think>`)
+	reThoughtTag       = regexp.MustCompile(`(?is)<thought>(.*?)</thought>`)
+	reReasoningTag     = regexp.MustCompile(`(?is)<reasoning>(.*?)</reasoning>`)
+	reLooseMarkerTag   = regexp.MustCompile(`(?is)</?\|?(?:channel|message|think|thought|reasoning)\|?>`)
+)
+
+const (
+	htmlSendAttempts  = 4
+	plainSendAttempts = 4
+)
+
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
+	}
+	return def
+}
+
+func getenvInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -36,19 +63,49 @@ type chatRequest struct {
 	Channel string `json:"channel"`
 	ChatID  string `json:"chat_id"`
 	Message string `json:"message"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 type chatResponse struct {
-	Success   bool   `json:"success"`
-	SessionID string `json:"session_id"`
-	Reply     string `json:"reply"`
-	TraceID   string `json:"trace_id"`
-	Error     string `json:"error,omitempty"`
+	Success     bool             `json:"success"`
+	SessionID   string           `json:"session_id"`
+	Reply       string           `json:"reply"`
+	TraceID     string           `json:"trace_id"`
+	Attachments []chatAttachment `json:"attachments,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+type chatAttachment struct {
+	Filename      string `json:"filename"`
+	MimeType      string `json:"mime_type,omitempty"`
+	ContentBase64 string `json:"content_base64"`
+	SourcePath    string `json:"source_path,omitempty"`
+}
+
+type loggerEvent struct {
+	ID      int64             `json:"id"`
+	Time    time.Time         `json:"time"`
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields"`
+}
+
+type loggerEventsResponse struct {
+	Success bool          `json:"success"`
+	Events  []loggerEvent `json:"events"`
+	Error   string        `json:"error,omitempty"`
+}
+
+type sessionMessage struct {
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
 type chatState struct {
-	CurrentSessionID string
-	Ended            bool
+	CurrentSessionID  string
+	Ended             bool
+	NotifiedExpiredID string
 }
 
 type commandResult struct {
@@ -70,9 +127,8 @@ func (m *conversationManager) getOrCreate(chatID int64) *chatState {
 	if ok {
 		return st
 	}
-	base := strconv.FormatInt(chatID, 10)
 	st = &chatState{
-		CurrentSessionID: base,
+		CurrentSessionID: buildSessionID(chatID),
 		Ended:            false,
 	}
 	m.chats[chatID] = st
@@ -85,11 +141,17 @@ func (m *conversationManager) resolveSessionID(chatID int64) string {
 	return m.getOrCreate(chatID).CurrentSessionID
 }
 
-func (m *conversationManager) isEnded(chatID int64) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	st, ok := m.chats[chatID]
-	return ok && st.Ended
+// ensureActiveForMessage starts a new logical session if the user had ended the previous one.
+func (m *conversationManager) ensureActiveForMessage(chatID int64) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.getOrCreate(chatID)
+	if st.Ended {
+		st.Ended = false
+		st.CurrentSessionID = buildSessionID(chatID)
+		st.NotifiedExpiredID = ""
+	}
+	return st.CurrentSessionID
 }
 
 func (m *conversationManager) newSession(chatID int64) string {
@@ -97,6 +159,7 @@ func (m *conversationManager) newSession(chatID int64) string {
 	defer m.mu.Unlock()
 	st := m.getOrCreate(chatID)
 	st.Ended = false
+	st.NotifiedExpiredID = ""
 	st.CurrentSessionID = buildSessionID(chatID)
 	return st.CurrentSessionID
 }
@@ -123,9 +186,103 @@ func (m *conversationManager) status(chatID int64) (string, bool) {
 	defer m.mu.RUnlock()
 	st, ok := m.chats[chatID]
 	if !ok {
-		return strconv.FormatInt(chatID, 10), false
+		return "（尚未开始）", false
 	}
 	return st.CurrentSessionID, st.Ended
+}
+
+func (m *conversationManager) snapshotSessions() []struct {
+	ChatID    int64
+	SessionID string
+	Ended     bool
+} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]struct {
+		ChatID    int64
+		SessionID string
+		Ended     bool
+	}, 0, len(m.chats))
+	for id, st := range m.chats {
+		out = append(out, struct {
+			ChatID    int64
+			SessionID string
+			Ended     bool
+		}{id, st.CurrentSessionID, st.Ended})
+	}
+	return out
+}
+
+func fetchSessionExpired(ctx context.Context, cli *http.Client, orchURL, sessionID string) (bool, error) {
+	u := strings.TrimRight(orchURL, "/") + "/api/v1/sessions/" + url.PathEscape(sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return false, fmt.Errorf("sessions status %d", resp.StatusCode)
+	}
+	var out struct {
+		Session struct {
+			Expired bool `json:"expired"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return false, err
+	}
+	return out.Session.Expired, nil
+}
+
+func sessionExpiryLoop(ctx context.Context, bot *tgbotapi.BotAPI, conv *conversationManager, cli *http.Client, orchURL string) {
+	tick := time.NewTicker(25 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			snaps := conv.snapshotSessions()
+			for _, sn := range snaps {
+				if sn.Ended {
+					continue
+				}
+				full := "telegram_" + sn.SessionID
+				expired, err := fetchSessionExpired(ctx, cli, orchURL, full)
+				if err != nil || !expired {
+					continue
+				}
+				var newID string
+				conv.mu.Lock()
+				st, ok := conv.chats[sn.ChatID]
+				if !ok || st.CurrentSessionID != sn.SessionID {
+					conv.mu.Unlock()
+					continue
+				}
+				if st.NotifiedExpiredID == full {
+					conv.mu.Unlock()
+					continue
+				}
+				st.NotifiedExpiredID = full
+				newID = buildSessionID(sn.ChatID)
+				st.CurrentSessionID = newID
+				st.Ended = false
+				conv.mu.Unlock()
+				text := fmt.Sprintf(
+					"会话已因闲置过期（`%s`）。\n已自动开启新会话。\n新 session_id: `%s`",
+					full,
+					newID,
+				)
+				if err := sendTelegramReply(ctx, bot, sn.ChatID, text, "", ""); err != nil {
+					slog.Error("session expiry notice failed", "chat_id", sn.ChatID, "err", err)
+				}
+			}
+		}
+	}
 }
 
 func main() {
@@ -189,8 +346,13 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 	u.Timeout = 30
 	updates := bot.GetUpdatesChan(u)
 
-	cli := &http.Client{Timeout: 90 * time.Second}
+	chatTimeoutSec := getenvInt("IM_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
+	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
+	orchSessCLI := &http.Client{Timeout: 15 * time.Second}
+	sessionURL := getenv("SESSION_URL", "http://session:8090")
+	sessionCLI := &http.Client{Timeout: 20 * time.Second}
 	conv := newConversationManager()
+	go sessionExpiryLoop(ctx, bot, conv, orchSessCLI, orchURL)
 
 	for {
 		select {
@@ -204,37 +366,367 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 			}
 			cmd := handleCommand(conv, msg)
 			if cmd.Handled {
-				sendTelegramReply(bot, msg.Chat.ID, cmd.Reply)
+				if err := sendTelegramReply(ctx, bot, msg.Chat.ID, cmd.Reply, "", ""); err != nil {
+					slog.Error("telegram command reply failed", "chat_id", msg.Chat.ID, "err", err)
+				}
 				continue
 			}
-			if conv.isEnded(msg.Chat.ID) {
-				sendTelegramReply(bot, msg.Chat.ID, "当前会话已结束。发送 /new 开启新会话，或发送 /help 查看命令。")
-				continue
-			}
-			sessionID := conv.resolveSessionID(msg.Chat.ID)
-			reply, err := callOrchestrator(ctx, cli, orchURL, chatRequest{
+			sessionID := conv.ensureActiveForMessage(msg.Chat.ID)
+			traceID := newTraceID()
+			progressDone := make(chan struct{})
+			go streamProgressUpdates(ctx, cli, orchURL, bot, msg.Chat.ID, sessionID, traceID, progressDone, sessionCLI, sessionURL)
+			chatResp, err := callOrchestrator(ctx, cli, orchURL, chatRequest{
 				UserID:  strconv.FormatInt(msg.From.ID, 10),
 				Channel: "telegram",
 				ChatID:  sessionID,
 				Message: msg.Text,
+				TraceID: traceID,
 			})
+			close(progressDone)
+			reply := chatResp.Reply
+			if chatResp.TraceID != "" {
+				traceID = chatResp.TraceID
+			}
 			if err != nil {
 				slog.Error("orchestrator chat failed", "err", err)
-				reply = "抱歉，我暂时无法回应：" + err.Error()
+				if strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
+					reply = fmt.Sprintf("执行超时（等待运行结果超过 %ds）。\nsession_id: `%s`\ntrace_id: `%s`\n请到 Session 页面查看中间步骤（tool_call/runtime事件）继续排查。", chatTimeoutSec, sessionID, defaultText(traceID, "unknown"))
+				} else {
+					reply = fmt.Sprintf("抱歉，我暂时无法回应：%s\nsession_id: `%s`\ntrace_id: `%s`", err.Error(), sessionID, defaultText(traceID, "unknown"))
+				}
 			}
-			sendTelegramReply(bot, msg.Chat.ID, reply)
+			if err := sendTelegramReply(ctx, bot, msg.Chat.ID, reply, sessionID, traceID); err != nil {
+				slog.Error("telegram reply failed", "chat_id", msg.Chat.ID, "session_id", sessionID, "trace_id", traceID, "err", err)
+			}
+			if err != nil {
+				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, reply)
+			}
+			if len(chatResp.Attachments) > 0 {
+				sendTelegramAttachments(ctx, bot, msg.Chat.ID, sessionID, traceID, chatResp.Attachments, sessionCLI, sessionURL)
+			}
 		}
 	}
 }
 
-func sendTelegramReply(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	// Keep session storage in standard markdown; conversion is IM-specific at send time.
-	out := tgbotapi.NewMessage(chatID, imfmt.MarkdownToTelegramHTML(text))
-	out.ParseMode = "HTML"
-	out.DisableWebPagePreview = true
-	if _, err := bot.Send(out); err != nil {
-		slog.Error("telegram send failed", "err", err)
+func defaultText(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
 	}
+	return v
+}
+
+func newTraceID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("trace_%d", time.Now().UnixNano())
+	}
+	return "trace_" + hex.EncodeToString(buf)
+}
+
+func streamProgressUpdates(
+	ctx context.Context,
+	cli *http.Client,
+	orchURL string,
+	bot *tgbotapi.BotAPI,
+	chatID int64,
+	sessionID, traceID string,
+	done <-chan struct{},
+	sessionCLI *http.Client,
+	sessionURL string,
+) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	seen := map[int64]struct{}{}
+	updates := 0
+	maxUpdates := 24
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			events, err := fetchLoggerEvents(ctx, cli, orchURL, 120)
+			if err != nil {
+				continue
+			}
+			for i := len(events) - 1; i >= 0; i-- {
+				evt := events[i]
+				if evt.Fields["trace_id"] != traceID {
+					continue
+				}
+				if evt.ID > 0 {
+					if _, ok := seen[evt.ID]; ok {
+						continue
+					}
+					seen[evt.ID] = struct{}{}
+				}
+				msg, ok := renderProgressEvent(evt, sessionID)
+				if !ok {
+					continue
+				}
+				if err := sendTelegramReply(ctx, bot, chatID, msg, sessionID, traceID); err != nil {
+					slog.Warn("telegram progress update failed", "chat_id", chatID, "trace_id", traceID, "err", err)
+					continue
+				}
+				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, msg)
+				updates++
+				if updates >= maxUpdates {
+					return
+				}
+			}
+		}
+	}
+}
+
+func fetchLoggerEvents(ctx context.Context, cli *http.Client, orchURL string, limit int) ([]loggerEvent, error) {
+	u := fmt.Sprintf("%s/api/v1/logger/events/recent?limit=%d", orchURL, limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("logger events status %d", resp.StatusCode)
+	}
+	var out loggerEventsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if !out.Success {
+		return nil, fmt.Errorf("logger events success=false: %s", out.Error)
+	}
+	return out.Events, nil
+}
+
+func renderProgressEvent(evt loggerEvent, sessionID string) (string, bool) {
+	f := evt.Fields
+	if f == nil || f["session_id"] != sessionID {
+		return "", false
+	}
+	switch evt.Message {
+	case "runtime_run_start":
+		return fmt.Sprintf("开始执行任务。\ntrace_id: `%s`", f["trace_id"]), true
+	case "runtime_context_loaded":
+		return fmt.Sprintf("上下文加载完成，历史消息 %s 条。", defaultText(f["history_count"], "0")), true
+	case "react_step_start":
+		return fmt.Sprintf("执行到 Step %s。", defaultText(f["step"], "?")), true
+	case "tool_call_start":
+		return fmt.Sprintf("调用工具：`%s`（step %s）", defaultText(f["tool_name"], "unknown"), defaultText(f["step"], "?")), true
+	case "tool_call_end":
+		return fmt.Sprintf("工具完成：`%s`（耗时 %sms）", defaultText(f["tool_name"], "unknown"), defaultText(f["duration_ms"], "?")), true
+	case "tool_call_error":
+		return fmt.Sprintf("工具报错：`%s`\n%s", defaultText(f["tool_name"], "unknown"), defaultText(f["error_message"], "unknown error")), true
+	case "runtime_react_loop_error":
+		return fmt.Sprintf("执行失败：%s", defaultText(f["error_message"], "react loop error")), true
+	case "runtime_run_completed":
+		return fmt.Sprintf("任务执行完成（reply_latency_ms=%s）。", defaultText(f["reply_latency_ms"], "?")), true
+	default:
+		return "", false
+	}
+}
+
+func sendTelegramAttachments(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, sessionID, traceID string, attachments []chatAttachment, sessionCLI *http.Client, sessionURL string) {
+	for _, att := range attachments {
+		raw, err := base64.StdEncoding.DecodeString(att.ContentBase64)
+		if err != nil {
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s` base64 解析失败。", att.Filename), sessionID, traceID)
+			continue
+		}
+		if len(raw) > 45*1024*1024 {
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s` 超过 Telegram 文件上限（%.2f MB）。", att.Filename, float64(len(raw))/1024.0/1024.0), sessionID, traceID)
+			continue
+		}
+		name := att.Filename
+		if strings.TrimSpace(name) == "" {
+			name = "artifact.bin"
+		}
+		doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: name, Bytes: raw})
+		doc.Caption = fmt.Sprintf("编译产物：%s", name)
+		if _, err := bot.Send(doc); err != nil {
+			slog.Error("telegram send attachment failed", "chat_id", chatID, "session_id", sessionID, "trace_id", traceID, "filename", name, "err", err)
+			_ = sendTelegramReply(ctx, bot, chatID, fmt.Sprintf("产物上传失败：`%s`。", name), sessionID, traceID)
+		} else {
+			_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, fmt.Sprintf("[artifact] %s uploaded", name))
+		}
+	}
+}
+
+func appendAssistantMessage(ctx context.Context, cli *http.Client, sessionURL, sessionID, content string) error {
+	if cli == nil || strings.TrimSpace(sessionURL) == "" || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(content) == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"session_id": sessionID,
+		"messages": []sessionMessage{
+			{
+				Role:      "assistant",
+				Content:   content,
+				Timestamp: time.Now(),
+			},
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sessionURL+"/append_messages", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := cli.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("session append status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func sendTelegramReply(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, text, sessionID, traceID string) error {
+	// Keep session storage unchanged; only sanitize outbound IM content.
+	sanitized := sanitizeReplyForTelegram(text)
+	if strings.TrimSpace(sanitized) == "" {
+		sanitized = "（系统回复为空，请稍后重试）"
+	}
+
+	htmlPayload := imfmt.MarkdownToTelegramHTML(sanitized)
+	htmlBuilder := func() tgbotapi.MessageConfig {
+		out := tgbotapi.NewMessage(chatID, htmlPayload)
+		out.ParseMode = "HTML"
+		out.DisableWebPagePreview = true
+		return out
+	}
+	if err := sendWithRetry(ctx, bot, htmlBuilder, htmlSendAttempts, "html", chatID, sessionID, traceID); err == nil {
+		return nil
+	} else if isTelegramFormatErr(err) {
+		slog.Warn("telegram html send failed, fallback to plain text", "chat_id", chatID, "session_id", sessionID, "trace_id", traceID, "err", err)
+		plainBuilder := func() tgbotapi.MessageConfig {
+			out := tgbotapi.NewMessage(chatID, sanitized)
+			out.DisableWebPagePreview = true
+			return out
+		}
+		if plainErr := sendWithRetry(ctx, bot, plainBuilder, plainSendAttempts, "plain", chatID, sessionID, traceID); plainErr == nil {
+			return nil
+		} else {
+			trySendFailureNotice(ctx, bot, chatID, sessionID, traceID, plainErr)
+			return fmt.Errorf("html send failed: %w; plain fallback failed: %v", err, plainErr)
+		}
+	} else {
+		trySendFailureNotice(ctx, bot, chatID, sessionID, traceID, err)
+		return err
+	}
+}
+
+func sanitizeReplyForTelegram(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	out := text
+	out = reChannelToMessage.ReplaceAllString(out, "")
+	out = reChannelTailBlock.ReplaceAllString(out, "")
+	out = reMessageTag.ReplaceAllString(out, "")
+	out = reThinkTag.ReplaceAllString(out, "")
+	out = reThoughtTag.ReplaceAllString(out, "")
+	out = reReasoningTag.ReplaceAllString(out, "")
+	out = reLooseMarkerTag.ReplaceAllString(out, "")
+	out = strings.TrimSpace(out)
+	return out
+}
+
+func sendWithRetry(
+	ctx context.Context,
+	bot *tgbotapi.BotAPI,
+	builder func() tgbotapi.MessageConfig,
+	maxAttempts int,
+	mode string,
+	chatID int64,
+	sessionID, traceID string,
+) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		msg := builder()
+		if _, err := bot.Send(msg); err == nil {
+			if attempt > 1 {
+				slog.Info("telegram send recovered after retry", "mode", mode, "attempt", attempt, "chat_id", chatID, "session_id", sessionID, "trace_id", traceID)
+			}
+			return nil
+		} else {
+			lastErr = err
+			slog.Warn("telegram send attempt failed", "mode", mode, "attempt", attempt, "max_attempts", maxAttempts, "chat_id", chatID, "session_id", sessionID, "trace_id", traceID, "err", err)
+			if isTelegramFormatErr(err) {
+				return err
+			}
+			if !isTelegramRetryableErr(err) || attempt == maxAttempts {
+				return err
+			}
+			backoff := time.Duration(400*(1<<(attempt-1))) * time.Millisecond
+			if backoff > 4*time.Second {
+				backoff = 4 * time.Second
+			}
+			if !sleepWithContext(ctx, backoff) {
+				return ctx.Err()
+			}
+		}
+	}
+	return lastErr
+}
+
+func trySendFailureNotice(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, sessionID, traceID string, rootErr error) {
+	notice := "消息发送失败（已多次重试）。请稍后再试，或发送 /status 检查会话状态。"
+	plainBuilder := func() tgbotapi.MessageConfig {
+		out := tgbotapi.NewMessage(chatID, notice)
+		out.DisableWebPagePreview = true
+		return out
+	}
+	if err := sendWithRetry(ctx, bot, plainBuilder, 2, "failure_notice", chatID, sessionID, traceID); err != nil {
+		slog.Error("telegram failure notice also failed", "chat_id", chatID, "session_id", sessionID, "trace_id", traceID, "root_err", rootErr, "notice_err", err)
+	}
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func isTelegramFormatErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "can't parse entities") ||
+		strings.Contains(msg, "unsupported start tag") ||
+		strings.Contains(msg, "bad request")
+}
+
+func isTelegramRetryableErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "retry after") ||
+		strings.Contains(msg, "temporarily unavailable") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "broken pipe")
 }
 
 func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResult {
@@ -246,7 +738,7 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 			Reply: strings.TrimSpace(`
 可用命令：
 - /new: 开启新会话（不复用旧上下文）
-- /end: 结束当前会话（普通消息将暂停处理）
+- /end: 结束当前会话（下一条普通消息将自动开始新会话）
 - /status: 查看当前会话状态
 - /help: 查看命令帮助
 `),
@@ -261,7 +753,7 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 		sessionID := conv.endSession(msg.Chat.ID)
 		return commandResult{
 			Handled: true,
-			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n发送 /new 可开启新会话。", sessionID),
+			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n下一条消息将自动开始新会话，或发送 /new 立即开启。", sessionID),
 		}
 	case "/status":
 		sessionID, ended := conv.status(msg.Chat.ID)
@@ -323,29 +815,29 @@ func registerBotCommands(bot *tgbotapi.BotAPI) {
 	slog.Info("telegram commands registered", "count", len(commands))
 }
 
-func callOrchestrator(ctx context.Context, cli *http.Client, orchURL string, req chatRequest) (string, error) {
+func callOrchestrator(ctx context.Context, cli *http.Client, orchURL string, req chatRequest) (chatResponse, error) {
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, orchURL+"/api/v1/chat", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return chatResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := cli.Do(httpReq)
 	if err != nil {
-		return "", err
+		return chatResponse{}, err
 	}
 	defer resp.Body.Close()
 	var parsed chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", err
+		return chatResponse{}, err
 	}
 	if !parsed.Success {
 		if parsed.Error != "" {
-			return "", errContextual(parsed.Error)
+			return parsed, errContextual(parsed.Error)
 		}
-		return "", errContextual("orchestrator returned success=false")
+		return parsed, errContextual("orchestrator returned success=false")
 	}
-	return parsed.Reply, nil
+	return parsed, nil
 }
 
 type contextualErr string

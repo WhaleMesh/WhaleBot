@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -37,12 +38,13 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	port := getenv("SESSION_PORT", "8090")
 	maxMsgs := getenvInt("SESSION_MAX_MESSAGES", 40)
+	idleSec := getenvInt("SESSION_IDLE_SEC", 86400)
 	dbPath := getenv("SESSION_DB_PATH", "")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	selfHost := getenv("SERVICE_HOST", "session")
 	self := "http://" + selfHost + ":" + port
 
-	st, err := store.New(maxMsgs, dbPath)
+	st, err := store.New(maxMsgs, idleSec, dbPath)
 	if err != nil {
 		slog.Error("init session store failed", "err", err, "db_path", dbPath)
 		os.Exit(1)
@@ -64,11 +66,17 @@ func main() {
 			writeError(w, 400, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{
+		msgs, expAt, expired := st.GetContext(body.SessionID)
+		out := map[string]any{
 			"success":    true,
 			"session_id": body.SessionID,
-			"messages":   st.Get(body.SessionID),
-		})
+			"messages":   msgs,
+			"expired":    expired,
+		}
+		if expAt != nil {
+			out["expires_at"] = expAt.Format(time.RFC3339Nano)
+		}
+		writeJSON(w, 200, out)
 	})
 	r.Post("/append_messages", func(w http.ResponseWriter, req *http.Request) {
 		var body struct {
@@ -83,7 +91,14 @@ func main() {
 			writeError(w, 400, "session_id is required")
 			return
 		}
-		st.Append(body.SessionID, body.Messages)
+		if err := st.Append(body.SessionID, body.Messages); err != nil {
+			if errors.Is(err, store.ErrSessionExpired) {
+				writeJSON(w, 409, map[string]any{"success": false, "error": "session expired"})
+				return
+			}
+			writeError(w, 500, err.Error())
+			return
+		}
 		writeJSON(w, 200, map[string]any{"success": true})
 	})
 	r.Post("/clear_context", func(w http.ResponseWriter, req *http.Request) {
@@ -112,9 +127,31 @@ func main() {
 		}
 		writeJSON(w, 200, map[string]any{"success": true, "session": sess})
 	})
+	r.Delete("/sessions/{id}", func(w http.ResponseWriter, req *http.Request) {
+		id := chi.URLParam(req, "id")
+		if id == "" {
+			writeError(w, 400, "session id is required")
+			return
+		}
+		st.Clear(id)
+		writeJSON(w, 200, map[string]any{"success": true})
+	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go func() {
+		t := time.NewTicker(45 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				st.SweepExpired()
+			}
+		}
+	}()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
 		Name:           "session",
@@ -128,7 +165,7 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("session listening", "port", port, "max_messages", maxMsgs, "db_path", dbPath)
+		slog.Info("session listening", "port", port, "max_messages", maxMsgs, "idle_sec", idleSec, "db_path", dbPath)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http listen failed", "err", err)
 			os.Exit(1)

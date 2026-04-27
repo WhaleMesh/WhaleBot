@@ -18,12 +18,21 @@ component_registration:
   capabilities:
     - userdocker_list
     - userdocker_create
+    - userdocker_start
+    - userdocker_stop
+    - userdocker_touch
+    - userdocker_switch_scope
     - userdocker_remove
     - userdocker_restart
+    - userdocker_exec
+    - userdocker_files
+    - userdocker_artifact_export
     - userdocker_interface_contract
+    - userdocker_images
     - userdocker_interface_discovery
   meta:
     default_image: whalesbot/userdocker-base:latest
+    go_build_image: whalesbot/userdocker-golang:latest
     default_network: mvp_net
 last_verified_from:
   - docker-compose.yml
@@ -33,8 +42,13 @@ last_verified_from:
 
 ## Purpose
 - Full user docker lifecycle management via Docker Engine API.
-- Supports list/create/remove/restart and interface-discovery operations.
+- Supports dual-scope containers (`session_scoped` / `global_service`) with scope switching.
+- For `session_scoped` creation, container runtime name appends a sanitized `session_id` suffix to reduce naming conflicts across sessions.
+- Supports list/create/start/stop/touch/remove/restart and interface-discovery operations.
+- Proxies command execution, file CRUD and artifact export to managed userdocker containers.
 - Enforces `userdocker.v1` public interface contract on newly created userdocker containers.
+- Enforces manager boundary: only containers labeled as manager-owned `userdocker` are operable.
+- Enforces image policy: prefer framework images; pulling external images requires explicit user approval.
 
 ## External API
 ### Endpoint: GET /health
@@ -63,6 +77,10 @@ request:
     network: string
     auto_register: boolean
     port: int (default 9000)
+    scope: string (session_scoped|global_service, default session_scoped)
+    session_id: string (required when scope=session_scoped)
+    workspace: string (optional volume name; default derived from scope)
+    external_image_approved_by_user: boolean (required for non-framework images)
 response:
   success: boolean
   container_id: string
@@ -86,6 +104,20 @@ response:
   error: string
 ```
 
+### Endpoint: GET /api/v1/user-dockers/images
+```yaml
+method: GET
+path: /api/v1/user-dockers/images
+request: none
+response:
+  success: boolean
+  default_image: string
+  allowed_images: string[]
+  profiles:
+    go_build:
+      recommended_image: whalesbot/userdocker-golang:latest
+```
+
 ### Endpoint: DELETE /api/v1/user-dockers/{name}
 ```yaml
 method: DELETE
@@ -106,6 +138,30 @@ response:
   success: boolean
   name: string
   error: string
+```
+
+### Endpoint Group: Extended lifecycle
+```yaml
+start: POST /api/v1/user-dockers/{name}/start
+stop: POST /api/v1/user-dockers/{name}/stop?timeout_sec=10
+touch: POST /api/v1/user-dockers/{name}/touch
+switch_scope: POST /api/v1/user-dockers/{name}/switch-scope
+switch_scope_body:
+  target_scope: session_scoped|global_service
+  session_id: string (required when target_scope=session_scoped)
+```
+
+### Endpoint Group: Workspace operations
+```yaml
+exec: POST /api/v1/user-dockers/{name}/exec
+files_list: GET /api/v1/user-dockers/{name}/files?path=.
+file_read: GET /api/v1/user-dockers/{name}/file?path=...
+file_write: PUT /api/v1/user-dockers/{name}/file
+file_delete: DELETE /api/v1/user-dockers/{name}/file?path=...
+mkdir: POST /api/v1/user-dockers/{name}/files/mkdir
+move: POST /api/v1/user-dockers/{name}/files/move
+artifact_export: GET /api/v1/user-dockers/{name}/artifacts/export?path=...
+note: session_scoped containers require matching session_id (query/header/body).
 ```
 
 ### Endpoint: GET /api/v1/user-dockers/interface-contract
@@ -177,9 +233,33 @@ required: false
 effect: fallback_network_for_spawned_containers
 ```
 
+### USERDOCKER_ALLOWED_IMAGES
+```yaml
+name: USERDOCKER_ALLOWED_IMAGES
+default: whalesbot/userdocker-base:latest,whalesbot/userdocker-golang:latest
+required: false
+effect: comma_separated_allowlist_for_framework_images
+```
+
+### USERDOCKER_IDLE_HOURS
+```yaml
+name: USERDOCKER_IDLE_HOURS
+default: "24"
+required: false
+effect: idle_ttl_hours_for_session_scoped_containers
+```
+
+### USERDOCKER_IDLE_CHECK_SEC
+```yaml
+name: USERDOCKER_IDLE_CHECK_SEC
+default: "300"
+required: false
+effect: idle_sweeper_poll_interval_seconds
+```
+
 ## Runtime Contract
 - network: `mvp_net`.
-- depends_on: `orchestrator`, `userdocker-base`.
+- depends_on: `orchestrator`, `userdocker-base`, `userdocker-golang`.
 - healthcheck: `wget http://localhost:${USER_DOCKER_MANAGER_PORT}/health`.
 - volumes: `/var/run/docker.sock:/var/run/docker.sock`.
 - security_notes: docker socket grants high privileges; treat this container as sensitive.
@@ -191,10 +271,18 @@ aliases:
   - sandbox_manager
   - container_lifecycle_tool
 query_to_endpoint:
+  list_userdocker_images: GET /api/v1/user-dockers/images
   list_userdockers: GET /api/v1/user-dockers
   create_userdocker: POST /api/v1/user-dockers
+  start_userdocker: POST /api/v1/user-dockers/{name}/start
+  stop_userdocker: POST /api/v1/user-dockers/{name}/stop
+  touch_userdocker: POST /api/v1/user-dockers/{name}/touch
+  switch_userdocker_scope: POST /api/v1/user-dockers/{name}/switch-scope
   remove_userdocker: DELETE /api/v1/user-dockers/{name}
   restart_userdocker: POST /api/v1/user-dockers/{name}/restart
+  exec_userdocker: POST /api/v1/user-dockers/{name}/exec
+  file_ops_userdocker: /api/v1/user-dockers/{name}/file(s)*
+  export_userdocker_artifact: GET /api/v1/user-dockers/{name}/artifacts/export
   get_interface_contract: GET /api/v1/user-dockers/interface-contract
   get_userdocker_interface: GET /api/v1/user-dockers/{name}/interface
   health: GET /health
@@ -211,5 +299,7 @@ compatible_orchestrator_proxy:
 ## Change Safety
 - Keep `name` mandatory to avoid ambiguous container identity.
 - Preserve default labels (`mvp.component`, `mvp.type`, `mvp.userdocker.interface_version`) for downstream discovery.
+- Preserve scope/session/workspace labels (`mvp.userdocker.scope`, `mvp.userdocker.session_id`, `mvp.userdocker.workspace`) for access control and sweeper logic.
 - Never skip userdocker contract validation for create requests.
+- Do not allow unapproved external images in create requests.
 - Any docker socket mount change impacts core feature availability.

@@ -21,11 +21,19 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Success   bool   `json:"success"`
-	SessionID string `json:"session_id,omitempty"`
-	Reply     string `json:"reply,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Success     bool             `json:"success"`
+	SessionID   string           `json:"session_id,omitempty"`
+	Reply       string           `json:"reply,omitempty"`
+	TraceID     string           `json:"trace_id,omitempty"`
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+type ChatAttachment struct {
+	Filename      string `json:"filename"`
+	MimeType      string `json:"mime_type,omitempty"`
+	ContentBase64 string `json:"content_base64"`
+	SourcePath    string `json:"source_path,omitempty"`
 }
 
 type GetContextRequest struct {
@@ -36,6 +44,8 @@ type GetContextResponse struct {
 	Success   bool      `json:"success"`
 	SessionID string    `json:"session_id"`
 	Messages  []Message `json:"messages"`
+	Expired   bool      `json:"expired"`
+	ExpiresAt *string   `json:"expires_at,omitempty"`
 }
 
 type AppendMessagesRequest struct {

@@ -155,6 +155,17 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
+### Endpoint: GET /api/v1/tools/user-dockers/images
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/images
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
 ### Endpoint: POST /api/v1/tools/user-dockers
 ```yaml
 method: POST
@@ -220,26 +231,11 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
-### Endpoint: POST /api/v1/environments/golang/run
-```yaml
-method: POST
-path: /api/v1/environments/golang/run
-request:
-  content_type: application/json
-  body:
-    code: string
-    timeout_sec: int
-response: proxied_from_environment_service
-error_behavior:
-  no_environment_component: http_503
-  upstream_failure: propagated_or_502
-```
-
 ## Internal Calls
 - `session`: `/get_context`, `/append_messages`, `/sessions`, `/sessions/{id}`.
 - `chatmodel`: `/invoke`.
 - `worker`: `/run` when a healthy worker exists.
-- Generic proxy to `tool` and `environment` components by type lookup.
+- Generic proxy to `tool` components by capability lookup.
 - User docker operations route by capability lookup (`userdocker_*`) to the manager component.
 
 ## Environment Variables
@@ -267,6 +263,14 @@ required: false
 effect: consecutive_failures_before_component_removed
 ```
 
+### ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+```yaml
+name: ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+default: "240"
+required: false
+effect: timeout_seconds_for_orchestrator_http_proxy_to_runtime_tool_and_other_upstreams
+```
+
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: none.
@@ -286,12 +290,12 @@ query_to_endpoint:
   list_components: GET /api/v1/components
   list_persistent_logger_events: GET /api/v1/logger/events/recent
   list_userdockers: GET /api/v1/tools/user-dockers
+  list_userdocker_images: GET /api/v1/tools/user-dockers/images
   create_userdocker: POST /api/v1/tools/user-dockers
   remove_userdocker: DELETE /api/v1/tools/user-dockers/{name}
   restart_userdocker: POST /api/v1/tools/user-dockers/{name}/restart
   userdocker_contract: GET /api/v1/tools/user-dockers/interface-contract
   userdocker_interface: GET /api/v1/tools/user-dockers/{name}/interface
-  run_go_code: POST /api/v1/environments/golang/run
 ```
 
 ## Change Safety
