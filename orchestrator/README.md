@@ -144,6 +144,30 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
+### Endpoint: GET /api/v1/stats/overview
+```yaml
+method: GET
+path: /api/v1/stats/overview
+request: none
+response:
+  proxied_from_stats_service: GET {stats_endpoint}/stats/overview
+  body_includes:
+    success: true
+    window: { start: RFC3339Nano, end: RFC3339Nano, label: rolling_24h_hour_aligned }
+    stats:
+      messages: { total: int, last_24h: int }
+      tool_calls: { total: int, last_24h: int }
+      tokens:
+        prompt: { total: int, last_24h: int }
+        completion: { total: int, last_24h: int }
+        total: { total: int, last_24h: int }
+error_behavior:
+  no_healthy_stats_component: http_503 { success: false, error: stats service not enabled, code: stats_disabled }
+  upstream_failure: propagated_or_502
+```
+
+Implementation: resolves `FirstHealthyByType("stats")` and reverse-proxies the response body and status code.
+
 ### Endpoint: GET /api/v1/tools/user-dockers
 ```yaml
 method: GET

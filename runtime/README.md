@@ -93,6 +93,8 @@ error_behavior:
   - `POST /api/v1/components/register` for self-registration
 - `logger` (when discovered via capability `events_write`):
   - `POST /events` for structured runtime/tool trace events
+- `stats` (optional; when discovered via capability `stats_ingest`):
+  - `POST /events` with batched `message` / `tool_call` / `tokens` rows for the Overview metrics service (fire-and-forget; failures are logged only)
 
 ## Environment Variables
 ### RUNTIME_PORT

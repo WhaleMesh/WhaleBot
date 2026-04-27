@@ -27,6 +27,7 @@ flowchart LR
   orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
+  orchestrator --> stats["stats (optional)"]
 ```
 
 ## 快速开始（使用者路径）
@@ -64,6 +65,7 @@ docker compose up --build
 - `im-telegram/`：Telegram 网关
 - `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）
 - `logger/`：日志服务
+- `stats/`：可选的 Overview 统计服务
 - `memory/`：记忆服务
 - `workspace/`：工作区服务
 - `userdocker-base/`：动态 userdocker 基础镜像

@@ -185,6 +185,7 @@ type availableRoutes struct {
 	CanUserDockerFiles   bool
 	CanUserDockerExport  bool
 	LoggerWriteEndpoint  string
+	StatsWriteEndpoint   string
 }
 
 func main() {
@@ -447,6 +448,25 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 			"module":     "session",
 			"phase":      "end",
 		})
+		if ep := routes.StatsWriteEndpoint; ep != "" {
+			tsU := userStored.Timestamp
+			if tsU.IsZero() {
+				tsU = time.Now()
+			}
+			tsA := assistantMsg.Timestamp
+			if tsA.IsZero() {
+				tsA = time.Now()
+			}
+			evs := []map[string]any{
+				{"kind": "message", "ts": tsU.UTC().Format(time.RFC3339Nano)},
+				{"kind": "message", "ts": tsA.UTC().Format(time.RFC3339Nano)},
+			}
+			go func(endpoint string, batch []map[string]any) {
+				cctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+				defer cancel()
+				s.emitStatsEvents(cctx, endpoint, batch)
+			}(ep, evs)
+		}
 	}
 	doneFields := map[string]string{
 		"trace_id":         traceID,
@@ -462,6 +482,20 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 		doneFields["total_tokens"] = strconv.Itoa(totalUsage.TotalTokens)
 	}
 	s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_run_completed", doneFields)
+	if routes.StatsWriteEndpoint != "" && totalUsage != nil {
+		ep := routes.StatsWriteEndpoint
+		u := *totalUsage
+		go func() {
+			cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			s.emitStatsEvents(cctx, ep, []map[string]any{{
+				"kind":               "tokens",
+				"prompt_tokens":      int64(u.PromptTokens),
+				"completion_tokens": int64(u.CompletionTokens),
+				"total_tokens":       int64(u.TotalTokens),
+			}})
+		}()
+	}
 
 	writeJSON(w, 200, chatResponse{
 		Success:     true,
@@ -680,6 +714,13 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 				"args":         tc.Function.Arguments,
 			}
 			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "tool_call_start", startFields)
+			if ep := routes.StatsWriteEndpoint; ep != "" {
+				go func(endpoint string) {
+					cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+					defer cancel()
+					s.emitStatsEvents(cctx, endpoint, []map[string]any{{"kind": "tool_call"}})
+				}(ep)
+			}
 
 			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
 			resForModel := sanitizeToolResultTextForModel(resText)
@@ -1438,6 +1479,10 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 			if hasCapability(c.Capabilities, "events_write") {
 				routes.LoggerWriteEndpoint = c.Endpoint
 			}
+		case "stats":
+			if hasCapability(c.Capabilities, "stats_ingest") {
+				routes.StatsWriteEndpoint = c.Endpoint
+			}
 		}
 	}
 	return catalog, routes, nil
@@ -1477,6 +1522,31 @@ func (s *reactService) emitRuntimeEvent(ctx context.Context, loggerEndpoint, lev
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
 		slog.Warn("runtime event emit rejected", "status", resp.StatusCode, "body", truncate(string(b), 500))
+	}
+}
+
+func (s *reactService) emitStatsEvents(ctx context.Context, statsEndpoint string, events []map[string]any) {
+	if statsEndpoint == "" || len(events) == 0 {
+		return
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, statsEndpoint+"/events", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.http.Do(req)
+	if err != nil {
+		slog.Debug("stats ingest failed", "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		slog.Debug("stats ingest rejected", "status", resp.StatusCode, "body", truncate(string(b), 400))
 	}
 }
 

@@ -19,6 +19,29 @@ async function req(path, opts = {}) {
 export const api = {
   health: () => req("/health"),
   components: () => req("/api/v1/components"),
+  statsOverview: async () => {
+    const res = await fetch(base() + "/api/v1/stats/overview", {
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (
+      res.status === 503 &&
+      (data.code === "stats_disabled" || data.success === false)
+    ) {
+      return {
+        success: false,
+        disabled: true,
+        error: data.error || "stats service not enabled",
+      };
+    }
+    if (!res.ok) {
+      throw new Error(
+        `${res.status} ${res.statusText}: ${JSON.stringify(data)}`,
+      );
+    }
+    return data;
+  },
   logs: () => req("/api/v1/logs/recent"),
   loggerEvents: (limit = 200) =>
     req(`/api/v1/logger/events/recent?limit=${encodeURIComponent(limit)}`),

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -60,6 +61,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
 		r.Delete("/sessions/{id}", s.handleSessionDelete)
+		r.Get("/stats/overview", s.handleStatsOverview)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
 		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
 		r.Get("/tools/user-dockers", s.handleUserDockerList)
@@ -261,6 +263,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.appendMessages(sess.Endpoint, sessionID, []Message{userMsg, assistantMsg}); err != nil {
 		s.log("error", "append_messages failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+	} else {
+		msgs := []Message{userMsg, assistantMsg}
+		go s.emitStatsMessagesDetached(msgs)
 	}
 
 	s.log("info", "chat completed", map[string]string{
@@ -510,6 +515,63 @@ func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.R
 		target += "?" + r.URL.RawQuery
 	}
 	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
+	st := s.Registry.FirstHealthyByType("stats")
+	if st == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"error":   "stats service not enabled",
+			"code":    "stats_disabled",
+		})
+		return
+	}
+	target := st.Endpoint + "/stats/overview"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) emitStatsMessagesDetached(msgs []Message) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	s.emitStatsMessages(ctx, msgs)
+}
+
+func (s *Server) emitStatsMessages(ctx context.Context, msgs []Message) {
+	st := s.Registry.FirstHealthyByType("stats")
+	if st == nil || len(msgs) == 0 {
+		return
+	}
+	evs := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		ts := m.Timestamp
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		evs = append(evs, map[string]any{"kind": "message", "ts": ts.UTC().Format(time.RFC3339Nano)})
+	}
+	body, err := json.Marshal(map[string]any{"events": evs})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, st.Endpoint+"/events", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.HTTP.Do(req)
+	if err != nil {
+		slog.Debug("stats ingest failed", "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		slog.Debug("stats ingest rejected", "status", resp.StatusCode, "body", string(b))
+	}
 }
 
 // --- helpers ---
