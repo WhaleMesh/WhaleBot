@@ -193,28 +193,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  memory:
-    build: ./memory
-    image: whalesbot/memory:latest
-    container_name: memory
-    environment:
-      MEMORY_PORT: ${MEMORY_PORT:-8087}
-      MEMORY_DB_PATH: /data/memory.db
-      ORCHESTRATOR_URL: http://orchestrator:8080
-      SERVICE_HOST: memory
-    volumes:
-      - memory_data:/data
-    networks: [mvp_net]
-    depends_on:
-      orchestrator: { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${MEMORY_PORT:-8087}/health || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-
   workspace:
     build: ./workspace
     image: whalesbot/workspace:latest
@@ -294,5 +272,4 @@ volumes:
   session_data:
   logger_data:
   stats_data:
-  memory_data:
   workspace_data:

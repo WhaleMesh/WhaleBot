@@ -25,7 +25,6 @@ flowchart LR
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
   orchestrator --> toolDocker["user-docker-manager"]
-  orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
   orchestrator --> stats["stats (optional)"]
@@ -67,7 +66,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `logger/`: logging service
 - `stats/`: optional Overview metrics service
-- `memory/`: memory service
+- `memory/`: memory service (source + roadmap; not started by default compose — see `memory/TODO.md`)
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
 - `whalesbot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks

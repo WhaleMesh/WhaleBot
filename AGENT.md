@@ -31,7 +31,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `logger`, `memory`, `workspace` use named volumes.
+  - `session`, `logger`, `stats`, `workspace` use named volumes (`memory` is deferred; see `memory/TODO.md`).
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -101,10 +101,10 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `stats/cmd/server/main.go`
   - host exposed: no
   - note: registers `type=stats` with capabilities `stats_overview`, `stats_ingest`; compose includes the service; omit or stop the container if you do not want metrics
-- `memory`
-  - purpose: lightweight memory KV/notes (SQLite)
+- `memory` (code only; not in default `docker-compose.yml`)
+  - purpose: lightweight memory KV/notes (SQLite) — roadmap in `memory/TODO.md`
   - entry: `memory/cmd/server/main.go`
-  - host exposed: no
+  - host exposed: no (re-add service to compose or run container manually to enable)
 - `workspace`
   - purpose: workspace directory manager
   - entry: `workspace/cmd/server/main.go`
@@ -163,10 +163,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 12 services including `runtime`, `logger`, `stats`, `memory`, `workspace`.
+- `docker-compose.yml` contains 12 services including `runtime`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `logger_data`, `stats_data`, `memory_data`, `workspace_data`.
+- Named volumes in use: `session_data`, `logger_data`, `stats_data`, `workspace_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)

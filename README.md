@@ -24,7 +24,6 @@ flowchart LR
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
   orchestrator --> toolDocker["user-docker-manager"]
-  orchestrator --> memory["memory"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
   orchestrator --> stats["stats (optional)"]
@@ -66,7 +65,7 @@ docker compose up --build
 - `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）
 - `logger/`：日志服务
 - `stats/`：可选的 Overview 统计服务
-- `memory/`：记忆服务
+- `memory/`：记忆服务（源码与路线图；默认 compose 不启动，见 `memory/TODO.md`）
 - `workspace/`：工作区服务
 - `userdocker-base/`：动态 userdocker 基础镜像
 - `whalesbot/userdocker-golang:latest`：动态 userdocker 的 Go 编译镜像（由 `userdocker-base` 构建变体生成）
