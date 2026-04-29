@@ -1,34 +1,35 @@
-# chatmodel
+# llm-openai
 
 ## ServiceCard
 ```yaml
-service: chatmodel
+service: llm-openai
 role: openai_compatible_chat_completion_adapter
-compose_service: chatmodel
-image: whalesbot/chatmodel:latest
-build_context: ./chatmodel
+compose_service: llm-openai
+image: whalesbot/llm-openai:latest
+build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
 default_port: 8081
 health_endpoint: GET /health
 component_registration:
   enabled: true
-  name: chatmodel
-  type: chat_model
+  name: llm-openai
+  type: llm
   capabilities:
     - invoke
+    - llm_config
   meta:
-    model: MODEL_NAME
+    model: string (e.g. default id at registration)
 last_verified_from:
   - docker-compose.yml
-  - chatmodel/cmd/server/main.go
-  - chatmodel/internal/openai/openai.go
+  - llm-openai/cmd/server/main.go
+  - llm-openai/internal/openai/openai.go
 ```
 
 ## Purpose
 - Accepts normalized chat requests and forwards them to an OpenAI-compatible `/v1/chat/completions`.
 - Supports optional tool definitions and tool-call responses.
-- Provides deterministic echo fallback when `MODEL_API_KEY` is empty.
+- Provides deterministic echo fallback when the active client has no API key.
 
 ## External API
 ### Endpoint: GET /health
@@ -36,9 +37,12 @@ last_verified_from:
 method: GET
 path: /health
 request: none
-response:
+response_when_ready:
   status: ok
-  service: chatmodel
+  service: llm-openai
+response_when_no_active_model:
+  http_status: 503
+  body: status no_active_model (orchestrator chat stack treats component as not ready)
 error_behavior: standard_http_status
 ```
 
@@ -68,49 +72,37 @@ error_behavior:
   upstream_error: http_200_with_success_false
 ```
 
+### Admin: GET /api/v1/llm/config
+Returns `{ success, config }` with masked API keys (`has_api_key`, `api_key_hint`).
+
+### Admin: PUT /api/v1/llm/config
+Body `{ models: [{id,name,base_url,model,api_key}], active_model_id }`. Empty `api_key` on an existing `id` keeps the previous secret.
+
+### Admin: POST /api/v1/llm/active
+Body `{ id }` — set active model profile (empty string clears).
+
+### Admin: POST /api/v1/llm/test
+Body optional `{ model_id }`; if omitted, tests the **active** profile. Response `{ success, error }` with full upstream diagnostic text on failure. Concurrent requests return **409** with `{ success: false, error: "test already in progress" }` (only one test runs at a time).
+
 ## Internal Calls
-- Outbound call to `${MODEL_BASE_URL}/v1/chat/completions`.
+- Outbound call to the configured upstream root + `/v1/chat/completions` (OpenAI-compatible).
 - Registers itself to orchestrator every 60 seconds.
 
 ## Environment Variables
-### CHATMODEL_PORT
+### LLM_OPENAI_PORT
 ```yaml
-name: CHATMODEL_PORT
+name: LLM_OPENAI_PORT
 default: "8081"
 required: false
 effect: bind_port_for_http_server
 ```
 
-### MODEL_PROVIDER
+### LLM_CONFIG_PATH
 ```yaml
-name: MODEL_PROVIDER
-default: openai_compatible
+name: LLM_CONFIG_PATH
+default: /data/llm-config.json
 required: false
-effect: informational_in_compose_currently_not_branching_logic
-```
-
-### MODEL_BASE_URL
-```yaml
-name: MODEL_BASE_URL
-default: https://api.openai.com
-required: false
-effect: upstream_chat_completions_base_url_localhost_is_rewritten_for_docker
-```
-
-### MODEL_API_KEY
-```yaml
-name: MODEL_API_KEY
-default: ""
-required: false
-effect: when_empty_service_returns_echo_fallback_instead_of_real_llm_call
-```
-
-### MODEL_NAME
-```yaml
-name: MODEL_NAME
-default: gpt-4o-mini
-required: false
-effect: model_field_sent_to_upstream_chat_completions
+effect: JSON file for model profiles and active_model_id (compose mounts llm_openai_data at /data)
 ```
 
 ### ORCHESTRATOR_URL
@@ -124,7 +116,7 @@ effect: target_for_component_registration
 ### SERVICE_HOST
 ```yaml
 name: SERVICE_HOST
-default: chatmodel
+default: llm-openai
 required: false
 effect: advertised_endpoint_host_for_registration
 ```
@@ -132,8 +124,8 @@ effect: advertised_endpoint_host_for_registration
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: `orchestrator`.
-- healthcheck: `wget http://localhost:${CHATMODEL_PORT}/health`.
-- volumes: none.
+- healthcheck: `wget http://localhost:${LLM_OPENAI_PORT}/health`.
+- volumes: named volume `llm_openai_data` → `/data` (see compose).
 - security_notes: handles model API key; avoid logging secrets.
 
 ## AI Lookup Hints

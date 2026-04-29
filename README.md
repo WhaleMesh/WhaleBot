@@ -22,7 +22,7 @@ flowchart LR
   adapterTelegram --> orchestrator
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
-  orchestrator --> chatmodel["chatmodel"]
+  orchestrator --> llmOpenai["llm-openai"]
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
@@ -39,8 +39,8 @@ cp .env.example .env
 
 2. 按需填写 `.env`（最常见）
 
-- `MODEL_API_KEY`：为空时 `chatmodel` 会走 echo 模式（便于流程联调）。
 - `TELEGRAM_BOT_TOKEN`：为空时 `adapter-telegram` 会启动并注册，但不进入长轮询。
+- 模型与密钥不在根 `.env` 配置；由 `llm-openai` 服务侧配置（默认内置占位 client，无 key 时为 echo 模式）。
 
 3. 启动系统
 
@@ -60,7 +60,7 @@ docker compose up --build
 - `orchestrator/`：编排与网关
 - `runtime/`：ReAct 执行循环
 - `session/`：会话持久化
-- `chatmodel/`：模型调用适配
+- `llm-openai/`：模型调用适配
 - `adapter-telegram/`：Telegram 用户 I/O 适配器
 - `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）
 - `logger/`：日志服务

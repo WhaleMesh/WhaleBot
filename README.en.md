@@ -23,7 +23,7 @@ flowchart LR
   adapterTelegram --> orchestrator
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
-  orchestrator --> chatmodel["chatmodel"]
+  orchestrator --> llmOpenai["llm-openai"]
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
   orchestrator --> workspace["workspace"]
@@ -40,8 +40,8 @@ cp .env.example .env
 
 2. Fill `.env` values as needed
 
-- `MODEL_API_KEY`: if empty, `chatmodel` runs in echo mode.
 - `TELEGRAM_BOT_TOKEN`: if empty, `adapter-telegram` starts and registers, but skips long polling.
+- LLM upstream URL, keys, and model ids are not set in root `.env`; configure on the `llm-openai` service (defaults use echo mode without a key).
 
 3. Start all services
 
@@ -61,7 +61,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `orchestrator/`: orchestration and API gateway
 - `runtime/`: ReAct execution loop
 - `session/`: conversation persistence
-- `chatmodel/`: model adapter/client
+- `llm-openai/`: model adapter/client
 - `adapter-telegram/`: Telegram user I/O adapter
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `logger/`: logging service

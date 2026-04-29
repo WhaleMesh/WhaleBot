@@ -3,6 +3,11 @@ function base() {
   return env.ORCHESTRATOR_URL || "http://localhost:8080";
 }
 
+/** Same URL as internal `base()` — for custom fetch (e.g. LLM test 409 body). */
+export function getOrchestratorBase() {
+  return base();
+}
+
 async function req(path, opts = {}) {
   const res = await fetch(base() + path, {
     cache: "no-store",
@@ -71,4 +76,21 @@ export const api = {
     const suffix = port ? `?port=${encodeURIComponent(port)}` : "";
     return req(`/api/v1/tools/user-dockers/${encodeURIComponent(name)}/interface${suffix}`);
   },
+  llmConfigGet: (name) =>
+    req(`/api/v1/llm-components/${encodeURIComponent(name)}/config`),
+  llmConfigPut: (name, body) =>
+    req(`/api/v1/llm-components/${encodeURIComponent(name)}/config`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  llmActivePost: (name, body) =>
+    req(`/api/v1/llm-components/${encodeURIComponent(name)}/active`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  llmTestPost: (name, body = {}) =>
+    req(`/api/v1/llm-components/${encodeURIComponent(name)}/test`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

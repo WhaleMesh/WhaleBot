@@ -28,7 +28,7 @@ last_verified_from:
 ## Purpose
 - Runs the ReAct loop for chat requests.
 - Dynamically discovers healthy tool components from orchestrator before each run.
-- Calls `chatmodel` with dynamically built tool definitions and executes returned tool calls.
+- Calls `llm-openai` with dynamically built tool definitions and executes returned tool calls.
 - Persists final user+assistant pair into `session`.
 - Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.
 - For execution-oriented requests, first returns an execution plan and asks user confirmation before running tools.
@@ -73,7 +73,7 @@ error_behavior:
 - `SESSION_URL`:
   - `POST /get_context`
   - `POST /append_messages` (main `/run` path: user row appended before ReAct, assistant row after completion)
-- `CHATMODEL_URL`:
+- `LLM_OPENAI_URL`:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:
   - `GET /api/v1/components` for runtime capability discovery
@@ -129,10 +129,10 @@ required: false
 effect: source_of_chat_history_and_target_for_context_persistence
 ```
 
-### CHATMODEL_URL
+### LLM_OPENAI_URL
 ```yaml
-name: CHATMODEL_URL
-default: http://chatmodel:8081
+name: LLM_OPENAI_URL
+default: http://llm-openai:8081
 required: false
 effect: model_inference_and_tool_call_generation_target
 ```
@@ -147,7 +147,7 @@ effect: advertised_endpoint_host_for_registration
 
 ## Runtime Contract
 - network: `mvp_net`.
-- depends_on: `orchestrator`, `session`, `chatmodel`, `user-docker-manager`.
+- depends_on: `orchestrator`, `session`, `llm-openai`, `user-docker-manager`.
 - healthcheck: `wget http://localhost:${RUNTIME_PORT}/health`.
 - volumes: none.
 - security_notes: executes tool side effects indirectly through orchestrator tool APIs.

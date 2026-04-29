@@ -1,4 +1,4 @@
-module github.com/whalesbot/chatmodel
+module github.com/whalesbot/llm-openai
 
 go 1.22
 

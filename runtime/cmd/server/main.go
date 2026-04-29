@@ -194,7 +194,7 @@ func main() {
 	port := getenv("RUNTIME_PORT", "8085")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	sessionURL := getenv("SESSION_URL", "http://session:8090")
-	chatmodelURL := getenv("CHATMODEL_URL", "http://chatmodel:8081")
+	llmOpenAIURL := getenv("LLM_OPENAI_URL", "http://llm-openai:8081")
 	selfHost := getenv("SERVICE_HOST", "runtime")
 	self := "http://" + selfHost + ":" + port
 	maxSteps := getenvInt("REACT_MAX_STEPS", 16)
@@ -202,7 +202,7 @@ func main() {
 	svc := &reactService{
 		orchURL:      orchURL,
 		sessionURL:   sessionURL,
-		chatmodelURL: chatmodelURL,
+		llmOpenAIURL: llmOpenAIURL,
 		http:         &http.Client{Timeout: 120 * time.Second},
 		maxSteps:     maxSteps,
 	}
@@ -242,7 +242,7 @@ func main() {
 }
 
 type reactService struct {
-	orchURL, sessionURL, chatmodelURL string
+	orchURL, sessionURL, llmOpenAIURL string
 	http                              *http.Client
 	maxSteps                          int
 }
@@ -678,7 +678,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			if out.Error != "" {
 				return "", nil, nil, errors.New(out.Error)
 			}
-			return "", nil, nil, errors.New("chatmodel invoke failed")
+			return "", nil, nil, errors.New("llm-openai invoke failed")
 		}
 		if out.Usage != nil {
 			totalUsage.PromptTokens += out.Usage.PromptTokens
@@ -1357,7 +1357,7 @@ func (s *reactService) invokeChatModel(ctx context.Context, msgs []cmMessage, to
 	if err != nil {
 		return invokeResponse{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.chatmodelURL+"/invoke", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.llmOpenAIURL+"/invoke", bytes.NewReader(raw))
 	if err != nil {
 		return invokeResponse{}, err
 	}

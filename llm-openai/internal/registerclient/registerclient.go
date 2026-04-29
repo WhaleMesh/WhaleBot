@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type Client struct {
 	OrchestratorURL string
 	HTTP            *http.Client
 	Req             RegisterRequest
+	mu              sync.Mutex
 }
 
 func New(orchestratorURL string, req RegisterRequest) *Client {
@@ -40,7 +42,21 @@ func New(orchestratorURL string, req RegisterRequest) *Client {
 	}
 }
 
+// PatchMeta updates registration meta (caller may follow with RegisterOnce).
+func (c *Client) PatchMeta(patch map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Req.Meta == nil {
+		c.Req.Meta = map[string]string{}
+	}
+	for k, v := range patch {
+		c.Req.Meta[k] = v
+	}
+}
+
 func (c *Client) RegisterOnce(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	body, err := json.Marshal(c.Req)
 	if err != nil {
 		return err

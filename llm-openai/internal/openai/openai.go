@@ -83,7 +83,7 @@ func normalizeBaseURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return trimmed
 	}
-	// Invoke appends "/v1/chat/completions". If MODEL_BASE_URL already ends
+	// Invoke appends "/v1/chat/completions". If base URL already ends
 	// with "/v1" (common in provider docs), strip it to avoid "/v1/v1/...".
 	if strings.Trim(u.Path, "/") == "v1" {
 		u.Path = ""
@@ -244,7 +244,7 @@ func echoFallback(messages []Message, tools []Tool) Message {
 			break
 		}
 	}
-	msg := "[echo mode — set MODEL_API_KEY to enable real LLM] 你说的是：" + last
+	msg := "[echo mode — no API key configured for this client] 你说的是：" + last
 	if len(tools) > 0 {
 		msg += "（echo 模式下不会执行工具调用。）"
 	}
@@ -259,4 +259,16 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// TestUpstream runs a minimal chat completion against the given profile.
+// Returns a non-nil error with a full diagnostic string on failure (including HTTP status and body).
+func TestUpstream(ctx context.Context, baseURL, apiKey, model string) error {
+	if strings.TrimSpace(apiKey) == "" {
+		return errors.New("API key is empty; cannot test upstream")
+	}
+	c := New(baseURL, apiKey, model)
+	max := float64(1)
+	_, _, err := c.Invoke(ctx, []Message{{Role: "user", Content: "ping"}}, nil, map[string]any{"max_tokens": max})
+	return err
 }
