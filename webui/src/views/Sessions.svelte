@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
   import { goto } from '../lib/route.js';
+  import { _, t, locale, translate } from '../lib/i18n.js';
 
   let sessions = [];
   let error = '';
@@ -16,13 +17,15 @@
       }
       sessions = r.sessions || [];
       error = '';
-    } catch (e) { error = String(e); }
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function removeSession(id, event) {
     event?.stopPropagation();
     if (!id) return;
-    if (!window.confirm(`Delete session "${id}"? This cannot be undone.`)) return;
+    if (!window.confirm(t('sessions.confirmDelete', { id }))) return;
     deletingId = id;
     try {
       const r = await api.deleteSession(id);
@@ -37,14 +40,20 @@
     }
   }
 
-  onMount(() => { refresh(); timer = setInterval(refresh, 3000); });
+  onMount(() => {
+    refresh();
+    timer = setInterval(refresh, 3000);
+  });
   onDestroy(() => clearInterval(timer));
 
-  function fmtRemaining(s) {
-    if (s == null) return '—';
-    if (s.expired) return 'Expired';
+  $: loc = $locale;
+
+  /** @param {string} loc */
+  function fmtRemaining(s, loc) {
+    if (s == null) return translate(loc, 'common.emDash');
+    if (s.expired) return translate(loc, 'sessions.expired');
     const sec = s.seconds_remaining;
-    if (sec == null) return '—';
+    if (sec == null) return translate(loc, 'common.emDash');
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     const rs = sec % 60;
@@ -54,61 +63,55 @@
   }
 </script>
 
-<h1>Sessions</h1>
-{#if error}<div class="err">{error}</div>{/if}
+<h1 class="font-semibold tracking-tight">{$_('sessions.title')}</h1>
+{#if error}
+  <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+{/if}
 
-<table>
-  <thead>
-    <tr><th>Session ID</th><th>Updated</th><th>Idle expiry</th><th>Length</th><th>Last Message</th><th>Actions</th></tr>
-  </thead>
-  <tbody>
-    {#each sessions as s}
-      <tr on:click={() => goto('session', { id: s.id })} class="clickable">
-        <td class="mono">{s.id}</td>
-        <td>{s.updated_at ? new Date(s.updated_at).toLocaleString() : '—'}</td>
-        <td class="mono sm">{fmtRemaining(s)}</td>
-        <td>{s.length}</td>
-        <td class="snippet">{s.last_snippet || ''}</td>
-        <td class="actions">
-          <button
-            class="danger"
-            disabled={deletingId === s.id}
-            on:click={(event) => removeSession(s.id, event)}
-          >
-            {deletingId === s.id ? 'Deleting...' : 'Delete'}
-          </button>
-        </td>
+<div class="mt-4 overflow-x-auto rounded-lg border border-base-300">
+  <table class="table table-zebra table-list text-base">
+    <thead>
+      <tr>
+        <th>{$_('sessions.thId')}</th>
+        <th>{$_('sessions.thUpdated')}</th>
+        <th>{$_('sessions.thIdleExpiry')}</th>
+        <th>{$_('sessions.thLength')}</th>
+        <th>{$_('sessions.thLastMsg')}</th>
+        <th class="w-1 whitespace-nowrap">{$_('sessions.thActions')}</th>
       </tr>
-    {:else}
-      <tr><td colspan="6" class="empty">No sessions yet. Send a message to the bot to start one.</td></tr>
-    {/each}
-  </tbody>
-</table>
-
-<style>
-  h1 { margin-top: 0; }
-  table { width: 100%; border-collapse: collapse; background: #151923; border: 1px solid #232838; border-radius: 8px; overflow: hidden; }
-  th, td { padding: 0.6rem 0.75rem; text-align: left; font-size: 0.9rem; }
-  thead th { background: #1b2030; color: #9aa3bb; font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
-  tbody tr:nth-child(even) { background: #181c27; }
-  .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; color: #b9c0d4; }
-  .mono.sm { font-size: 0.78rem; color: #9aa3bb; }
-  .snippet { color: #9aa3bb; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .clickable { cursor: pointer; }
-  .clickable:hover { background: #1d2333; }
-  .actions { width: 1%; white-space: nowrap; }
-  .actions button { cursor: pointer; }
-  .danger {
-    background: #33141a;
-    border: 1px solid #7f2936;
-    color: #ffd8dd;
-    border-radius: 6px;
-    padding: 0.28rem 0.58rem;
-  }
-  .danger:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-  }
-  .empty { text-align: center; color: #6c7389; padding: 1rem; }
-  .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
-</style>
+    </thead>
+    <tbody>
+      {#each sessions as s}
+        <tr
+          class="cursor-pointer hover:bg-base-300/40"
+          on:click={() => goto('session', { id: s.id })}
+          on:keydown={(e) => e.key === 'Enter' && goto('session', { id: s.id })}
+          role="button"
+          tabindex="0"
+        >
+          <td class="max-w-[14rem] truncate font-mono text-xs">{s.id}</td>
+          <td class="whitespace-nowrap text-xs">
+            {s.updated_at ? new Date(s.updated_at).toLocaleString() : $_('common.emDash')}
+          </td>
+          <td class="font-mono text-xs">{fmtRemaining(s, loc)}</td>
+          <td>{s.length}</td>
+          <td class="max-w-md truncate text-sm text-base-content/70">{s.last_snippet || ''}</td>
+          <td>
+            <button
+              type="button"
+              class="btn btn-xs btn-outline btn-error"
+              disabled={deletingId === s.id}
+              on:click={(event) => removeSession(s.id, event)}
+            >
+              {deletingId === s.id ? $_('sessions.deleting') : $_('sessions.delete')}
+            </button>
+          </td>
+        </tr>
+      {:else}
+        <tr>
+          <td colspan="6" class="text-center text-base-content/60">{$_('sessions.empty')}</td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+</div>

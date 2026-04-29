@@ -1,10 +1,13 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { api } from '../lib/api.js';
+  import { _, locale, translate } from '../lib/i18n.js';
   import {
     parseUserDockerManagerMeta,
     tempRemovalCountdown,
     formatDurationSec,
+    typeBadgeStyle,
   } from '../lib/userdockerPolicy.js';
 
   let components = [];
@@ -32,6 +35,15 @@
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return '—';
     return d.toLocaleString();
+  }
+
+  /** yyyy/MM/dd HH:mm:ss (local wall clock) */
+  function fmtTsSlash(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return '—';
+    const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
   function shortId(v) {
@@ -62,7 +74,35 @@
     return String(v || '').toLowerCase().trim() === 'userdocker';
   }
 
+  /** @param {'healthy' | 'warn' | 'bad' | 'unknown'} n */
+  function statusBadgeClass(n) {
+    if (n === 'healthy') return 'badge badge-success badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
+    if (n === 'warn') return 'badge badge-warning badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
+    if (n === 'bad') return 'badge badge-error badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
+    return 'badge badge-ghost badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
+  }
+
+  /** Card border color aligned with status badge */
+  /** @param {'healthy' | 'warn' | 'bad' | 'unknown'} n */
+  function cardStatusBorderClass(n) {
+    if (n === 'healthy') return 'border-wb border-success';
+    if (n === 'warn') return 'border-wb border-warning';
+    if (n === 'bad') return 'border-wb border-error';
+    return 'border-wb border-base-300';
+  }
+
+  /** @param {Record<string, unknown>} d */
+  function userDockerTypeLabel(d) {
+    const raw = d && typeof d.labels === 'object' && d.labels != null ? d.labels : {};
+    const labels = /** @type {Record<string, unknown>} */ (raw);
+    const fromLabel = labels['mvp.type'];
+    const t = String(fromLabel != null ? fromLabel : d?.type || '')
+      .trim();
+    return t || 'userdocker';
+  }
+
   async function refresh() {
+    const loc = get(locale);
     try {
       const [c, u, s, h] = await Promise.all([
         api.components(),
@@ -73,11 +113,10 @@
       components = c.components || [];
       userdockers = u.containers || [];
       if (h && h._health_err) {
-        chatBlockedMessage = `Could not read orchestrator health: ${h._health_err}`;
+        chatBlockedMessage = translate(loc, 'overview.chatHealthErr', { detail: h._health_err });
       } else if (h && h.chat_ready === false) {
         chatBlockedMessage =
-          String(h.chat_error || '').trim() ||
-          'Chat dependencies are not ready (runtime, session, and llm must all be healthy).';
+          String(h.chat_error || '').trim() || translate(loc, 'overview.chatDepsNotReady');
       } else {
         chatBlockedMessage = '';
       }
@@ -91,7 +130,7 @@
       } else if (s && !s._err && s.success === false) {
         statsDisabled = false;
         stats = null;
-        statsError = s.error || '统计服务返回错误';
+        statsError = s.error || translate(loc, 'overview.statsServiceErr');
       } else if (s && !s._err && s.success !== false) {
         statsDisabled = false;
         stats = s.stats || null;
@@ -136,280 +175,147 @@
       }
     : { total: 0, delta: 0 };
 
-  function removalLine(d) {
+  /** @param {string} loc */
+  function removalLine(d, loc) {
     tick;
     const r = tempRemovalCountdown(d, udPolicy.ttlSec);
-    if (r.kind === 'persistent') return 'Persistent (no idle removal)';
-    if (r.kind === 'temp') return `~${formatDurationSec(r.seconds)} until idle removal`;
-    return '—';
+    if (r.kind === 'persistent') return translate(loc, 'overview.removalPersistent');
+    if (r.kind === 'temp') {
+      return translate(loc, 'overview.removalEta', { duration: formatDurationSec(r.seconds) });
+    }
+    return translate(loc, 'common.emDash');
   }
 
+  $: loc = $locale;
   $: policyLine =
     udPolicy.ttlSec != null && udPolicy.sweepSec != null
-      ? `Temporary userdocker idle removal: ${formatDurationSec(udPolicy.ttlSec)} · sweeper every ${formatDurationSec(udPolicy.sweepSec)}`
+      ? translate(loc, 'overview.policyBoth', {
+          ttl: formatDurationSec(udPolicy.ttlSec),
+          sweep: formatDurationSec(udPolicy.sweepSec),
+        })
       : udPolicy.ttlSec != null
-        ? `Temporary userdocker idle removal: ${formatDurationSec(udPolicy.ttlSec)}`
+        ? translate(loc, 'overview.policyTtl', { ttl: formatDurationSec(udPolicy.ttlSec) })
         : '';
 </script>
 
-<h1>Overview</h1>
+<h1 class="font-semibold tracking-tight">{$_('overview.title')}</h1>
+
 {#if chatBlockedMessage}
-  <div class="chat-blocked" role="alert">{chatBlockedMessage}</div>
+  <div role="alert" class="alert alert-warning mt-3 text-sm">
+    {chatBlockedMessage}
+  </div>
 {/if}
-{#if error}<div class="err">{error}</div>{/if}
+{#if error}
+  <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+{/if}
+
 {#if statsDisabled}
-  <div class="stats-disabled" role="status">
-    未启用统计服务。在 <code>docker-compose.yml</code> 中启动 <code>stats</code> 服务并重建后，将显示对话数量、工具调用次数与 Token 消耗（近 24 小时对齐整点窗口）。
+  <div role="status" class="alert alert-soft mt-3 text-sm">
+    {@html $_('overview.statsDisabled')}
   </div>
 {:else if statsError}
-  <div class="stats-err" role="status">统计数据不可用：{statsError}</div>
+  <div role="status" class="alert alert-soft alert-warning mt-3 text-sm">
+    {$_('overview.statsErrPrefix')}{statsError}
+  </div>
 {/if}
 
 {#if !statsDisabled}
-  <div class="stat-cards">
-    <div class="stat-card">
-      <div class="stat-label">对话数量</div>
-      <div class="stat-value">{fmtCount(messagesStat.total)}</div>
-      <div class="stat-delta">近24小时 +{fmtCount(messagesStat.delta)}</div>
+  <div
+    class="stats stats-vertical mb-6 w-full rounded-box border border-base-300 bg-base-200 shadow-sm lg:stats-horizontal"
+  >
+    <div class="stat place-items-center border-base-300 px-4 py-3 lg:border-e">
+      <div class="stat-title text-base text-base-content/70">{$_('overview.statMessages')}</div>
+      <div class="stat-value font-mono text-primary">{fmtCount(messagesStat.total)}</div>
+      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(messagesStat.delta) })}</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">工具调用次数</div>
-      <div class="stat-value">{fmtCount(toolCallsStat.total)}</div>
-      <div class="stat-delta">近24小时 +{fmtCount(toolCallsStat.delta)}</div>
+    <div class="stat place-items-center border-base-300 px-4 py-3 lg:border-e">
+      <div class="stat-title text-base text-base-content/70">{$_('overview.statToolCalls')}</div>
+      <div class="stat-value font-mono text-secondary">{fmtCount(toolCallsStat.total)}</div>
+      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(toolCallsStat.delta) })}</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Token 消耗</div>
-      <div class="stat-value">{fmtCount(tokensStat.total)}</div>
-      <div class="stat-delta">近24小时 +{fmtCount(tokensStat.delta)}</div>
+    <div class="stat place-items-center px-4 py-3">
+      <div class="stat-title text-base text-base-content/70">{$_('overview.statTokens')}</div>
+      <div class="stat-value font-mono text-accent">{fmtCount(tokensStat.total)}</div>
+      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(tokensStat.delta) })}</div>
     </div>
   </div>
 {/if}
 
-<h2>Userdocker</h2>
+<h2 class="mt-2 text-base font-semibold text-base-content">{$_('overview.userdocker')}</h2>
 {#if policyLine}
-  <p class="policy-hint">{policyLine}</p>
+  <p class="mb-3 text-base text-base-content/70">{policyLine}</p>
 {/if}
-<div class="grid">
+<div class="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
   {#each userdockers as d}
-    <div class="card {normalizeStatus(d.status || d.state)}">
-      <div class="head">
-        <div class="title">{d.name || '—'}</div>
-        <span class="chip {normalizeStatus(d.status || d.state)}">{displayStatus(d.status || d.state)}</span>
-      </div>
-      <div class="rows">
-        <div class="row"><span class="k">Image</span><span class="v mono">{d.image || '—'}</span></div>
-        <div class="row"><span class="k">Scope</span><span class="v">{d.scope || '—'}</span></div>
-        <div class="row"><span class="k">Last active</span><span class="v">{fmtTs(d.last_active_at)}</span></div>
-        <div class="row"><span class="k">Idle removal</span><span class="v warn">{removalLine(d)}</span></div>
-        <div class="row"><span class="k">State</span><span class="v">{d.state || '—'}</span></div>
-        <div class="row"><span class="k">Raw Status</span><span class="v">{d.status || '—'}</span></div>
-        <div class="row"><span class="k">Container ID</span><span class="v mono">{shortId(d.id)}</span></div>
+    {@const ns = normalizeStatus(d.status || d.state)}
+    <div class="card bg-base-200 shadow-sm {cardStatusBorderClass(ns)}">
+      <div class="card-body gap-3 p-4">
+        <div class="flex min-w-0 items-start justify-between gap-2">
+          <h3 class="card-title min-w-0 flex-1 text-lg font-semibold leading-snug">
+            {d.name || $_('common.emDash')}
+          </h3>
+          <span class={statusBadgeClass(ns)}>{displayStatus(d.status || d.state)}</span>
+        </div>
+        <dl class="space-y-1.5 text-base">
+          <div class="flex gap-2">
+            <dt class="text-base-content/60 shrink-0">{$_('overview.rowType')}</dt>
+            <dd class="min-w-0 text-right">
+              <span
+                class="inline-flex max-w-full items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+                style={typeBadgeStyle(userDockerTypeLabel(d))}>{userDockerTypeLabel(d)}</span
+              >
+            </dd>
+          </div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowImage')}</dt><dd class="min-w-0 break-all font-mono text-right">{d.image || $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowScope')}</dt><dd class="min-w-0 break-all text-right">{d.scope || $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowLastActive')}</dt><dd class="min-w-0 text-right">{fmtTs(d.last_active_at)}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowIdleRemoval')}</dt><dd class="min-w-0 text-right text-warning">{removalLine(d, loc)}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowState')}</dt><dd class="min-w-0 break-all text-right">{d.state || $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowRawStatus')}</dt><dd class="min-w-0 break-all text-right">{d.status || $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowContainerId')}</dt><dd class="font-mono text-right">{shortId(d.id)}</dd></div>
+        </dl>
       </div>
     </div>
   {:else}
-    <div class="empty">No userdocker containers.</div>
+    <div class="alert alert-soft col-span-full text-sm">{$_('overview.emptyUserdocker')}</div>
   {/each}
 </div>
 
-<h2>System Docker</h2>
-<div class="grid">
+<h2 class="text-base font-semibold text-base-content">{$_('overview.systemDocker')}</h2>
+<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
   {#each systemComponents as c}
-    <div class="card {normalizeStatus(c.status)}">
-      <div class="head">
-        <div class="title">{c.name || '—'}</div>
-        <span class="chip {normalizeStatus(c.status)}">{c.status || 'unknown'}</span>
-      </div>
-      <div class="rows">
-        <div class="row"><span class="k">Type</span><span class="v">{c.type || '—'}</span></div>
-        <div class="row"><span class="k">Endpoint</span><span class="v mono">{c.endpoint || '—'}</span></div>
-        <div class="row"><span class="k">Failures</span><span class="v">{Number.isFinite(c.failure_count) ? c.failure_count : '—'}</span></div>
-        <div class="row"><span class="k">Last Check</span><span class="v">{fmtTs(c.last_checked_at)}</span></div>
+    {@const ns = normalizeStatus(c.status)}
+    <div class="card bg-base-200 shadow-sm {cardStatusBorderClass(ns)}">
+      <div class="card-body gap-3 p-4">
+        <div class="flex min-w-0 items-start justify-between gap-2">
+          <h3 class="card-title min-w-0 flex-1 text-lg font-semibold leading-snug">
+            {c.name || $_('common.emDash')}
+          </h3>
+          <span class={statusBadgeClass(ns)}>{c.status || $_('common.unknown')}</span>
+        </div>
+        <dl class="space-y-1.5 text-base">
+          <div class="flex gap-2">
+            <dt class="text-base-content/60 shrink-0">{$_('overview.rowType')}</dt>
+            <dd class="min-w-0 text-right">
+              <span
+                class="inline-flex max-w-full items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+                style={typeBadgeStyle(c.type || '')}>{c.type || $_('common.emDash')}</span
+              >
+            </dd>
+          </div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowEndpoint')}</dt><dd class="min-w-0 break-all font-mono text-right">{c.endpoint || $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowFailures')}</dt><dd class="text-right">{Number.isFinite(c.failure_count) ? c.failure_count : $_('common.emDash')}</dd></div>
+          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowLastCheck')}</dt><dd class="text-right font-mono">{fmtTsSlash(c.last_checked_at)}</dd></div>
+        </dl>
       </div>
     </div>
   {:else}
-    <div class="empty">No system components.</div>
+    <div class="alert alert-soft col-span-full text-sm">{$_('overview.emptySystem')}</div>
   {/each}
 </div>
 
 <style>
-  h1 { margin-top: 0; }
-  h2 {
-    margin: 1rem 0 0.6rem;
-    font-size: 0.95rem;
-    color: #c7d0e6;
-    font-weight: 600;
-  }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 0.8rem;
-    margin-bottom: 1.1rem;
-  }
-  .card {
-    background: #151923;
-    border: 1px solid #232838;
-    border-radius: 10px;
-    padding: 0.75rem 0.85rem;
-  }
-  .card.healthy {
-    border-color: #2f6645;
-    box-shadow: inset 0 0 0 1px rgba(133, 216, 167, 0.08);
-  }
-  .card.warn {
-    border-color: #6b5422;
-    box-shadow: inset 0 0 0 1px rgba(245, 196, 105, 0.08);
-  }
-  .card.bad {
-    border-color: #78323a;
-    box-shadow: inset 0 0 0 1px rgba(241, 106, 106, 0.08);
-  }
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-    margin-bottom: 0.55rem;
-  }
-  .title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #e5e9f5;
-    word-break: break-word;
-  }
-  .chip {
-    border-radius: 999px;
-    font-size: 0.72rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    padding: 0.14rem 0.5rem;
-    border: 1px solid #2d3448;
-    color: #a8b2ca;
-    white-space: nowrap;
-  }
-  .chip.healthy {
-    color: #85d8a7;
-    border-color: #2f6645;
-    background: #163222;
-  }
-  .chip.warn {
-    color: #f5c469;
-    border-color: #6b5422;
-    background: #2f2715;
-  }
-  .chip.bad {
-    color: #f16a6a;
-    border-color: #78323a;
-    background: #341a1e;
-  }
-  .rows {
-    display: flex;
-    flex-direction: column;
-    gap: 0.38rem;
-  }
-  .row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.8rem;
-  }
-  .k {
-    color: #8f98ae;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    flex: 0 0 auto;
-  }
-  .v {
-    color: #dfe3ee;
-    font-size: 0.86rem;
-    text-align: right;
-    word-break: break-all;
-  }
-  .v.warn {
-    color: #e8a854;
-  }
-  .policy-hint {
-    margin: 0 0 0.65rem;
-    font-size: 0.82rem;
-    color: #9aa3bb;
-    line-height: 1.35;
-  }
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  :global(.alert :where(code)) {
     font-size: 0.8rem;
-  }
-  .empty {
-    background: #111522;
-    border: 1px dashed #263049;
-    border-radius: 8px;
-    color: #8f98ae;
-    padding: 0.8rem 0.9rem;
-  }
-  .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; margin-bottom: 1rem; }
-  .chat-blocked {
-    background: #3a1518;
-    border: 2px solid #c44a54;
-    color: #ffd6d9;
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
-    line-height: 1.45;
-    font-weight: 500;
-  }
-  .stats-err {
-    background: #2a2112;
-    border: 1px solid #6b5422;
-    color: #f5c469;
-    padding: 0.45rem 0.75rem;
-    border-radius: 6px;
-    margin-bottom: 0.75rem;
-    font-size: 0.82rem;
-  }
-  .stats-disabled {
-    background: #1a2230;
-    border: 1px solid #2d3a52;
-    color: #9aa3bb;
-    padding: 0.55rem 0.85rem;
-    border-radius: 6px;
-    margin-bottom: 0.85rem;
-    font-size: 0.84rem;
-    line-height: 1.45;
-  }
-  .stats-disabled code {
-    font-size: 0.8rem;
-    color: #c7d0e6;
-  }
-  .stat-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 0.8rem;
-    margin: 0.2rem 0 1.2rem;
-  }
-  .stat-card {
-    background: #151923;
-    border: 1px solid #232838;
-    border-radius: 10px;
-    padding: 0.85rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .stat-label {
-    color: #8f98ae;
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .stat-value {
-    color: #e5e9f5;
-    font-size: 1.85rem;
-    font-weight: 600;
-    line-height: 1.1;
-    font-variant-numeric: tabular-nums;
-  }
-  .stat-delta {
-    color: #85d8a7;
-    font-size: 0.78rem;
   }
 </style>

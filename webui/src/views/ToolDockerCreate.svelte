@@ -1,6 +1,7 @@
 <script>
   import { api } from '../lib/api.js';
   import { goto } from '../lib/route.js';
+  import { _, t } from '../lib/i18n.js';
 
   let name = 'user-task-001';
   let image = '';
@@ -23,11 +24,11 @@
   function parseKV(text) {
     const out = {};
     for (const line of text.split('\n')) {
-      const t = line.trim();
-      if (!t) continue;
-      const idx = t.indexOf('=');
+      const ln = line.trim();
+      if (!ln) continue;
+      const idx = ln.indexOf('=');
       if (idx < 0) continue;
-      out[t.slice(0, idx)] = t.slice(idx + 1);
+      out[ln.slice(0, idx)] = ln.slice(idx + 1);
     }
     return out;
   }
@@ -78,7 +79,7 @@
 
   async function readInterface() {
     if (!targetName) {
-      error = 'Target name is required';
+      error = t('toolDocker.targetRequired');
       return;
     }
     running = true;
@@ -93,7 +94,7 @@
 
   async function removeContainer() {
     if (!targetName) {
-      error = 'Target name is required';
+      error = t('toolDocker.targetRequired');
       return;
     }
     running = true;
@@ -109,7 +110,7 @@
 
   async function restartContainer() {
     if (!targetName) {
-      error = 'Target name is required';
+      error = t('toolDocker.targetRequired');
       return;
     }
     running = true;
@@ -124,86 +125,164 @@
   }
 </script>
 
-<div class="top">
-  <button on:click={() => goto('tools')}>← Back</button>
-  <h1>Tool · User Docker Manager</h1>
-</div>
-<p class="hint">Calls <code>/api/v1/tools/user-dockers*</code>. Supports create/list/remove/restart and user docker interface discovery.</p>
-
-<form on:submit|preventDefault={submit}>
-  <label>Name<input bind:value={name} required /></label>
-  <label>Image <span class="dim">(blank ⇒ whalesbot/userdocker-base:latest)</span>
-    <input bind:value={image} placeholder="whalesbot/userdocker-base:latest" />
-  </label>
-  <label>Cmd <span class="dim">(one arg per line — optional)</span>
-    <textarea bind:value={cmd} rows="3" placeholder="sh&#10;-c&#10;while true; do echo hello; sleep 60; done"></textarea>
-  </label>
-  <label>Env (KEY=VALUE per line)
-    <textarea bind:value={envText} rows="3"></textarea>
-  </label>
-  <label>Labels (KEY=VALUE per line)
-    <textarea bind:value={labelsText} rows="3"></textarea>
-  </label>
-  <label>Network<input bind:value={network} /></label>
-  <label>Port<input type="number" min="1" bind:value={port} /></label>
-  <label class="inline"><input type="checkbox" bind:checked={autoRegister} /> Auto-register to orchestrator</label>
-  <button disabled={running} type="submit">{running ? 'Creating…' : 'Create container'}</button>
-</form>
-
-<div class="ops">
-  <button disabled={running} on:click={refreshList}>List containers</button>
-  <button disabled={running} on:click={readContract}>Get public contract</button>
-</div>
-
-<div class="target">
-  <label>Target container name<input bind:value={targetName} placeholder="user-task-001" /></label>
-  <div class="ops">
-    <label class="inline"><input type="checkbox" bind:checked={removeForce} /> Force remove</label>
-    <label>Restart timeout sec<input type="number" min="1" bind:value={restartTimeoutSec} /></label>
+<div class="mx-auto max-w-3xl">
+  <div class="mb-4 flex flex-wrap items-center gap-3">
+    <button type="button" class="btn btn-outline" on:click={() => goto('tools')}>{$_('toolDocker.back')}</button>
+    <h1 class="font-semibold tracking-tight">{$_('toolDocker.title')}</h1>
   </div>
-  <div class="ops">
-    <button disabled={running} on:click={readInterface}>Get container interface</button>
-    <button disabled={running} on:click={restartContainer}>Restart container</button>
-    <button disabled={running} class="danger" on:click={removeContainer}>Remove container</button>
+
+  <p
+    class="mb-6 text-base leading-relaxed text-base-content/70 [&_code]:rounded [&_code]:bg-base-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-sm"
+  >
+    {@html $_('toolDocker.hint')}
+  </p>
+
+  <form class="card card-border border-wb border-base-300 bg-base-200 shadow-sm" on:submit|preventDefault={submit}>
+    <div class="card-body grid gap-4 p-5 sm:p-6">
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">{$_('toolDocker.name')}</span>
+        <input class="input input-bordered w-full" bind:value={name} required />
+      </label>
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">
+          {$_('toolDocker.image')}
+          <span class="label-text-alt font-normal text-base-content/50">{$_('toolDocker.imageHint')}</span>
+        </span>
+        <input
+          class="input input-bordered w-full font-mono text-sm"
+          bind:value={image}
+          placeholder="whalesbot/userdocker-base:latest"
+        />
+      </label>
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">
+          {$_('toolDocker.cmd')}
+          <span class="label-text-alt font-normal text-base-content/50">{$_('toolDocker.cmdHint')}</span>
+        </span>
+        <textarea
+          class="textarea textarea-bordered min-h-[5.5rem] w-full font-mono text-sm leading-relaxed"
+          bind:value={cmd}
+          rows="3"
+          placeholder="sh&#10;-c&#10;while true; do echo hello; sleep 60; done"
+        ></textarea>
+      </label>
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">{$_('toolDocker.env')}</span>
+        <textarea
+          class="textarea textarea-bordered min-h-[5.5rem] w-full font-mono text-sm"
+          bind:value={envText}
+          rows="3"
+        ></textarea>
+      </label>
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">{$_('toolDocker.labels')}</span>
+        <textarea
+          class="textarea textarea-bordered min-h-[5.5rem] w-full font-mono text-sm"
+          bind:value={labelsText}
+          rows="3"
+        ></textarea>
+      </label>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label class="form-control w-full">
+          <span class="label label-text text-sm">{$_('toolDocker.network')}</span>
+          <input class="input input-bordered w-full" bind:value={network} />
+        </label>
+        <label class="form-control w-full">
+          <span class="label label-text text-sm">{$_('toolDocker.port')}</span>
+          <input class="input input-bordered w-full" type="number" min="1" bind:value={port} />
+        </label>
+      </div>
+      <label class="label cursor-pointer justify-start gap-3 py-0">
+        <input type="checkbox" class="checkbox" bind:checked={autoRegister} />
+        <span class="label-text text-sm">{$_('toolDocker.autoRegister')}</span>
+      </label>
+    </div>
+    <div class="card-actions justify-end border-t border-base-300 bg-base-300/20 px-5 py-4 sm:px-6">
+      <button class="btn btn-primary min-w-[10rem]" disabled={running} type="submit">
+        {running ? $_('toolDocker.creating') : $_('toolDocker.createSubmit')}
+      </button>
+    </div>
+  </form>
+
+  <div class="card card-border border-wb border-base-300 bg-base-200 shadow-sm mt-5">
+    <div class="card-body flex flex-col gap-3 p-5 sm:flex-row sm:flex-wrap sm:items-stretch">
+      <button type="button" class="btn btn-outline min-h-12 min-w-0 flex-1 sm:min-w-[10rem]" disabled={running} on:click={refreshList}>
+        {$_('toolDocker.listBtn')}
+      </button>
+      <button type="button" class="btn btn-outline min-h-12 min-w-0 flex-1 sm:min-w-[10rem]" disabled={running} on:click={readContract}>
+        {$_('toolDocker.contractBtn')}
+      </button>
+    </div>
   </div>
+
+  <div class="card card-border border-wb border-base-300 bg-base-200 shadow-sm mt-5">
+    <div class="card-body grid gap-4 p-5 sm:p-6">
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">{$_('toolDocker.targetName')}</span>
+        <input class="input input-bordered w-full" bind:value={targetName} placeholder="user-task-001" />
+      </label>
+      <div class="grid grid-cols-1 items-end gap-4 sm:grid-cols-2">
+        <label class="form-control w-full">
+          <span class="label label-text text-sm">{$_('toolDocker.restartTimeout')}</span>
+          <input class="input input-bordered w-full" type="number" min="1" bind:value={restartTimeoutSec} />
+        </label>
+        <label class="label mb-2 cursor-pointer justify-start gap-3 self-end sm:mb-0 sm:justify-center">
+          <input type="checkbox" class="checkbox" bind:checked={removeForce} />
+          <span class="label-text text-sm">{$_('toolDocker.forceRemove')}</span>
+        </label>
+      </div>
+      <div class="flex flex-wrap gap-2 border-t border-base-300 pt-4">
+        <button type="button" class="btn btn-outline min-w-[9rem] flex-1 sm:flex-none" disabled={running} on:click={readInterface}>
+          {$_('toolDocker.getInterface')}
+        </button>
+        <button type="button" class="btn btn-outline min-w-[9rem] flex-1 sm:flex-none" disabled={running} on:click={restartContainer}>
+          {$_('toolDocker.restart')}
+        </button>
+        <button type="button" class="btn btn-outline btn-error min-w-[9rem] flex-1 sm:flex-none" disabled={running} on:click={removeContainer}>
+          {$_('toolDocker.remove')}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {#if error}
+    <div role="alert" class="alert alert-soft alert-error mt-5 text-sm">{error}</div>
+  {/if}
+
+  {#if createResult}
+    <h3 class="mt-8 text-base font-semibold text-base-content/80">{$_('toolDocker.createResult')}</h3>
+    <pre
+      class="mt-2 max-h-[50vh] overflow-auto rounded-lg border border-base-300 bg-base-300/40 p-4 font-mono text-sm whitespace-pre-wrap break-words">{JSON.stringify(
+      createResult,
+      null,
+      2,
+    )}</pre>
+  {/if}
+  {#if listResult}
+    <h3 class="mt-8 text-base font-semibold text-base-content/80">{$_('toolDocker.listResult')}</h3>
+    <pre
+      class="mt-2 max-h-[50vh] overflow-auto rounded-lg border border-base-300 bg-base-300/40 p-4 font-mono text-sm whitespace-pre-wrap break-words">{JSON.stringify(
+      listResult,
+      null,
+      2,
+    )}</pre>
+  {/if}
+  {#if contractResult}
+    <h3 class="mt-8 text-base font-semibold text-base-content/80">{$_('toolDocker.publicContract')}</h3>
+    <pre
+      class="mt-2 max-h-[50vh] overflow-auto rounded-lg border border-base-300 bg-base-300/40 p-4 font-mono text-sm whitespace-pre-wrap break-words">{JSON.stringify(
+      contractResult,
+      null,
+      2,
+    )}</pre>
+  {/if}
+  {#if interfaceResult}
+    <h3 class="mt-8 text-base font-semibold text-base-content/80">{$_('toolDocker.containerInterface')}</h3>
+    <pre
+      class="mt-2 max-h-[50vh] overflow-auto rounded-lg border border-base-300 bg-base-300/40 p-4 font-mono text-sm whitespace-pre-wrap break-words">{JSON.stringify(
+      interfaceResult,
+      null,
+      2,
+    )}</pre>
+  {/if}
 </div>
-
-{#if error}<div class="err">{error}</div>{/if}
-{#if createResult}
-  <h3>Create Result</h3>
-  <pre class="out">{JSON.stringify(createResult, null, 2)}</pre>
-{/if}
-{#if listResult}
-  <h3>List Result</h3>
-  <pre class="out">{JSON.stringify(listResult, null, 2)}</pre>
-{/if}
-{#if contractResult}
-  <h3>Public Contract</h3>
-  <pre class="out">{JSON.stringify(contractResult, null, 2)}</pre>
-{/if}
-{#if interfaceResult}
-  <h3>Container Interface</h3>
-  <pre class="out">{JSON.stringify(interfaceResult, null, 2)}</pre>
-{/if}
-
-<style>
-  .top { display: flex; align-items: center; gap: 0.75rem; }
-  h1 { margin: 0; }
-  .hint { color: #9aa3bb; margin-top: 0.5rem; }
-  code { background: #1c2130; padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.85rem; }
-  form { display: flex; flex-direction: column; gap: 0.75rem; max-width: 700px; }
-  label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; color: #c7cde0; }
-  label.inline { flex-direction: row; align-items: center; gap: 0.5rem; }
-  input, textarea { background: #0c0f15; border: 1px solid #232838; border-radius: 6px; padding: 0.5rem 0.6rem; color: #e7e9ee; font: inherit; }
-  textarea { font-family: ui-monospace, monospace; }
-  .dim { color: #6c7389; font-weight: 400; font-size: 0.8rem; }
-  button { align-self: flex-start; background: #1c2130; color: #dfe3ee; border: 1px solid #2d3448; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; }
-  form button[type="submit"] { background: #2a3b63; color: #fff; border-color: #3c5189; }
-  .ops { display: flex; align-items: center; gap: 0.7rem; margin-top: 1rem; flex-wrap: wrap; }
-  .target { margin-top: 1rem; max-width: 700px; display: flex; flex-direction: column; gap: 0.6rem; }
-  .danger { background: #4a2027; border-color: #7f2f3b; color: #ffdce0; }
-  h3 { margin: 1rem 0 0.4rem; font-size: 0.95rem; color: #c7cde0; }
-  button:disabled { opacity: 0.6; cursor: progress; }
-  .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; margin-top: 1rem; }
-  .out { background: #0c0f15; border: 1px solid #232838; border-radius: 6px; padding: 1rem; margin-top: 1rem; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; }
-</style>

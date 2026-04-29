@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
+  import { _ } from '../lib/i18n.js';
 
   let persistentEvents = [];
   let recentLogs = [];
@@ -120,7 +121,6 @@
     const text = raw.trim();
     if (!text.includes('=')) return null;
 
-    // Avoid treating source code / expressions as key-value text.
     if (
       text.includes('package main') ||
       text.includes('func ') ||
@@ -154,7 +154,6 @@
       pairs += 1;
     }
 
-    // Require high confidence before converting to object.
     if (pairs < 2) return null;
     if (eqCandidateLines > 0 && pairs / eqCandidateLines < 0.8) return null;
     return out;
@@ -212,6 +211,22 @@
     }
   }
 
+  /** @param {string} lvl */
+  function levelRowTint(lvl) {
+    const l = String(lvl || 'info').toLowerCase();
+    if (l === 'error') return 'bg-error/10 hover:bg-error/15';
+    if (l === 'warn') return 'bg-warning/10 hover:bg-warning/15';
+    return 'hover:bg-base-300/50';
+  }
+
+  /** @param {string} lvl */
+  function levelBadgeClass(lvl) {
+    const l = String(lvl || 'info').toLowerCase();
+    if (l === 'error') return 'badge badge-error badge-xs uppercase shrink-0';
+    if (l === 'warn') return 'badge badge-warning badge-xs uppercase shrink-0';
+    return 'badge badge-ghost badge-xs uppercase shrink-0';
+  }
+
   $: selectedFields = selected?.fields || {};
   $: interpretedFields = deepInterpret(selectedFields);
   $: parsedArgs = deepInterpret(interpretedFields?.args ?? selectedFields.args ?? '');
@@ -223,375 +238,256 @@
   $: parsedCode = parsedArgs && typeof parsedArgs === 'object' ? parsedArgs.code : '';
 </script>
 
-<h1>Logger</h1>
-{#if error}<div class="err">{error}</div>{/if}
+<h1 class="font-semibold tracking-tight">{$_('logger.title')}</h1>
+{#if error}
+  <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+{/if}
 
-<div class="toolbar">
-  <label>Source
-    <select bind:value={source}>
-      <option value="persistent">Persistent (logger sqlite)</option>
-      <option value="recent">Orchestrator recent ring</option>
+<div class="mt-4 flex flex-wrap items-end gap-3">
+  <label class="form-control w-full max-w-[11rem]">
+    <span class="label py-1 text-xs">{$_('logger.source')}</span>
+    <select class="select select-bordered select-sm" bind:value={source}>
+      <option value="persistent">{$_('logger.srcPersistent')}</option>
+      <option value="recent">{$_('logger.srcRecent')}</option>
     </select>
   </label>
-  <label>Limit
-    <input type="number" min="20" max="500" bind:value={limit} on:change={refresh} />
+  <label class="form-control w-full max-w-[7rem]">
+    <span class="label py-1 text-xs">{$_('logger.limit')}</span>
+    <input
+      type="number"
+      min="20"
+      max="500"
+      class="input input-bordered input-sm"
+      bind:value={limit}
+      on:change={refresh}
+    />
   </label>
-  <label>Level
-    <select bind:value={level}>
-      <option value="all">all</option>
-      <option value="info">info</option>
-      <option value="warn">warn</option>
-      <option value="error">error</option>
+  <label class="form-control w-full max-w-[9rem]">
+    <span class="label py-1 text-xs">{$_('logger.level')}</span>
+    <select class="select select-bordered select-sm" bind:value={level}>
+      <option value="all">{$_('logger.optAll')}</option>
+      <option value="info">{$_('logger.optInfo')}</option>
+      <option value="warn">{$_('logger.optWarn')}</option>
+      <option value="error">{$_('logger.optError')}</option>
     </select>
   </label>
-  <label>Phase
-    <select bind:value={phase}>
-      <option value="all">all</option>
-      <option value="start">start</option>
-      <option value="end">end</option>
-      <option value="error">error</option>
+  <label class="form-control w-full max-w-[9rem]">
+    <span class="label py-1 text-xs">{$_('logger.phase')}</span>
+    <select class="select select-bordered select-sm" bind:value={phase}>
+      <option value="all">{$_('logger.optAll')}</option>
+      <option value="start">{$_('logger.optStart')}</option>
+      <option value="end">{$_('logger.optEnd')}</option>
+      <option value="error">{$_('logger.optError')}</option>
     </select>
   </label>
-  <label>Last minutes
-    <input type="number" min="0" bind:value={minutes} />
+  <label class="form-control w-full max-w-[8rem]">
+    <span class="label py-1 text-xs">{$_('logger.lastMinutes')}</span>
+    <input type="number" min="0" class="input input-bordered input-sm" bind:value={minutes} />
   </label>
 </div>
 
-<div class="toolbar">
-  <label>Module
-    <input placeholder="tool / react / session" bind:value={moduleName} />
+<div class="mt-3 flex flex-wrap items-end gap-3">
+  <label class="form-control min-w-[10rem] flex-1">
+    <span class="label py-1 text-xs">{$_('logger.module')}</span>
+    <input
+      class="input input-bordered input-sm"
+      placeholder={$_('logger.modulePh')}
+      bind:value={moduleName}
+    />
   </label>
-  <label>Tool name
-    <input placeholder="manage_user_docker" bind:value={toolName} />
+  <label class="form-control min-w-[10rem] flex-1">
+    <span class="label py-1 text-xs">{$_('logger.toolName')}</span>
+    <input
+      class="input input-bordered input-sm"
+      placeholder={$_('logger.toolPh')}
+      bind:value={toolName}
+    />
   </label>
-  <label>Trace ID
-    <input placeholder="trace_xxx" bind:value={traceId} />
+  <label class="form-control min-w-[10rem] flex-1">
+    <span class="label py-1 text-xs">{$_('logger.traceId')}</span>
+    <input
+      class="input input-bordered input-sm"
+      placeholder={$_('logger.tracePh')}
+      bind:value={traceId}
+    />
   </label>
-  <button on:click={refresh}>Refresh</button>
+  <button type="button" class="btn btn-sm btn-primary shrink-0" on:click={refresh}>{$_('logger.refresh')}</button>
 </div>
 
-<div class="stats">
-  <span>Total: {filteredLogs.length}</span>
-  <span>Tool Flows: {groupedToolFlows.length}</span>
-  <span>Selected Source: {source}</span>
+<div class="stats stats-vertical shadow-sm sm:stats-horizontal mt-4 w-full max-w-2xl rounded-lg border border-base-300 bg-base-200">
+  <div class="stat place-items-start py-3">
+    <div class="stat-title text-xs">{$_('logger.statTotal')}</div>
+    <div class="stat-value text-lg">{filteredLogs.length}</div>
+  </div>
+  <div class="stat place-items-start py-3">
+    <div class="stat-title text-xs">{$_('logger.statFlows')}</div>
+    <div class="stat-value text-lg">{groupedToolFlows.length}</div>
+  </div>
+  <div class="stat place-items-start py-3">
+    <div class="stat-title text-xs">{$_('logger.statSource')}</div>
+    <div class="stat-value font-mono text-sm">{source}</div>
+  </div>
 </div>
 
-<div class="layout">
-  <div class="logs">
-    {#each filteredLogs as e}
-      <button class="log {e.level}" on:click={() => (selected = e)}>
-        <span class="t">{new Date(e.time).toLocaleString()}</span>
-        <span class="lvl">{e.level}</span>
-        <span class="msg">{e.message}</span>
-        <span class="mod">{e.fields?.module || '-'}</span>
-        <span class="phase">{e.fields?.phase || '-'}</span>
-        <span class="tool">{e.fields?.tool_name || '-'}</span>
-      </button>
-    {:else}
-      <div class="empty">No log entries under current filters.</div>
-    {/each}
+<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr]">
+  <div class="rounded-lg border border-base-300 bg-base-200 p-2 font-mono text-sm">
+    <div class="max-h-[62vh] overflow-y-auto">
+      {#each filteredLogs as e}
+        <button
+          type="button"
+          class="flex w-full flex-wrap items-baseline gap-2 border-b border-base-300 px-2 py-2 text-left last:border-b-0 {levelRowTint(
+            e.level,
+          )}"
+          on:click={() => (selected = e)}
+        >
+          <span class="shrink-0 text-xs text-base-content/50">{new Date(e.time).toLocaleString()}</span>
+          <span class={levelBadgeClass(e.level)}>{e.level}</span>
+          <span class="min-w-0 flex-1 text-balance text-base-content">{e.message}</span>
+          <span class="badge badge-ghost badge-xs shrink-0 font-normal">{e.fields?.module || '-'}</span>
+          <span class="badge badge-ghost badge-xs shrink-0 font-normal">{e.fields?.phase || '-'}</span>
+          <span class="badge badge-ghost badge-xs shrink-0 font-normal max-w-[8rem] truncate"
+            >{e.fields?.tool_name || '-'}</span
+          >
+        </button>
+      {:else}
+        <div class="p-6 text-center text-base-content/60">{$_('logger.logEmpty')}</div>
+      {/each}
+    </div>
   </div>
 
-  <div class="detail">
-    <h2>Event Detail</h2>
-    {#if selected}
-      <div class="meta">
-        <div><b>Time</b>: {new Date(selected.time).toLocaleString()}</div>
-        <div><b>Level</b>: {selected.level}</div>
-        <div><b>Message</b>: {selected.message}</div>
-        <div><b>Source</b>: {selected.source}</div>
-      </div>
-      <h3>Fields</h3>
-      <div class="sections">
-        <div class="section">
-          <div class="sectionHead">
-            <button class="toggleBtn" on:click={() => toggleSection('interpreted')}>
-              {expanded.interpreted ? '▼' : '▶'} Interpreted fields
-            </button>
-            <button class="copyBtn" on:click={() => copyText(interpretedFieldsText)}>Copy</button>
-          </div>
-          {#if expanded.interpreted || !isLargeText(interpretedFieldsText)}
-            <pre>{interpretedFieldsText || '(empty)'}</pre>
-          {:else}
-            <div class="collapsedHint">Large content hidden. Click to expand.</div>
-          {/if}
+  <div class="card card-border bg-base-200 shadow-sm">
+    <div class="card-body gap-3 p-4">
+      <h2 class="card-title text-base">{$_('logger.detailTitle')}</h2>
+      {#if selected}
+        <div class="flex flex-col gap-1 text-sm">
+          <div><span class="font-semibold">{$_('logger.time')}</span>: {new Date(selected.time).toLocaleString()}</div>
+          <div><span class="font-semibold">{$_('logger.lvl')}</span>: {selected.level}</div>
+          <div><span class="font-semibold">{$_('logger.message')}</span>: {selected.message}</div>
+          <div><span class="font-semibold">{$_('logger.sourceField')}</span>: {selected.source}</div>
         </div>
-
-        <div class="section">
-          <div class="sectionHead">
-            <button class="toggleBtn" on:click={() => toggleSection('args')}>
-              {expanded.args ? '▼' : '▶'} Args
-            </button>
-            <button class="copyBtn" on:click={() => copyText(parsedArgsText)}>Copy</button>
-          </div>
-          {#if expanded.args || !isLargeText(parsedArgsText)}
-            <pre>{parsedArgsText || '(empty)'}</pre>
-          {:else}
-            <div class="collapsedHint">Large content hidden. Click to expand.</div>
-          {/if}
-        </div>
-
-        {#if parsedCode}
-          <div class="section">
-            <div class="sectionHead">
-              <button class="toggleBtn" on:click={() => toggleSection('code')}>
-                {expanded.code ? '▼' : '▶'} Args.code (Go)
+        <h3 class="text-sm font-semibold text-base-content/80">{$_('logger.fieldsTitle')}</h3>
+        <div class="flex flex-col gap-2">
+          <div class="rounded-lg border border-base-300 bg-base-100">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
+              <button type="button" class="btn btn-ghost btn-xs" on:click={() => toggleSection('interpreted')}>
+                {expanded.interpreted ? '▼' : '▶'} {$_('logger.interpreted')}
               </button>
-              <button class="copyBtn" on:click={() => copyText(parsedCode)}>Copy</button>
+              <button type="button" class="btn btn-outline btn-xs" on:click={() => copyText(interpretedFieldsText)}>
+                {$_('common.copy')}
+              </button>
             </div>
-            {#if expanded.code || !isLargeText(parsedCode)}
-              <pre class="codeBlock">{parsedCode}</pre>
+            {#if expanded.interpreted || !isLargeText(interpretedFieldsText)}
+              <pre
+                class="m-0 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs">{interpretedFieldsText || $_('common.emptyParen')}</pre>
             {:else}
-              <div class="collapsedHint">Large code hidden. Click to expand.</div>
+              <div class="p-3 text-xs text-base-content/60">{$_('logger.largeHidden')}</div>
             {/if}
           </div>
-        {/if}
 
-        <div class="section">
-          <div class="sectionHead">
-            <button class="toggleBtn" on:click={() => toggleSection('result')}>
-              {expanded.result ? '▼' : '▶'} Result
-            </button>
-            <button class="copyBtn" on:click={() => copyText(parsedResultText)}>Copy</button>
+          <div class="rounded-lg border border-base-300 bg-base-100">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
+              <button type="button" class="btn btn-ghost btn-xs" on:click={() => toggleSection('args')}>
+                {expanded.args ? '▼' : '▶'} {$_('logger.args')}
+              </button>
+              <button type="button" class="btn btn-outline btn-xs" on:click={() => copyText(parsedArgsText)}>
+                {$_('common.copy')}
+              </button>
+            </div>
+            {#if expanded.args || !isLargeText(parsedArgsText)}
+              <pre
+                class="m-0 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs">{parsedArgsText || $_('common.emptyParen')}</pre>
+            {:else}
+              <div class="p-3 text-xs text-base-content/60">{$_('logger.largeHidden')}</div>
+            {/if}
           </div>
-          {#if expanded.result || !isLargeText(parsedResultText)}
-            <pre>{parsedResultText || '(empty)'}</pre>
-          {:else}
-            <div class="collapsedHint">Large content hidden. Click to expand.</div>
-          {/if}
-        </div>
 
-        <div class="section">
-          <div class="sectionHead">
-            <button class="toggleBtn" on:click={() => toggleSection('raw')}>
-              {expanded.raw ? '▼' : '▶'} Raw fields
-            </button>
-            <button class="copyBtn" on:click={() => copyText(rawFieldsText)}>Copy</button>
-          </div>
-          {#if expanded.raw}
-            <pre>{rawFieldsText || '(empty)'}</pre>
+          {#if parsedCode}
+            <div class="rounded-lg border border-base-300 bg-base-100">
+              <div
+                class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200 px-3 py-2"
+              >
+                <button type="button" class="btn btn-ghost btn-xs" on:click={() => toggleSection('code')}>
+                  {expanded.code ? '▼' : '▶'} {$_('logger.argsCode')}
+                </button>
+                <button type="button" class="btn btn-outline btn-xs" on:click={() => copyText(parsedCode)}>
+                  {$_('common.copy')}
+                </button>
+              </div>
+              {#if expanded.code || !isLargeText(parsedCode)}
+                <pre
+                  class="m-0 max-h-[36vh] overflow-auto whitespace-pre p-3 font-mono text-xs leading-relaxed">{parsedCode}</pre>
+              {:else}
+                <div class="p-3 text-xs text-base-content/60">{$_('logger.largeCodeHidden')}</div>
+              {/if}
+            </div>
           {/if}
+
+          <div class="rounded-lg border border-base-300 bg-base-100">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
+              <button type="button" class="btn btn-ghost btn-xs" on:click={() => toggleSection('result')}>
+                {expanded.result ? '▼' : '▶'} {$_('logger.result')}
+              </button>
+              <button type="button" class="btn btn-outline btn-xs" on:click={() => copyText(parsedResultText)}>
+                {$_('common.copy')}
+              </button>
+            </div>
+            {#if expanded.result || !isLargeText(parsedResultText)}
+              <pre
+                class="m-0 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs">{parsedResultText || $_('common.emptyParen')}</pre>
+            {:else}
+              <div class="p-3 text-xs text-base-content/60">{$_('logger.largeHidden')}</div>
+            {/if}
+          </div>
+
+          <div class="rounded-lg border border-base-300 bg-base-100">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 bg-base-200 px-3 py-2">
+              <button type="button" class="btn btn-ghost btn-xs" on:click={() => toggleSection('raw')}>
+                {expanded.raw ? '▼' : '▶'} {$_('logger.rawFields')}
+              </button>
+              <button type="button" class="btn btn-outline btn-xs" on:click={() => copyText(rawFieldsText)}>
+                {$_('common.copy')}
+              </button>
+            </div>
+            {#if expanded.raw}
+              <pre
+                class="m-0 max-h-[42vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs">{rawFieldsText || $_('common.emptyParen')}</pre>
+            {/if}
+          </div>
         </div>
-      </div>
-    {:else}
-      <div class="empty">Click a log row to inspect complete payload.</div>
-    {/if}
+      {:else}
+        <p class="text-base-content/60">{$_('logger.pickRow')}</p>
+      {/if}
+    </div>
   </div>
 </div>
 
-<h2>Tool Call Flows</h2>
-<div class="flows">
+<h2 class="mt-6 text-base font-semibold">{$_('logger.flowsTitle')}</h2>
+<div class="mt-2 max-h-[34vh] overflow-y-auto rounded-lg border border-base-300 bg-base-200 p-3">
   {#each groupedToolFlows as flow}
-    <div class="flow">
-      <div class="flowHead">
-        <span><b>{flow.tool_name || 'unknown-tool'}</b></span>
-        <span>trace={flow.trace_id || '-'}</span>
-        <span>call={flow.tool_call_id}</span>
-        <span>session={flow.session_id || '-'}</span>
+    <div class="card card-border bg-base-100 shadow-sm mb-3 last:mb-0">
+      <div class="flex flex-wrap gap-x-4 gap-y-1 border-b border-base-300 bg-base-200 px-3 py-2 text-xs">
+        <span class="font-semibold">{flow.tool_name || 'unknown-tool'}</span>
+        <span class="font-mono text-base-content/80">{$_('logger.flowTrace')}={flow.trace_id || '-'}</span>
+        <span class="font-mono text-base-content/80">{$_('logger.flowCall')}={flow.tool_call_id}</span>
+        <span class="font-mono text-base-content/80">{$_('logger.flowSession')}={flow.session_id || '-'}</span>
       </div>
-      {#each flow.steps as step}
-        <button class="flowStep {step.level}" on:click={() => (selected = step)}>
-          <span class="t">{new Date(step.time).toLocaleString()}</span>
-          <span class="lvl">{step.level}</span>
-          <span>{step.fields?.phase || '-'}</span>
-          <span>{step.message}</span>
-        </button>
-      {/each}
+      <div class="divide-y divide-base-300">
+        {#each flow.steps as step}
+          <button
+            type="button"
+            class="flex w-full flex-wrap items-baseline gap-2 px-3 py-2 text-left text-xs {levelRowTint(step.level)}"
+            on:click={() => (selected = step)}
+          >
+            <span class="shrink-0 text-base-content/50">{new Date(step.time).toLocaleString()}</span>
+            <span class={levelBadgeClass(step.level)}>{step.level}</span>
+            <span class="badge badge-ghost badge-xs shrink-0">{step.fields?.phase || '-'}</span>
+            <span class="min-w-0 flex-1 text-base-content">{step.message}</span>
+          </button>
+        {/each}
+      </div>
     </div>
   {/each}
   {#if groupedToolFlows.length === 0}
-    <div class="empty">No tool flows under current filters.</div>
+    <div class="p-6 text-center text-base-content/60">{$_('logger.noFlows')}</div>
   {/if}
 </div>
-
-<style>
-  h1 { margin-top: 0; }
-  h2 { margin-top: 1.1rem; margin-bottom: 0.5rem; font-size: 1rem; }
-  h3 { margin: 0.6rem 0 0.4rem; font-size: 0.9rem; }
-  .toolbar {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.75rem;
-    align-items: flex-end;
-  }
-  .toolbar label {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    font-size: 0.78rem;
-    color: #a8b0c2;
-  }
-  .toolbar input, .toolbar select {
-    min-width: 160px;
-    background: #111522;
-    border: 1px solid #2a3042;
-    color: #dfe3ee;
-    border-radius: 6px;
-    padding: 0.35rem 0.45rem;
-    font-size: 0.82rem;
-  }
-  .toolbar button {
-    background: #1f2a43;
-    border: 1px solid #31456f;
-    border-radius: 6px;
-    color: #fff;
-    height: 2rem;
-    padding: 0 0.8rem;
-    cursor: pointer;
-  }
-  .stats {
-    display: flex;
-    gap: 1rem;
-    color: #9aa3bb;
-    font-size: 0.8rem;
-    margin-bottom: 0.8rem;
-  }
-  .layout {
-    display: grid;
-    grid-template-columns: 1.2fr 1fr;
-    gap: 0.8rem;
-  }
-  .logs {
-    background: #0c0f15;
-    border: 1px solid #232838;
-    border-radius: 8px;
-    padding: 0.5rem;
-    font-family: ui-monospace, monospace;
-    font-size: 0.82rem;
-    max-height: 62vh;
-    overflow: auto;
-  }
-  .log {
-    width: 100%;
-    padding: 0.4rem 0.5rem;
-    border-bottom: 1px dashed #1b2030;
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    background: transparent;
-    border-left: none;
-    border-right: none;
-    border-top: none;
-    color: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .log:hover { background: #131827; }
-  .log:last-child { border-bottom: none; }
-  .t { color: #6c7389; }
-  .lvl {
-    color: #8ea6ff;
-    text-transform: uppercase;
-    font-weight: 600;
-    font-size: 0.75rem;
-    padding-top: 0.1rem;
-  }
-  .log.error .lvl { color: #f16a6a; }
-  .log.warn .lvl { color: #f5c469; }
-  .msg { color: #dfe3ee; }
-  .mod, .phase, .tool { color: #a8b0c2; font-size: 0.75rem; background: #1a2030; border-radius: 4px; padding: 0.05rem 0.3rem; }
-  .detail {
-    background: #0c0f15;
-    border: 1px solid #232838;
-    border-radius: 8px;
-    padding: 0.7rem;
-    min-height: 14rem;
-  }
-  .meta { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; color: #dfe3ee; }
-  .sections { display: flex; flex-direction: column; gap: 0.6rem; }
-  .section { border: 1px solid #252d41; border-radius: 8px; overflow: hidden; }
-  .sectionHead {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.5rem;
-    background: #151b2b;
-    border-bottom: 1px solid #252d41;
-    padding: 0.35rem 0.45rem;
-  }
-  .toggleBtn, .copyBtn {
-    background: #1d2740;
-    border: 1px solid #31456f;
-    color: #dfe3ee;
-    border-radius: 6px;
-    padding: 0.2rem 0.45rem;
-    font-size: 0.76rem;
-    cursor: pointer;
-  }
-  .copyBtn { background: #1a3040; border-color: #355a74; }
-  .collapsedHint {
-    padding: 0.55rem 0.65rem;
-    color: #8d97b0;
-    font-size: 0.78rem;
-  }
-  pre {
-    margin: 0;
-    background: #111522;
-    border: 1px solid #252d41;
-    border-radius: 8px;
-    padding: 0.6rem;
-    max-height: 42vh;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .codeBlock {
-    white-space: pre;
-    font-size: 0.78rem;
-    line-height: 1.4;
-    max-height: 36vh;
-  }
-  .flows {
-    background: #0c0f15;
-    border: 1px solid #232838;
-    border-radius: 8px;
-    padding: 0.7rem;
-    max-height: 34vh;
-    overflow: auto;
-  }
-  .flow { border: 1px solid #21293c; border-radius: 8px; margin-bottom: 0.7rem; }
-  .flow:last-child { margin-bottom: 0; }
-  .flowHead {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    padding: 0.45rem 0.55rem;
-    border-bottom: 1px solid #21293c;
-    color: #cdd5e8;
-    font-size: 0.78rem;
-    background: #121828;
-  }
-  .flowStep {
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    padding: 0.35rem 0.55rem;
-    border-bottom: 1px dashed #1f2637;
-    font-size: 0.78rem;
-    background: transparent;
-    border-left: none;
-    border-right: none;
-    border-top: none;
-    color: #cfd7ea;
-    text-align: left;
-    cursor: pointer;
-  }
-  .flowStep:hover { background: #131a2b; }
-  .flowStep.error { background: #2a1418; }
-  .flowStep.warn { background: #2a2112; }
-  .flowStep:last-child { border-bottom: none; }
-  .empty { padding: 1rem; color: #6c7389; }
-  .err {
-    background: #40161a;
-    border: 1px solid #8a2b32;
-    color: #f6c6cb;
-    padding: 0.6rem 0.9rem;
-    border-radius: 6px;
-    margin-bottom: 1rem;
-  }
-  @media (max-width: 1050px) {
-    .layout { grid-template-columns: 1fr; }
-  }
-</style>

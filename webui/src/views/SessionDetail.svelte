@@ -3,6 +3,7 @@
   import { api } from '../lib/api.js';
   import { goto } from '../lib/route.js';
   import { renderMarkdown } from '../lib/markdown.js';
+  import { _, locale, t, translate } from '../lib/i18n.js';
 
   export let sessionId;
 
@@ -24,13 +25,13 @@
   const looseMarkerTagRe = /<\/?\|?(?:channel|message|think|thought|reasoning)\|?>/gi;
 
   const emptySession = { id: sessionId, messages: [], expired: false };
-  let t = 0;
+  let wallClock = 0;
   let tickTimer;
 
   function fmtTs(ts) {
-    if (!ts) return '—';
+    if (!ts) return translate($locale, 'common.emDash');
     const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return '—';
+    if (Number.isNaN(d.getTime())) return translate($locale, 'common.emDash');
     return d.toLocaleString();
   }
 
@@ -84,6 +85,27 @@
     return '';
   }
 
+  /** @param {string | undefined} lvl */
+  function traceLevelBadgeClass(lvl) {
+    const l = String(lvl || 'info').toLowerCase();
+    if (l === 'error') return 'badge badge-error badge-xs uppercase shrink-0';
+    if (l === 'warn') return 'badge badge-warning badge-xs uppercase shrink-0';
+    return 'badge badge-ghost badge-xs uppercase shrink-0';
+  }
+
+  /** @param {string} role */
+  function chatAlignClass(role) {
+    if (role === 'user') return 'chat-end';
+    return 'chat-start';
+  }
+
+  /** @param {string} role */
+  function chatBubbleClass(role) {
+    if (role === 'user') return 'chat-bubble chat-bubble-primary text-primary-content';
+    if (role === 'system') return 'chat-bubble chat-bubble-ghost text-base-content/80 italic';
+    return 'chat-bubble border border-white/10 bg-neutral text-neutral-content shadow-sm';
+  }
+
   $: messages = session?.messages || [];
   $: assistantMessages = messages.filter((m) => m.role === 'assistant');
   $: messagesWithRealTokens = messages.filter((m) => Number.isFinite(m.total_tokens) && m.total_tokens > 0);
@@ -131,12 +153,14 @@
       logs = logsResp.logs || [];
       loggerEvents = loggerResp.events || [];
       error = '';
-    } catch (e) { error = String(e); }
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   async function removeCurrentSession() {
     if (!sessionId) return;
-    if (!window.confirm(`Delete session "${sessionId}"? This cannot be undone.`)) return;
+    if (!window.confirm(t('sessions.confirmDelete', { id: sessionId }))) return;
     deletingCurrent = true;
     try {
       const r = await api.deleteSession(sessionId);
@@ -168,7 +192,7 @@
   }
 
   function formatCountdown(sec) {
-    if (sec == null || sec < 0) return '—';
+    if (sec == null || sec < 0) return translate($locale, 'common.emDash');
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     const s = sec % 60;
@@ -180,7 +204,7 @@
   $: expiresAt = session?.expires_at;
   $: expired = session?.expired;
   $: secLeft = (() => {
-    t;
+    wallClock;
     if (expired) return 0;
     if (!expiresAt) return null;
     const ms = new Date(expiresAt).getTime() - Date.now();
@@ -192,7 +216,7 @@
     refresh();
     timer = setInterval(refresh, 2000);
     tickTimer = setInterval(() => {
-      t += 1;
+      wallClock += 1;
     }, 1000);
     syncAutoScrollState();
     window.addEventListener('scroll', syncAutoScrollState, { passive: true });
@@ -205,278 +229,249 @@
   });
 </script>
 
-<div class="sticky-header">
-  <div class="top">
-    <button on:click={() => goto('sessions')}>← Back</button>
-    <button class="danger" disabled={deletingCurrent} on:click={removeCurrentSession}>
-      {deletingCurrent ? 'Deleting...' : 'Delete Session'}
+<div
+  class="sticky top-0 z-10 -mx-4 mb-4 border-b border-base-300 bg-base-100/95 px-4 pb-4 pt-0 backdrop-blur-sm supports-[backdrop-filter]:bg-base-100/90 sm:-mx-6 sm:px-6"
+>
+  <div class="flex flex-wrap items-center gap-2 pt-1">
+    <button type="button" class="btn btn-outline btn-sm" on:click={() => goto('sessions')}>
+      {$_('sessionDetail.back')}
     </button>
-    <h1>Session <span class="mono">{sessionId}</span></h1>
+    <button
+      type="button"
+      class="btn btn-outline btn-error btn-sm"
+      disabled={deletingCurrent}
+      on:click={removeCurrentSession}
+    >
+      {deletingCurrent ? $_('sessionDetail.deleting') : $_('sessionDetail.deleteSession')}
+    </button>
+    <h1 class="min-w-0 flex-1 text-xl font-semibold tracking-tight sm:text-2xl">
+      {$_('sessionDetail.titlePrefix')}
+      <span class="font-mono text-base text-primary">{sessionId}</span>
+    </h1>
   </div>
 
-  {#if error}<div class="err">{error}</div>{/if}
+  {#if error}
+    <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+  {/if}
 
-  <div class="meta-grid">
-    <div class="meta-item">
-      <div class="k">Created</div>
-      <div class="v">{fmtTs(session?.created_at)}</div>
+  <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.created')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{fmtTs(session?.created_at)}</div>
     </div>
-    <div class="meta-item">
-      <div class="k">Updated</div>
-      <div class="v">{fmtTs(session?.updated_at)}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.updated')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{fmtTs(session?.updated_at)}</div>
     </div>
-    <div class="meta-item">
-      <div class="k">Messages</div>
-      <div class="v">{messages.length}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.messages')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{messages.length}</div>
     </div>
-    <div class="meta-item">
-      <div class="k">Session status</div>
-      <div class="v" class:warn={expired}>{expired ? 'Expired' : 'Active'}</div>
-    </div>
-    <div class="meta-item">
-      <div class="k">Idle expiry countdown</div>
-      <div class="v" class:warn={secLeft === 0 && !expired}>
-        {expired ? '—' : formatCountdown(secLeft)}
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.sessionStatus')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium" class:text-warning={expired}>
+        {expired ? $_('sessions.expired') : $_('sessionDetail.active')}
       </div>
     </div>
-    <div class="meta-item">
-      <div class="k">Total Tokens (Real)</div>
-      <div class="v">{hasRealTokenData ? totalRealTokens : 'N/A'}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.idleCountdown')}
+      </div>
+      <div
+        class="mt-0.5 text-sm font-medium"
+        class:text-warning={secLeft === 0 && !expired}
+      >
+        {expired ? $_('common.emDash') : formatCountdown(secLeft)}
+      </div>
     </div>
-    <div class="meta-item">
-      <div class="k">Avg AI Latency</div>
-      <div class="v">{avgAssistantLatency !== null ? `${avgAssistantLatency} ms` : 'N/A'}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.totalTokensReal')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">
+        {hasRealTokenData ? totalRealTokens : $_('common.na')}
+      </div>
     </div>
-    <div class="meta-item">
-      <div class="k">Trace Events</div>
-      <div class="v">{chatCompletedLogs.length}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.avgLatency')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">
+        {avgAssistantLatency !== null ? `${avgAssistantLatency} ms` : $_('common.na')}
+      </div>
     </div>
-    <div class="meta-item">
-      <div class="k">Runtime Events</div>
-      <div class="v">{sessionTraceEvents.length}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.traceEvents')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{chatCompletedLogs.length}</div>
     </div>
-    <div class="meta-item">
-      <div class="k">Tool Events</div>
-      <div class="v">{toolEventCount}</div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.runtimeEvents')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{sessionTraceEvents.length}</div>
+    </div>
+    <div class="rounded-lg border border-base-300 bg-base-200 p-3">
+      <div class="text-[0.65rem] font-medium uppercase tracking-wide text-base-content/60">
+        {$_('sessionDetail.toolEvents')}
+      </div>
+      <div class="mt-0.5 text-sm font-medium text-base-content">{toolEventCount}</div>
     </div>
   </div>
 </div>
 
-<div class="trace-panel">
-  <h2>Runtime Timeline</h2>
-  {#if sessionTraceEvents.length > 0}
-    <div class="trace-list">
-      {#each sessionTraceEvents.slice(0, 120) as evt}
-        <details class="trace-item">
-          <summary>
-            <span class="t">{fmtTs(evt.time)}</span>
-            <span class="lvl {evt.level || 'info'}">{evt.level || 'info'}</span>
-            {#if getPlanMarker(evt) === 'plan'}
-              <span class="plan-mark plan">plan</span>
-            {:else if getPlanMarker(evt) === 'plan_confirmed'}
-              <span class="plan-mark confirmed">plan_confirmed</span>
-            {/if}
-            <span class="msg">{evt.message || '-'}</span>
-            <span class="meta">{evt.fields?.module || '-'} / {evt.fields?.phase || '-'}</span>
-            {#if evt.fields?.step}<span class="meta">step {evt.fields.step}</span>{/if}
-            {#if evt.fields?.tool_name}<span class="meta">{evt.fields.tool_name}</span>{/if}
-          </summary>
-          <div class="trace-body">
-            {#if evt.fields?.plan_status}<div><b>plan_status:</b> {evt.fields.plan_status}</div>{/if}
-            {#if evt.fields?.duration_ms}<div><b>duration_ms:</b> {evt.fields.duration_ms}</div>{/if}
-            {#if evt.fields?.trace_id}<div><b>trace_id:</b> {evt.fields.trace_id}</div>{/if}
-            {#if evt.fields?.error_message}<div class="trace-err"><b>error:</b> {evt.fields.error_message}</div>{/if}
-            {#if evt.fields?.args}<pre>{shortText(evt.fields.args, 1200)}</pre>{/if}
-            {#if evt.fields?.result}<pre>{shortText(evt.fields.result, 1200)}</pre>{/if}
-          </div>
-        </details>
-      {/each}
-    </div>
-  {:else}
-    <div class="trace-empty">No runtime events for this session yet.</div>
-  {/if}
+<div class="card card-border bg-base-200 shadow-sm mb-4">
+  <div class="card-body gap-3 p-4">
+    <h2 class="card-title text-base">{$_('sessionDetail.runtimeTimeline')}</h2>
+    {#if sessionTraceEvents.length > 0}
+      <div class="flex max-h-[34vh] flex-col gap-2 overflow-y-auto pr-1">
+        {#each sessionTraceEvents.slice(0, 120) as evt}
+          <details class="trace-item rounded-lg border border-base-300 bg-base-100 open:ring-1 open:ring-base-300">
+            <summary
+              class="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 text-xs marker:hidden [&::-webkit-details-marker]:hidden"
+            >
+              <span class="shrink-0 text-base-content/50">{fmtTs(evt.time)}</span>
+              <span class={traceLevelBadgeClass(evt.level)}>{evt.level || 'info'}</span>
+              {#if getPlanMarker(evt) === 'plan'}
+                <span class="badge badge-info badge-xs shrink-0 whitespace-nowrap uppercase"
+                  >{$_('sessionDetail.planMarkPlan')}</span
+                >
+              {:else if getPlanMarker(evt) === 'plan_confirmed'}
+                <span class="badge badge-success badge-xs shrink-0 whitespace-nowrap uppercase"
+                  >{$_('sessionDetail.planMarkConfirmed')}</span
+                >
+              {/if}
+              <span class="min-w-0 flex-1 text-balance text-base-content">{evt.message || '-'}</span>
+              <span class="badge badge-ghost badge-xs shrink-0 font-normal"
+                >{evt.fields?.module || '-'} / {evt.fields?.phase || '-'}</span
+              >
+              {#if evt.fields?.step}
+                <span class="badge badge-ghost badge-xs shrink-0 font-normal"
+                  >{$_('common.step')} {evt.fields.step}</span
+                >
+              {/if}
+              {#if evt.fields?.tool_name}
+                <span class="badge badge-ghost badge-xs max-w-[10rem] shrink-0 truncate font-normal"
+                  >{evt.fields.tool_name}</span
+                >
+              {/if}
+            </summary>
+            <div class="flex flex-col gap-2 border-t border-base-300 px-3 py-2 text-xs text-base-content/90">
+              {#if evt.fields?.plan_status}
+                <div><span class="font-semibold">{$_('sessionDetail.tracePlanStatus')}</span> {evt.fields.plan_status}</div>
+              {/if}
+              {#if evt.fields?.duration_ms}
+                <div><span class="font-semibold">{$_('sessionDetail.traceDuration')}</span> {evt.fields.duration_ms}</div>
+              {/if}
+              {#if evt.fields?.trace_id}
+                <div class="break-all font-mono">
+                  <span class="font-semibold">{$_('sessionDetail.traceId')}</span> {evt.fields.trace_id}
+                </div>
+              {/if}
+              {#if evt.fields?.error_message}
+                <div class="text-error">
+                  <span class="font-semibold">{$_('sessionDetail.traceError')}</span> {evt.fields.error_message}
+                </div>
+              {/if}
+              {#if evt.fields?.args}
+                <pre
+                  class="m-0 rounded-md border border-base-300 bg-base-200 p-2 font-mono text-[0.7rem] whitespace-pre-wrap break-words">{shortText(
+                    evt.fields.args,
+                    1200,
+                  )}</pre>
+              {/if}
+              {#if evt.fields?.result}
+                <pre
+                  class="m-0 rounded-md border border-base-300 bg-base-200 p-2 font-mono text-[0.7rem] whitespace-pre-wrap break-words">{shortText(
+                    evt.fields.result,
+                    1200,
+                  )}</pre>
+              {/if}
+            </div>
+          </details>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-sm text-base-content/60">{$_('sessionDetail.traceEmpty')}</p>
+    {/if}
+  </div>
 </div>
 
-<div class="thread">
+<div class="flex flex-col gap-3 pb-8">
   {#if session}
     {#each session.messages || [] as m}
       {@const parts = m.role === 'assistant' ? splitMessageContent(m.content || '') : null}
-      <div class="msg {m.role}">
-        <div class="msg-head">
-          <div class="role">{m.role}</div>
-          <div class="sub">
-            <span>{fmtTs(m.timestamp)}</span>
-            <span>tokens: {Number.isFinite(m.total_tokens) && m.total_tokens > 0 ? m.total_tokens : 'N/A'}</span>
-            {#if m.role === 'assistant'}
-              <span>latency: {Number.isFinite(m.reply_latency_ms) && m.reply_latency_ms > 0 ? `${m.reply_latency_ms} ms` : 'N/A'}</span>
-            {/if}
-          </div>
+      <div class="chat w-full {chatAlignClass(m.role)}">
+        <div class="chat-header flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-1 text-[0.7rem] text-base-content/60">
+          <span class="font-semibold uppercase tracking-wide text-primary">{m.role}</span>
+          <span>{fmtTs(m.timestamp)}</span>
+          <span>
+            {$_('sessionDetail.tokensLabel')}: {Number.isFinite(m.total_tokens) && m.total_tokens > 0
+              ? m.total_tokens
+              : $_('common.na')}
+          </span>
+          {#if m.role === 'assistant'}
+            <span>
+              {$_('sessionDetail.latencyLabel')}: {Number.isFinite(m.reply_latency_ms) && m.reply_latency_ms > 0
+                ? `${m.reply_latency_ms} ms`
+                : $_('common.na')}
+            </span>
+          {/if}
         </div>
         {#if m.role === 'assistant' && parts?.thought}
-          <details class="thought">
-            <summary>Thought (click to expand)</summary>
-            <div class="content markdown thought-body" dir="auto">{@html renderMarkdown(parts.thought)}</div>
+          <details class="mb-1 max-w-[min(100%,42rem)] rounded-lg border border-dashed border-base-300 bg-base-200/60 p-2 open:bg-base-200">
+            <summary class="cursor-pointer text-xs text-base-content/70 marker:hidden [&::-webkit-details-marker]:hidden">
+              {$_('sessionDetail.thoughtSummary')}
+            </summary>
+            <div class="markdown thought-body mt-2 text-sm leading-relaxed" dir="auto">
+              {@html renderMarkdown(parts.thought)}
+            </div>
           </details>
         {/if}
-        <div class="content markdown" dir="auto">
+        <div class="{chatBubbleClass(m.role)} markdown max-w-[min(100%,42rem)] whitespace-pre-wrap text-sm leading-relaxed" dir="auto">
           {@html renderMarkdown(m.role === 'assistant' ? parts?.visible || '' : m.content || '')}
         </div>
       </div>
     {:else}
-      <div class="empty">No messages in this session.</div>
+      <p class="py-8 text-center text-base-content/60">{$_('sessionDetail.noMessages')}</p>
     {/each}
     <div bind:this={latestAnchorEl}></div>
   {/if}
 </div>
 
 <style>
-  .sticky-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: #0f1115;
-    padding-bottom: 0.8rem;
-    margin-bottom: 0.8rem;
-    border-bottom: 1px solid #232838;
-  }
-  .top { display: flex; align-items: center; gap: 0.75rem; }
-  h1 { margin: 0; }
-  h1 .mono { font-family: ui-monospace, monospace; font-size: 1rem; color: #8ea6ff; }
-  button { background: #1c2130; color: #dfe3ee; border: 1px solid #2d3448; border-radius: 6px; padding: 0.35rem 0.7rem; cursor: pointer; }
-  .danger {
-    background: #33141a;
-    border: 1px solid #7f2936;
-    color: #ffd8dd;
-  }
-  .danger:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-  }
-  .meta-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.6rem; }
-  .meta-item { background: #151923; border: 1px solid #232838; border-radius: 8px; padding: 0.6rem 0.7rem; }
-  .meta-item .k { font-size: 0.74rem; color: #8f98ae; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.2rem; }
-  .meta-item .v { font-size: 0.92rem; color: #dfe3ee; }
-  .meta-item .v.warn { color: #e8a854; }
-  .thread { display: flex; flex-direction: column; gap: 0.75rem; }
-  .trace-panel {
-    margin: 0.4rem 0 1rem;
-    background: #111522;
-    border: 1px solid #232838;
-    border-radius: 8px;
-    padding: 0.75rem;
-  }
-  .trace-panel h2 {
-    margin: 0 0 0.5rem;
-    font-size: 0.92rem;
-    color: #cfd7ea;
-  }
-  .trace-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-    max-height: 34vh;
+  .markdown :global(pre) {
+    margin: 0.5rem 0;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-base-300);
+    background: var(--color-base-300);
+    padding: 0.6rem;
     overflow: auto;
   }
-  .trace-item {
-    border: 1px solid #263049;
-    border-radius: 6px;
-    background: #0d111a;
-    padding: 0.25rem 0.45rem;
+  .markdown :global(code) {
+    border-radius: 0.25rem;
+    border: 1px solid var(--color-base-300);
+    background: var(--color-base-300);
+    padding: 0.08rem 0.3rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85em;
   }
-  .trace-item summary {
-    cursor: pointer;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.45rem;
-    color: #d8e0f1;
-    font-size: 0.78rem;
+  .markdown :global(pre code) {
+    border: 0;
+    padding: 0;
+    background: transparent;
   }
-  .trace-item .t { color: #8f98ae; }
-  .trace-item .msg { color: #dfe3ee; }
-  .trace-item .meta {
-    color: #aeb8cd;
-    background: #1a2133;
-    border-radius: 4px;
-    padding: 0.05rem 0.3rem;
-  }
-  .trace-item .lvl {
-    text-transform: uppercase;
-    font-size: 0.7rem;
-    letter-spacing: 0.03em;
-    color: #8ea6ff;
-  }
-  .trace-item .lvl.error { color: #f16a6a; }
-  .trace-item .lvl.warn { color: #f5c469; }
-  .plan-mark {
-    border-radius: 999px;
-    padding: 0.08rem 0.45rem;
-    font-size: 0.68rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    font-weight: 600;
-  }
-  .plan-mark.plan {
-    background: rgba(114, 173, 255, 0.2);
-    color: #91bdff;
-  }
-  .plan-mark.confirmed {
-    background: rgba(90, 211, 155, 0.18);
-    color: #74dca8;
-  }
-  .trace-body {
-    margin-top: 0.4rem;
-    font-size: 0.8rem;
-    color: #cbd3e5;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .trace-body pre {
-    margin: 0;
-    background: #0a0f17;
-    border: 1px solid #232838;
-    border-radius: 6px;
-    padding: 0.45rem 0.55rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .trace-err { color: #ffb8bd; }
-  .trace-empty { color: #8f98ae; font-size: 0.82rem; }
-  .msg { padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #232838; max-width: 80%; }
-  .msg.user { background: #172232; align-self: flex-end; }
-  .msg.assistant { background: #151923; align-self: flex-start; }
-  .msg.system { background: #1b1d2a; align-self: center; font-style: italic; color: #9aa3bb; }
-  .msg-head { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.35rem; flex-wrap: wrap; }
-  .role { font-size: 0.72rem; color: #8ea6ff; text-transform: uppercase; letter-spacing: 0.05em; }
-  .sub { font-size: 0.76rem; color: #95a0b8; display: inline-flex; gap: 0.55rem; flex-wrap: wrap; }
-  .content { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.45; }
-  .thought {
-    margin: 0.2rem 0 0.6rem;
-    border: 1px dashed #2c3548;
-    border-radius: 6px;
-    background: #121621;
-    padding: 0.35rem 0.55rem;
-  }
-  .thought summary {
-    cursor: pointer;
-    color: #9cb0de;
-    font-size: 0.82rem;
-    user-select: none;
-  }
-  .thought-body {
-    margin-top: 0.45rem;
-    color: #c2cbdf;
-    font-size: 0.9rem;
-  }
-  .markdown :global(pre) { margin: 0.5rem 0; background: #0c0f15; border: 1px solid #232838; border-radius: 6px; padding: 0.6rem; overflow: auto; }
-  .markdown :global(code) { background: #0c0f15; border: 1px solid #232838; border-radius: 4px; padding: 0.08rem 0.3rem; font-family: ui-monospace, monospace; font-size: 0.85em; }
-  .markdown :global(pre code) { border: 0; padding: 0; background: transparent; }
-  .markdown :global(a) { color: #8ab0ff; text-decoration: underline; }
-  .empty { color: #6c7389; padding: 1rem; text-align: center; }
-  .err { background: #40161a; border: 1px solid #8a2b32; color: #f6c6cb; padding: 0.6rem 0.9rem; border-radius: 6px; }
-  @media (max-width: 1000px) {
-    .meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .msg { max-width: 100%; }
+  .markdown :global(a) {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
 </style>

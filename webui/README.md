@@ -20,6 +20,9 @@ component_registration:
 last_verified_from:
   - docker-compose.yml
   - webui/src/lib/api.js
+  - webui/src/lib/i18n.js
+  - webui/src/styles/global.css
+  - webui/vite.config.js
   - webui/Dockerfile
 ```
 
@@ -28,6 +31,18 @@ last_verified_from:
 - Calls orchestrator REST API from the browser.
 - Is not a backend component in the orchestrator registry.
 - Renders session content as standard Markdown (no IM-specific formatting conversion).
+
+## Frontend stack
+- **Svelte 4** + **Vite 5**.
+- **Tailwind CSS v4** via `@tailwindcss/vite` and **DaisyUI v5**; theme tokens and plugin config live in [`src/styles/global.css`](src/styles/global.css) (custom theme name `whalesbot`, `data-theme="whalesbot"` on `<html>`).
+- Build: `npm run build` produces static assets consumed by the container Caddy image.
+
+## Internationalization (i18n)
+- Copy defaults to **English**; **Chinese (zh)** and **Japanese (ja)** are provided as overlays merged onto English keys in [`src/lib/i18n/messages.js`](src/lib/i18n/messages.js).
+- Runtime: [`src/lib/i18n.js`](src/lib/i18n.js) exposes `locale` store, `setLocale`, `translate`, reactive `$_` for templates, and `t()` for non-reactive script use.
+- **Auto-detect**: on first visit (no saved preference), `navigator.language` maps `zh*` → `zh`, `ja*` → `ja`, else `en`.
+- **Manual**: navbar language `<select>`; choice persists under `localStorage` key **`whalesbot_lang`** (`en` | `zh` | `ja`).
+- `document.documentElement.lang` is updated (`en`, `zh-Hans`, `ja`) when the locale changes.
 
 ## External API
 ### Endpoint: GET /
