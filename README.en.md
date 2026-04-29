@@ -40,8 +40,8 @@ cp .env.example .env
 
 2. Fill `.env` values as needed
 
-- `MODEL_API_KEY`: if empty, `llm-openai` runs in echo mode.
 - `TELEGRAM_BOT_TOKEN`: if empty, `adapter-telegram` starts and registers, but skips long polling.
+- LLM upstream URL, keys, and model ids are not set in root `.env`; configure on the `llm-openai` service (defaults use echo mode without a key).
 
 3. Start all services
 

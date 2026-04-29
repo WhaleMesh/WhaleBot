@@ -53,16 +53,15 @@ services:
     container_name: llm-openai
     environment:
       LLM_OPENAI_PORT: ${LLM_OPENAI_PORT:-8081}
-      MODEL_PROVIDER: ${MODEL_PROVIDER:-openai_compatible}
-      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.openai.com}
-      MODEL_API_KEY: ${MODEL_API_KEY:-}
-      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      LLM_CONFIG_PATH: /data/llm-config.json
       ORCHESTRATOR_URL: http://orchestrator:8080
       SERVICE_HOST: llm-openai
-    # Lets MODEL_BASE_URL=http://localhost:... reach the host on Linux.
+    # Lets configured base URLs like http://localhost:... reach the host on Linux.
     # No-op on Docker Desktop (macOS/Windows) where the name is built-in.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - llm_openai_data:/data
     networks: [mvp_net]
     depends_on:
       orchestrator: { condition: service_started }
@@ -273,3 +272,4 @@ volumes:
   logger_data:
   stats_data:
   workspace_data:
+  llm_openai_data:

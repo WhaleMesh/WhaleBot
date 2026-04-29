@@ -2,6 +2,7 @@ package registry
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -106,6 +107,19 @@ func (r *Registry) FirstHealthyByType(t string) *Component {
 		}
 	}
 	return nil
+}
+
+// GetLLMByName returns a registered llm component by name (any status except removed).
+// Used for WebUI admin proxies so configuration can recover when health is degraded.
+func (r *Registry) GetLLMByName(name string) *Component {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.components[name]
+	if !ok || strings.ToLower(c.Type) != "llm" || c.Status == StatusRemoved {
+		return nil
+	}
+	cp := *c
+	return &cp
 }
 
 // FirstHealthyByCapability returns the first healthy component containing the

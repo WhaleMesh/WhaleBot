@@ -9,7 +9,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Network: fixed Docker network `mvp_net`.
 - Entry runbook:
   - `cp .env.example .env`
-  - optional: fill `TELEGRAM_BOT_TOKEN` / `MODEL_API_KEY`
+  - optional: fill `TELEGRAM_BOT_TOKEN`
   - `docker compose up --build`
 - Host URLs:
   - WebUI: `http://localhost:3000`
@@ -56,6 +56,8 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: OpenAI-compatible chat completions client
   - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
+  - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
+  - note: without an **active** model profile, `GET /health` returns **503** (so chat min-stack treats the component as not ready) and `POST /invoke` returns `success=false` with an explanatory `error`.
 - `runtime`
   - purpose: ReAct loop execution engine
   - entry: `runtime/cmd/server/main.go`
@@ -126,6 +128,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
+  - note: top nav `LLM` opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
@@ -141,9 +144,6 @@ Read this first, then read only the referenced source-of-truth files.
 
 - Telegram:
   - `TELEGRAM_BOT_TOKEN` (empty -> service registers, poll loop disabled)
-- Model:
-  - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
-  - localhost model endpoints are rewritten by `llm-openai` to `host.docker.internal`
 - Ports:
   - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
