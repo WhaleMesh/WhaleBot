@@ -5,6 +5,7 @@
   import Sessions from './views/Sessions.svelte';
   import SessionDetail from './views/SessionDetail.svelte';
   import Tools from './views/Tools.svelte';
+  import Skills from './views/Skills.svelte';
   import ToolDockerCreate from './views/ToolDockerCreate.svelte';
   import Logger from './views/Logger.svelte';
   import Llm from './views/Llm.svelte';
@@ -15,6 +16,7 @@
     { id: 'sessions', label: 'Sessions' },
     { id: 'logger', label: 'Logger' },
     { id: 'tools', label: 'Tools' },
+    { id: 'skills', label: 'Skills' },
     { id: 'llm', label: 'LLM' },
   ];
 </script>
@@ -44,6 +46,8 @@
       <SessionDetail sessionId={$route.params.id} />
     {:else if $route.name === 'tools'}
       <Tools />
+    {:else if $route.name === 'skills'}
+      <Skills />
     {:else if $route.name === 'llm'}
       <Llm llmName={$route.params.id || ''} />
     {:else if $route.name === 'tool' && $route.params.id === 'docker-create'}

@@ -25,6 +25,7 @@ flowchart LR
   orchestrator --> llmOpenai["llm-openai"]
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
+  orchestrator --> skills["skills"]
   orchestrator --> workspace["workspace"]
   orchestrator --> stats["stats (optional)"]
 ```
@@ -60,6 +61,7 @@ docker compose up --build
 - `orchestrator/`：编排与网关
 - `runtime/`：ReAct 执行循环
 - `session/`：会话持久化
+- `skills/`：技能库（SQLite + FTS5），经 orchestrator 提供 `/api/v1/skills*`
 - `llm-openai/`：模型调用适配
 - `adapter-telegram/`：Telegram 用户 I/O 适配器
 - `user-docker-manager/`：`user docker` 系统管理工具（枚举/新建/移除/重启/接口发现）

@@ -26,6 +26,7 @@ flowchart LR
   orchestrator --> llmOpenai["llm-openai"]
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
+  orchestrator --> skills["skills"]
   orchestrator --> workspace["workspace"]
   orchestrator --> stats["stats (optional)"]
 ```
@@ -61,6 +62,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `orchestrator/`: orchestration and API gateway
 - `runtime/`: ReAct execution loop
 - `session/`: conversation persistence
+- `skills/`: skill library (SQLite + FTS5) behind orchestrator `/api/v1/skills*`
 - `llm-openai/`: model adapter/client
 - `adapter-telegram/`: Telegram user I/O adapter
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)

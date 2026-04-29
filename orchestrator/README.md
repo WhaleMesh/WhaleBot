@@ -175,6 +175,19 @@ error_behavior:
 
 Implementation: resolves `FirstHealthyByType("stats")` and reverse-proxies the response body and status code.
 
+### Skills API (reverse proxy)
+
+When a healthy `type=skills` component is registered, the orchestrator reverse-proxies JSON to `{skills_endpoint}` (same pattern as session/logger):
+
+- `GET /api/v1/skills` → `GET {endpoint}/skills`
+- `GET /api/v1/skills/search?q=...&limit=...` → `GET {endpoint}/skills/search?...`
+- `POST /api/v1/skills` → `POST {endpoint}/skills`
+- `GET /api/v1/skills/{id}` → `GET {endpoint}/skills/{id}`
+- `PUT /api/v1/skills/{id}` → `PUT {endpoint}/skills/{id}`
+- `DELETE /api/v1/skills/{id}` → `DELETE {endpoint}/skills/{id}`
+
+If no healthy skills component: **503** with `success: false` and an English `error` message.
+
 ### Endpoint: GET /api/v1/tools/user-dockers
 ```yaml
 method: GET

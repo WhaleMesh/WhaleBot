@@ -84,12 +84,15 @@ services:
       SESSION_URL: http://session:8090
       LLM_OPENAI_URL: http://llm-openai:8081
       SERVICE_HOST: runtime
+      RUNTIME_SKILLS_INJECT: ${RUNTIME_SKILLS_INJECT:-1}
+      RUNTIME_SKILLS_TOP_K: ${RUNTIME_SKILLS_TOP_K:-5}
     networks: [mvp_net]
     depends_on:
       orchestrator: { condition: service_started }
       session: { condition: service_started }
       llm-openai: { condition: service_started }
       user-docker-manager: { condition: service_started }
+      skills: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${RUNTIME_PORT:-8085}/health || exit 1"]
       interval: 10s
@@ -142,6 +145,28 @@ services:
       userdocker-base: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${USER_DOCKER_MANAGER_PORT:-8082}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  skills:
+    build: ./skills
+    image: whalesbot/skills:latest
+    container_name: skills
+    environment:
+      SKILLS_PORT: ${SKILLS_PORT:-8093}
+      SKILLS_DB_PATH: /data/skills.db
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: skills
+    volumes:
+      - skills_data:/data
+    networks: [mvp_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${SKILLS_PORT:-8093}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -269,6 +294,7 @@ services:
 
 volumes:
   session_data:
+  skills_data:
   logger_data:
   stats_data:
   workspace_data:
