@@ -47,18 +47,18 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  chatmodel:
-    build: ./chatmodel
-    image: whalesbot/chatmodel:latest
-    container_name: chatmodel
+  llm-openai:
+    build: ./llm-openai
+    image: whalesbot/llm-openai:latest
+    container_name: llm-openai
     environment:
-      CHATMODEL_PORT: ${CHATMODEL_PORT:-8081}
+      LLM_OPENAI_PORT: ${LLM_OPENAI_PORT:-8081}
       MODEL_PROVIDER: ${MODEL_PROVIDER:-openai_compatible}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-https://api.openai.com}
       MODEL_API_KEY: ${MODEL_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
       ORCHESTRATOR_URL: http://orchestrator:8080
-      SERVICE_HOST: chatmodel
+      SERVICE_HOST: llm-openai
     # Lets MODEL_BASE_URL=http://localhost:... reach the host on Linux.
     # No-op on Docker Desktop (macOS/Windows) where the name is built-in.
     extra_hosts:
@@ -67,7 +67,7 @@ services:
     depends_on:
       orchestrator: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${CHATMODEL_PORT:-8081}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${LLM_OPENAI_PORT:-8081}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -83,13 +83,13 @@ services:
       REACT_MAX_STEPS: ${REACT_MAX_STEPS:-16}
       ORCHESTRATOR_URL: http://orchestrator:8080
       SESSION_URL: http://session:8090
-      CHATMODEL_URL: http://chatmodel:8081
+      LLM_OPENAI_URL: http://llm-openai:8081
       SERVICE_HOST: runtime
     networks: [mvp_net]
     depends_on:
       orchestrator: { condition: service_started }
       session: { condition: service_started }
-      chatmodel: { condition: service_started }
+      llm-openai: { condition: service_started }
       user-docker-manager: { condition: service_started }
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${RUNTIME_PORT:-8085}/health || exit 1"]

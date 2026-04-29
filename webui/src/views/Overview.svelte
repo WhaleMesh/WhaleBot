@@ -77,7 +77,7 @@
       } else if (h && h.chat_ready === false) {
         chatBlockedMessage =
           String(h.chat_error || '').trim() ||
-          'Chat dependencies are not ready (runtime, session, and chat_model must all be healthy).';
+          'Chat dependencies are not ready (runtime, session, and llm must all be healthy).';
       } else {
         chatBlockedMessage = '';
       }

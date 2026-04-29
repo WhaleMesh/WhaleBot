@@ -29,7 +29,7 @@ last_verified_from:
 ## Purpose
 - Owns the component registry and health lifecycle.
 - Exposes the stable northbound API used by `webui` and `adapter-telegram`.
-- `POST /api/v1/chat` requires healthy `runtime`, `session`, and `chat_model` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+chatmodel path).
+- `POST /api/v1/chat` requires healthy `runtime`, `session`, and `llm` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+llm-openai path).
 
 ## External API
 ### Endpoint: GET /health
@@ -44,7 +44,7 @@ response:
   chat_error: string
 notes:
   - HTTP status is always 200 when the orchestrator process is up (including when chat_ready is false), so container healthchecks that hit /health still pass.
-  - chat_ready is true only when registry has healthy components for types runtime, session, and chat_model (same gate as POST /api/v1/chat).
+  - chat_ready is true only when registry has healthy components for types runtime, session, and llm (same gate as POST /api/v1/chat).
   - chat_error is empty when chat_ready is true; when false, an English explanation (same text as chat rejection error).
 error_behavior: standard_http_status
 ```
@@ -264,7 +264,7 @@ error_behavior:
 
 ## Internal Calls
 - `session`: `/get_context`, `/append_messages`, `/sessions`, `/sessions/{id}`.
-- `chatmodel`: `/invoke`.
+- `llm-openai`: `/invoke`.
 - `worker`: `/run` when a healthy worker exists.
 - Generic proxy to `tool` components by capability lookup.
 - User docker operations route by capability lookup (`userdocker_*`) to the manager component.
@@ -332,4 +332,4 @@ query_to_endpoint:
 ## Change Safety
 - Keep `/api/v1/chat` request/response schema backward compatible for `webui` and `adapter-telegram`.
 - Do not remove fallback chat path unless `worker` becomes mandatory.
-- Changes to component `type` strings break discovery (`session`, `chat_model`, `tool`, `environment`, `worker`).
+- Changes to component `type` strings break discovery (`session`, `llm`, `tool`, `environment`, `worker`).

@@ -1,28 +1,28 @@
-# chatmodel
+# llm-openai
 
 ## ServiceCard
 ```yaml
-service: chatmodel
+service: llm-openai
 role: openai_compatible_chat_completion_adapter
-compose_service: chatmodel
-image: whalesbot/chatmodel:latest
-build_context: ./chatmodel
+compose_service: llm-openai
+image: whalesbot/llm-openai:latest
+build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
 default_port: 8081
 health_endpoint: GET /health
 component_registration:
   enabled: true
-  name: chatmodel
-  type: chat_model
+  name: llm-openai
+  type: llm
   capabilities:
     - invoke
   meta:
     model: MODEL_NAME
 last_verified_from:
   - docker-compose.yml
-  - chatmodel/cmd/server/main.go
-  - chatmodel/internal/openai/openai.go
+  - llm-openai/cmd/server/main.go
+  - llm-openai/internal/openai/openai.go
 ```
 
 ## Purpose
@@ -38,7 +38,7 @@ path: /health
 request: none
 response:
   status: ok
-  service: chatmodel
+  service: llm-openai
 error_behavior: standard_http_status
 ```
 
@@ -73,9 +73,9 @@ error_behavior:
 - Registers itself to orchestrator every 60 seconds.
 
 ## Environment Variables
-### CHATMODEL_PORT
+### LLM_OPENAI_PORT
 ```yaml
-name: CHATMODEL_PORT
+name: LLM_OPENAI_PORT
 default: "8081"
 required: false
 effect: bind_port_for_http_server
@@ -124,7 +124,7 @@ effect: target_for_component_registration
 ### SERVICE_HOST
 ```yaml
 name: SERVICE_HOST
-default: chatmodel
+default: llm-openai
 required: false
 effect: advertised_endpoint_host_for_registration
 ```
@@ -132,7 +132,7 @@ effect: advertised_endpoint_host_for_registration
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: `orchestrator`.
-- healthcheck: `wget http://localhost:${CHATMODEL_PORT}/health`.
+- healthcheck: `wget http://localhost:${LLM_OPENAI_PORT}/health`.
 - volumes: none.
 - security_notes: handles model API key; avoid logging secrets.
 

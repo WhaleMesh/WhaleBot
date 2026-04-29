@@ -8,7 +8,7 @@ import (
 )
 
 // evalChatMinStack returns whether chat may be proxied to runtime (requires
-// healthy runtime, session, and chat_model). errMsg is a single English message
+// healthy runtime, session, and llm). errMsg is a single English message
 // for humans, ChatResponse.error, and GET /health chat_error when ready is false.
 func evalChatMinStack(r *registry.Registry) (ready bool, errMsg string) {
 	if r == nil {
@@ -16,7 +16,7 @@ func evalChatMinStack(r *registry.Registry) (ready bool, errMsg string) {
 	}
 	if r.FirstHealthyByType("runtime") != nil &&
 		r.FirstHealthyByType("session") != nil &&
-		r.FirstHealthyByType("chat_model") != nil {
+		r.FirstHealthyByType("llm") != nil {
 		return true, ""
 	}
 
@@ -26,7 +26,7 @@ func evalChatMinStack(r *registry.Registry) (ready bool, errMsg string) {
 	}{
 		{"runtime", "runtime"},
 		{"session", "session"},
-		{"chat_model", "chatmodel"},
+		{"llm", "llm-openai"},
 	}
 
 	var parts []string

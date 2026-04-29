@@ -25,7 +25,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `webui` (browser) -> `orchestrator`
   - `adapter-telegram` (long poll) -> `orchestrator`
 - Core flow:
-  - `orchestrator` coordinates `session`, `chatmodel`, `runtime`, and tool components.
+  - `orchestrator` coordinates `session`, `llm-openai`, `runtime`, and tool components.
 - Runtime/tooling:
   - `runtime` runs ReAct steps and calls model/tools.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
@@ -43,8 +43,8 @@ Read this first, then read only the referenced source-of-truth files.
   - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
   - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
-  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): all of `runtime`, `session`, `chat_model` must be healthy to chat; `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
-  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+chatmodel fallback)
+  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): all of `runtime`, `session`, `llm` (registered component `llm-openai`) must be healthy to chat; `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
+  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
@@ -52,9 +52,9 @@ Read this first, then read only the referenced source-of-truth files.
   - note: supports `DELETE /sessions/{id}` hard-delete in addition to legacy `POST /clear_context`
   - note: per-session **idle expiry** via `SESSION_IDLE_SEC` (extends on each `append_messages`; `get_context` returns `expired` + `expires_at`; append on expired id returns 409)
   - note: message metadata may include real `prompt_tokens` / `completion_tokens` / `total_tokens` and `reply_latency_ms` when upstream provides usage
-- `chatmodel`
+- `llm-openai`
   - purpose: OpenAI-compatible chat completions client
-  - entry: `chatmodel/cmd/server/main.go`
+  - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
 - `runtime`
   - purpose: ReAct loop execution engine
@@ -64,7 +64,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
   - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
   - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available; when `stats` (`stats_ingest`) is healthy, also posts batched overview metrics to `stats` `POST /events` (messages on successful session append, `tool_call` per tool start, `tokens` on `runtime_run_completed` when usage is present)
-  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `chatmodel` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; mutating `manage_user_docker` actions are blocked until the user message matches plan confirmation (`isPlanConfirmationMessage`) when restriction is on
+  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `llm-openai` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; mutating `manage_user_docker` actions are blocked until the user message matches plan confirmation (`isPlanConfirmationMessage`) when restriction is on
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
@@ -143,9 +143,9 @@ Read this first, then read only the referenced source-of-truth files.
   - `TELEGRAM_BOT_TOKEN` (empty -> service registers, poll loop disabled)
 - Model:
   - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
-  - localhost model endpoints are rewritten by `chatmodel` to `host.docker.internal`
+  - localhost model endpoints are rewritten by `llm-openai` to `host.docker.internal`
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
 - IM/session sync:

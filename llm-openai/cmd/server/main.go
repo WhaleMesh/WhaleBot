@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/chatmodel/internal/openai"
-	"github.com/whalesbot/chatmodel/internal/registerclient"
+	"github.com/whalesbot/llm-openai/internal/openai"
+	"github.com/whalesbot/llm-openai/internal/registerclient"
 )
 
 func getenv(k, def string) string {
@@ -38,9 +38,9 @@ type invokeResponse struct {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("CHATMODEL_PORT", "8081")
+	port := getenv("LLM_OPENAI_PORT", "8081")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
-	selfHost := getenv("SERVICE_HOST", "chatmodel")
+	selfHost := getenv("SERVICE_HOST", "llm-openai")
 	self := "http://" + selfHost + ":" + port
 
 	client := openai.New(
@@ -51,7 +51,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, map[string]any{"status": "ok", "service": "chatmodel"})
+		writeJSON(w, 200, map[string]any{"status": "ok", "service": "llm-openai"})
 	})
 	r.Post("/invoke", func(w http.ResponseWriter, req *http.Request) {
 		var ir invokeRequest
@@ -74,8 +74,8 @@ func main() {
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "chatmodel",
-		Type:           "chat_model",
+		Name:           "llm-openai",
+		Type:           "llm",
 		Version:        "0.1.0",
 		Endpoint:       self,
 		HealthEndpoint: self + "/health",
@@ -86,7 +86,7 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("chatmodel listening", "port", port, "model", client.Model, "base_url", client.BaseURL)
+		slog.Info("llm-openai listening", "port", port, "model", client.Model, "base_url", client.BaseURL)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)
