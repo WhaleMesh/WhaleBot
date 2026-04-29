@@ -10,7 +10,7 @@ as independent services and expose a unified entry through the orchestrator.
 
 - Unified entry: users mainly interact with `orchestrator` and `webui`.
 - Service autonomy: each component runs, registers, and health-checks independently.
-- Swap-friendly: model gateway, IM gateway, and tools can evolve per service.
+- Swap-friendly: model gateway, user I/O adapters (e.g. Telegram), and tools can evolve per service.
 - Usable first: even without full external credentials, the stack still boots for integration tests.
 
 ## Architecture (High Level)
@@ -18,9 +18,9 @@ as independent services and expose a unified entry through the orchestrator.
 ```mermaid
 flowchart LR
   user["User"] --> webui["webui"]
-  tg["Telegram"] --> imTelegram["im-telegram"]
+  tg["Telegram"] --> adapterTelegram["adapter-telegram"]
   webui --> orchestrator["orchestrator"]
-  imTelegram --> orchestrator
+  adapterTelegram --> orchestrator
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
   orchestrator --> chatmodel["chatmodel"]
@@ -41,7 +41,7 @@ cp .env.example .env
 2. Fill `.env` values as needed
 
 - `MODEL_API_KEY`: if empty, `chatmodel` runs in echo mode.
-- `TELEGRAM_BOT_TOKEN`: if empty, `im-telegram` starts and registers, but skips long polling.
+- `TELEGRAM_BOT_TOKEN`: if empty, `adapter-telegram` starts and registers, but skips long polling.
 
 3. Start all services
 
@@ -62,7 +62,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `runtime/`: ReAct execution loop
 - `session/`: conversation persistence
 - `chatmodel/`: model adapter/client
-- `im-telegram/`: Telegram gateway
+- `adapter-telegram/`: Telegram user I/O adapter
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `logger/`: logging service
 - `stats/`: optional Overview metrics service

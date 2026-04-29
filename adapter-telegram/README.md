@@ -1,32 +1,32 @@
-# im-telegram
+# adapter-telegram
 
 ## ServiceCard
 ```yaml
-service: im-telegram
-role: telegram_ingress_gateway
-compose_service: im-telegram
-image: whalesbot/im-telegram:latest
-build_context: ./im-telegram
+service: adapter-telegram
+role: telegram_user_io_adapter
+compose_service: adapter-telegram
+image: whalesbot/adapter-telegram:latest
+build_context: ./adapter-telegram
 owner: tbd
 runtime: go_http_service_plus_telegram_long_poll
 default_port: 8084
 health_endpoint: GET /health
 component_registration:
   enabled: true
-  name: im-telegram
-  type: im_gateway
+  name: adapter-telegram
+  type: adapter
   capabilities:
     - telegram_text
   meta: {}
 last_verified_from:
   - docker-compose.yml
-  - im-telegram/cmd/server/main.go
+  - adapter-telegram/cmd/server/main.go
 ```
 
 ## Purpose
 - Receives Telegram user messages via long-poll and forwards them to orchestrator chat API.
 - Sends orchestrator replies back to Telegram chats.
-- Converts standard Markdown replies into Telegram-friendly HTML before sending (IM-specific render adapter).
+- Converts standard Markdown replies into Telegram-friendly HTML before sending (Telegram-specific render path).
 - Provides basic Telegram chat commands (`/new`, `/end`, `/status`, `/help`) for session lifecycle control.
 - Exposes only a health endpoint for infrastructure checks.
 
@@ -38,7 +38,7 @@ path: /health
 request: none
 response:
   status: ok
-  service: im-telegram
+  service: adapter-telegram
 error_behavior: standard_http_status
 ```
 
@@ -55,16 +55,18 @@ error_behavior: standard_http_status
 - Commands are registered to Telegram via `setMyCommands` at startup; users can select them from bot command UI.
 
 Notes:
-- Session switching is managed inside `im-telegram` (in-memory state per Telegram chat).
+- Session switching is managed inside `adapter-telegram` (in-memory state per Telegram chat).
 - `/new` now generates a unique logical session key in format `chatID-timestamp-randomhex` to avoid reusing old IDs after service restarts.
 - Session history content stays as standard Markdown in backend storage; only Telegram egress rendering is converted.
-- During long-running tasks, gateway polls logger events by `trace_id` and sends step-level progress updates.
-- When backend returns attachments (for example exported artifacts), gateway uploads them as Telegram documents.
+- On each user text message, adapter sends `sendChatAction(typing)` on a short interval until the orchestrator round trip completes.
+- During long-running tasks, adapter polls logger every **2s** by `trace_id` and full `session_id` (`telegram_<chatKey>`, matching runtime) and edits **one** Telegram placeholder message in place (current step / tool action); it does not append per-step lines to `session`.
+- Cross-adapter progress **pattern** (Telegram vs no-edit IM, Web, etc.): [docs/adapter-progress-pattern.md](../docs/adapter-progress-pattern.md).
+- When backend returns attachments (for example exported artifacts), adapter uploads them as Telegram documents.
 
 ## Environment Variables
-### IM_TELEGRAM_PORT
+### ADAPTER_TELEGRAM_PORT
 ```yaml
-name: IM_TELEGRAM_PORT
+name: ADAPTER_TELEGRAM_PORT
 default: "8084"
 required: false
 effect: bind_port_for_health_endpoint
@@ -91,12 +93,12 @@ effect: target_for_chat_forwarding_and_registration
 name: SESSION_URL
 default: http://session:8090
 required: false
-effect: append_progress_messages_to_session_so_webui_stays_in_sync_with_im_updates
+effect: optional_append_artifact_status_lines_to_session_when_telegram_upload_succeeds
 ```
 
-### IM_TELEGRAM_CHAT_TIMEOUT_SEC
+### ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC
 ```yaml
-name: IM_TELEGRAM_CHAT_TIMEOUT_SEC
+name: ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC
 default: "240"
 required: false
 effect: timeout_seconds_waiting_for_orchestrator_chat_response_before_returning_timeout_feedback
@@ -105,7 +107,7 @@ effect: timeout_seconds_waiting_for_orchestrator_chat_response_before_returning_
 ### SERVICE_HOST
 ```yaml
 name: SERVICE_HOST
-default: im-telegram
+default: adapter-telegram
 required: false
 effect: advertised_endpoint_host_for_registration
 ```
@@ -113,16 +115,15 @@ effect: advertised_endpoint_host_for_registration
 ## Runtime Contract
 - network: `mvp_net`.
 - depends_on: `orchestrator`.
-- healthcheck: `wget http://localhost:${IM_TELEGRAM_PORT}/health`.
+- healthcheck: `wget http://localhost:${ADAPTER_TELEGRAM_PORT}/health`.
 - volumes: none.
 - security_notes: bot token is sensitive; keep out of logs and commits.
 
 ## AI Lookup Hints
 ```yaml
 aliases:
-  - telegram_gateway
+  - telegram_adapter
   - telegram_ingress
-  - im_adapter
 query_to_endpoint:
   service_health: GET /health
 upstream_chat_target:

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +25,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/whalesbot/imtelegram/internal/imfmt"
-	"github.com/whalesbot/imtelegram/internal/registerclient"
+	"github.com/whalesbot/adaptertelegram/internal/imfmt"
+	"github.com/whalesbot/adaptertelegram/internal/registerclient"
 )
 
 var (
@@ -40,7 +42,13 @@ var (
 const (
 	htmlSendAttempts  = 4
 	plainSendAttempts = 4
+	telegramChannel   = "telegram"
 )
+
+// telegramSessionID is the session_id used by runtime/session (channel_chatKey).
+func telegramSessionID(localChatSessionKey string) string {
+	return telegramChannel + "_" + localChatSessionKey
+}
 
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -287,24 +295,24 @@ func sessionExpiryLoop(ctx context.Context, bot *tgbotapi.BotAPI, conv *conversa
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("IM_TELEGRAM_PORT", "8084")
+	port := getenv("ADAPTER_TELEGRAM_PORT", "8084")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
-	selfHost := getenv("SERVICE_HOST", "im-telegram")
+	selfHost := getenv("SERVICE_HOST", "adapter-telegram")
 	self := "http://" + selfHost + ":" + port
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "im-telegram"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "adapter-telegram"})
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "im-telegram",
-		Type:           "im_gateway",
+		Name:           "adapter-telegram",
+		Type:           "adapter",
 		Version:        "0.1.0",
 		Endpoint:       self,
 		HealthEndpoint: self + "/health",
@@ -314,7 +322,7 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("im-telegram listening", "port", port)
+		slog.Info("adapter-telegram listening", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)
@@ -346,7 +354,7 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 	u.Timeout = 30
 	updates := bot.GetUpdatesChan(u)
 
-	chatTimeoutSec := getenvInt("IM_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
+	chatTimeoutSec := getenvInt("ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
 	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
 	orchSessCLI := &http.Client{Timeout: 15 * time.Second}
 	sessionURL := getenv("SESSION_URL", "http://session:8090")
@@ -371,14 +379,17 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 				}
 				continue
 			}
-			sessionID := conv.ensureActiveForMessage(msg.Chat.ID)
+			localKey := conv.ensureActiveForMessage(msg.Chat.ID)
+			fullSID := telegramSessionID(localKey)
 			traceID := newTraceID()
 			progressDone := make(chan struct{})
-			go streamProgressUpdates(ctx, cli, orchURL, bot, msg.Chat.ID, sessionID, traceID, progressDone, sessionCLI, sessionURL)
+			tracker := newProgressTracker(bot, msg.Chat.ID)
+			tracker.Start(ctx, cli, orchURL, fullSID, traceID)
+			go telegramTypingLoop(ctx, bot, msg.Chat.ID, progressDone)
 			chatResp, err := callOrchestrator(ctx, cli, orchURL, chatRequest{
 				UserID:  strconv.FormatInt(msg.From.ID, 10),
-				Channel: "telegram",
-				ChatID:  sessionID,
+				Channel: telegramChannel,
+				ChatID:  localKey,
 				Message: msg.Text,
 				TraceID: traceID,
 			})
@@ -387,22 +398,32 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 			if chatResp.TraceID != "" {
 				traceID = chatResp.TraceID
 			}
+			sidForLog := fullSID
+			if strings.TrimSpace(chatResp.SessionID) != "" {
+				sidForLog = chatResp.SessionID
+			}
 			if err != nil {
 				slog.Error("orchestrator chat failed", "err", err)
 				if strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") {
-					reply = fmt.Sprintf("执行超时（等待运行结果超过 %ds）。\nsession_id: `%s`\ntrace_id: `%s`\n请到 Session 页面查看中间步骤（tool_call/runtime事件）继续排查。", chatTimeoutSec, sessionID, defaultText(traceID, "unknown"))
+					reply = fmt.Sprintf("执行超时（等待运行结果超过 %ds）。\nsession_id: `%s`\ntrace_id: `%s`\n请到 Session 页面查看中间步骤（tool_call/runtime事件）继续排查。", chatTimeoutSec, sidForLog, defaultText(traceID, "unknown"))
 				} else {
-					reply = fmt.Sprintf("抱歉，我暂时无法回应：%s\nsession_id: `%s`\ntrace_id: `%s`", err.Error(), sessionID, defaultText(traceID, "unknown"))
+					reply = fmt.Sprintf("抱歉，我暂时无法回应：%s\nsession_id: `%s`\ntrace_id: `%s`", err.Error(), sidForLog, defaultText(traceID, "unknown"))
 				}
-			}
-			if err := sendTelegramReply(ctx, bot, msg.Chat.ID, reply, sessionID, traceID); err != nil {
-				slog.Error("telegram reply failed", "chat_id", msg.Chat.ID, "session_id", sessionID, "trace_id", traceID, "err", err)
-			}
-			if err != nil {
-				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, reply)
-			}
-			if len(chatResp.Attachments) > 0 {
-				sendTelegramAttachments(ctx, bot, msg.Chat.ID, sessionID, traceID, chatResp.Attachments, sessionCLI, sessionURL)
+				tracker.FinishErr(reply)
+				if !tracker.hasPlaceholder() {
+					if err := sendTelegramReply(ctx, bot, msg.Chat.ID, reply, sidForLog, traceID); err != nil {
+						slog.Error("telegram reply failed", "chat_id", msg.Chat.ID, "session_id", sidForLog, "trace_id", traceID, "err", err)
+					}
+				}
+				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, fullSID, reply)
+			} else {
+				tracker.FinishOK()
+				if err := sendTelegramReply(ctx, bot, msg.Chat.ID, reply, sidForLog, traceID); err != nil {
+					slog.Error("telegram reply failed", "chat_id", msg.Chat.ID, "session_id", sidForLog, "trace_id", traceID, "err", err)
+				}
+				if len(chatResp.Attachments) > 0 {
+					sendTelegramAttachments(ctx, bot, msg.Chat.ID, fullSID, traceID, chatResp.Attachments, sessionCLI, sessionURL)
+				}
 			}
 		}
 	}
@@ -423,60 +444,360 @@ func newTraceID() string {
 	return "trace_" + hex.EncodeToString(buf)
 }
 
-func streamProgressUpdates(
-	ctx context.Context,
-	cli *http.Client,
-	orchURL string,
-	bot *tgbotapi.BotAPI,
-	chatID int64,
-	sessionID, traceID string,
-	done <-chan struct{},
-	sessionCLI *http.Client,
-	sessionURL string,
-) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	seen := map[int64]struct{}{}
-	updates := 0
-	maxUpdates := 24
+// telegramTypingLoop sends periodic "typing" chat actions until done is closed.
+func telegramTypingLoop(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, done <-chan struct{}) {
+	tick := time.NewTicker(4 * time.Second)
+	defer tick.Stop()
+	send := func() {
+		if _, err := bot.Request(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping)); err != nil {
+			slog.Debug("telegram chat action typing failed", "chat_id", chatID, "err", err)
+		}
+	}
+	send()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-done:
 			return
-		case <-ticker.C:
-			events, err := fetchLoggerEvents(ctx, cli, orchURL, 120)
-			if err != nil {
-				continue
-			}
-			for i := len(events) - 1; i >= 0; i-- {
-				evt := events[i]
-				if evt.Fields["trace_id"] != traceID {
-					continue
-				}
-				if evt.ID > 0 {
-					if _, ok := seen[evt.ID]; ok {
-						continue
-					}
-					seen[evt.ID] = struct{}{}
-				}
-				msg, ok := renderProgressEvent(evt, sessionID)
-				if !ok {
-					continue
-				}
-				if err := sendTelegramReply(ctx, bot, chatID, msg, sessionID, traceID); err != nil {
-					slog.Warn("telegram progress update failed", "chat_id", chatID, "trace_id", traceID, "err", err)
-					continue
-				}
-				_ = appendAssistantMessage(ctx, sessionCLI, sessionURL, sessionID, msg)
-				updates++
-				if updates >= maxUpdates {
-					return
-				}
-			}
+		case <-tick.C:
+			send()
 		}
 	}
+}
+
+const (
+	progressMaxTelegramChars = 4000
+	progressEditMinInterval  = 2000 * time.Millisecond
+)
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 || s == "" {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// describeToolStart returns a concise, tool-specific line (no leading "Step").
+func describeToolStart(toolName, argsJSON string) string {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		toolName = "tool"
+	}
+	raw := strings.TrimSpace(argsJSON)
+	if raw == "" {
+		return toolName
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return toolName
+	}
+	action, _ := m["action"].(string)
+	action = strings.TrimSpace(action)
+	if toolName != "manage_user_docker" {
+		if action != "" {
+			return fmt.Sprintf("%s · %s", toolName, action)
+		}
+		return toolName
+	}
+	if action == "" {
+		action = "?"
+	}
+	switch action {
+	case "create":
+		img, _ := m["image"].(string)
+		if strings.TrimSpace(img) == "" {
+			img, _ = m["framework"].(string)
+		}
+		return fmt.Sprintf("manage_user_docker · create · image=%s", truncateRunes(strings.TrimSpace(img), 72))
+	case "start", "stop", "touch", "remove", "restart":
+		name, _ := m["name"].(string)
+		return fmt.Sprintf("manage_user_docker · %s · name=%s", action, truncateRunes(strings.TrimSpace(name), 56))
+	case "exec":
+		cwd, _ := m["cwd"].(string)
+		cmd := ""
+		if sh, ok := m["command_sh"].(string); ok && strings.TrimSpace(sh) != "" {
+			cmd = strings.TrimSpace(sh)
+		} else if arr, ok := m["command"].([]any); ok && len(arr) > 0 {
+			parts := make([]string, 0, len(arr))
+			for _, x := range arr {
+				if s, ok := x.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			cmd = strings.Join(parts, " ")
+		}
+		return fmt.Sprintf("manage_user_docker · exec · cwd=%s · cmd=%s",
+			truncateRunes(strings.TrimSpace(cwd), 40), truncateRunes(cmd, 48))
+	case "read_file", "write_file", "delete_file", "list_files", "mkdir", "move", "export_artifact":
+		path, _ := m["path"].(string)
+		if strings.TrimSpace(path) == "" {
+			path, _ = m["file_path"].(string)
+		}
+		return fmt.Sprintf("manage_user_docker · %s · path=%s", action, truncateRunes(strings.TrimSpace(path), 64))
+	case "list_images", "list", "get_interface", "switch_scope":
+		return fmt.Sprintf("manage_user_docker · %s", action)
+	default:
+		return fmt.Sprintf("manage_user_docker · %s", action)
+	}
+}
+
+func describeToolEnd(toolName, argsJSON, durationMs string) string {
+	base := describeToolStart(toolName, argsJSON)
+	if strings.TrimSpace(durationMs) == "" || durationMs == "?" {
+		return base + " · 完成"
+	}
+	return fmt.Sprintf("%s · 完成（%sms）", base, durationMs)
+}
+
+// eventToProgressText maps one logger row to the single-line status shown in the placeholder.
+func eventToProgressText(evt loggerEvent, fullSessionID string) (string, bool) {
+	f := evt.Fields
+	if f == nil || f["session_id"] != fullSessionID {
+		return "", false
+	}
+	step := defaultText(f["step"], "?")
+	switch evt.Message {
+	case "runtime_run_start":
+		return "已开始处理，准备上下文…", true
+	case "runtime_context_loaded":
+		return fmt.Sprintf("上下文加载完成（历史 %s 条），开始推理…", defaultText(f["history_count"], "0")), true
+	case "runtime_plan":
+		return "已生成执行计划，等待你确认后再调用工具。", true
+	case "runtime_plan_confirmed":
+		return "计划已确认，开始执行…", true
+	case "react_step_start":
+		// Skip generic "thinking" headline; keep previous meaningful line until tool_call_* / final model response.
+		return "", false
+	case "react_model_response":
+		if f["tool_call_count"] != "0" {
+			return "", false
+		}
+		return fmt.Sprintf("Step %s：生成最终回复…", step), true
+	case "tool_call_start":
+		detail := describeToolStart(f["tool_name"], f["args"])
+		return fmt.Sprintf("Step %s：%s", step, detail), true
+	case "tool_call_end":
+		detail := describeToolEnd(f["tool_name"], f["args"], f["duration_ms"])
+		return fmt.Sprintf("Step %s：%s", step, detail), true
+	case "tool_call_error":
+		em := truncateRunes(defaultText(f["error_message"], "unknown error"), 140)
+		detail := describeToolStart(f["tool_name"], f["args"])
+		return fmt.Sprintf("Step %s：%s · 失败：%s", step, detail, em), true
+	case "runtime_react_loop_error":
+		return fmt.Sprintf("执行失败：%s", truncateRunes(defaultText(f["error_message"], "react loop error"), 220)), true
+	case "react_step_limit_fallback":
+		return "已达 ReAct 步数上限，正在收尾…", true
+	default:
+		return "", false
+	}
+}
+
+// progressTracker maintains one Telegram placeholder message and edits it in place.
+type progressTracker struct {
+	mu sync.Mutex
+
+	bot           *tgbotapi.BotAPI
+	chatID        int64
+	placeholderID int
+
+	disabled               bool
+	loopStarted            bool
+	httpCli                *http.Client
+	orchURL                string
+	fullSessionID, traceID string
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	seen        map[int64]struct{}
+	currentText string
+	lastFlushed string
+
+	finishOnce sync.Once
+}
+
+func newProgressTracker(bot *tgbotapi.BotAPI, chatID int64) *progressTracker {
+	return &progressTracker{
+		bot:    bot,
+		chatID: chatID,
+		seen:   make(map[int64]struct{}),
+	}
+}
+
+func (t *progressTracker) hasPlaceholder() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.placeholderID != 0 && !t.disabled
+}
+
+func (t *progressTracker) Start(parent context.Context, cli *http.Client, orchURL, fullSID, trace string) {
+	t.httpCli = cli
+	t.orchURL = orchURL
+	t.fullSessionID = fullSID
+	t.traceID = trace
+
+	ctx, cancel := context.WithCancel(parent)
+	t.ctx = ctx
+	t.cancel = cancel
+
+	m := tgbotapi.NewMessage(t.chatID, "已收到，正在处理…")
+	m.DisableWebPagePreview = true
+	sent, err := t.bot.Send(m)
+	if err != nil {
+		slog.Warn("progress placeholder send failed", "chat_id", t.chatID, "err", err)
+		t.disabled = true
+		cancel()
+		return
+	}
+	t.placeholderID = sent.MessageID
+	t.loopStarted = true
+	t.wg.Add(1)
+	go t.loop()
+}
+
+func (t *progressTracker) loop() {
+	defer t.wg.Done()
+	t.pollAndFlush()
+	tick := time.NewTicker(progressEditMinInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-tick.C:
+			t.pollAndFlush()
+		}
+	}
+}
+
+func (t *progressTracker) pollAndFlush() {
+	if t.disabled {
+		return
+	}
+	events, err := fetchLoggerEvents(t.ctx, t.httpCli, t.orchURL, 120)
+	if err != nil {
+		return
+	}
+	matched := make([]loggerEvent, 0, 32)
+	for _, e := range events {
+		if e.Fields == nil {
+			continue
+		}
+		if e.Fields["trace_id"] != t.traceID || e.Fields["session_id"] != t.fullSessionID {
+			continue
+		}
+		matched = append(matched, e)
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].ID < matched[j].ID })
+
+	t.mu.Lock()
+	for _, evt := range matched {
+		if evt.ID <= 0 {
+			continue
+		}
+		if _, ok := t.seen[evt.ID]; ok {
+			continue
+		}
+		t.seen[evt.ID] = struct{}{}
+		if txt, ok := eventToProgressText(evt, t.fullSessionID); ok {
+			t.currentText = txt
+		}
+	}
+	needFlush := t.placeholderID != 0 && t.currentText != "" && t.currentText != t.lastFlushed
+	text := t.currentText
+	t.mu.Unlock()
+
+	if !needFlush {
+		return
+	}
+	if err := t.editPlaceholderWithRetry(t.ctx, text); err != nil {
+		slog.Warn("progress placeholder edit failed", "chat_id", t.chatID, "trace_id", t.traceID, "err", err)
+		return
+	}
+	t.mu.Lock()
+	t.lastFlushed = text
+	t.mu.Unlock()
+}
+
+func (t *progressTracker) editPlaceholderWithRetry(opCtx context.Context, text string) error {
+	body := truncateRunes(text, progressMaxTelegramChars)
+	var lastErr error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if opCtx.Err() != nil {
+			return opCtx.Err()
+		}
+		ed := tgbotapi.NewEditMessageText(t.chatID, t.placeholderID, body)
+		ed.DisableWebPagePreview = true
+		if _, err := t.bot.Request(ed); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			var tgErr *tgbotapi.Error
+			if errors.As(err, &tgErr) && tgErr != nil && tgErr.RetryAfter > 0 {
+				time.Sleep(time.Duration(tgErr.RetryAfter) * time.Second)
+				continue
+			}
+			if isTelegramRetryableErr(err) && attempt < 4 {
+				backoff := time.Duration(300*(1<<uint(attempt-1))) * time.Millisecond
+				if backoff > 5*time.Second {
+					backoff = 5 * time.Second
+				}
+				if !sleepWithContext(opCtx, backoff) {
+					return opCtx.Err()
+				}
+				continue
+			}
+			return err
+		}
+	}
+	return lastErr
+}
+
+func (t *progressTracker) stopLoop() {
+	if t.cancel != nil {
+		t.cancel()
+	}
+	if t.loopStarted {
+		t.wg.Wait()
+	}
+}
+
+func (t *progressTracker) FinishOK() {
+	t.finishOnce.Do(func() {
+		t.stopLoop()
+		t.mu.Lock()
+		id := t.placeholderID
+		t.mu.Unlock()
+		if id != 0 && !t.disabled {
+			if _, err := t.bot.Request(tgbotapi.NewDeleteMessage(t.chatID, id)); err != nil {
+				slog.Debug("progress placeholder delete failed", "chat_id", t.chatID, "err", err)
+			}
+		}
+	})
+}
+
+func (t *progressTracker) FinishErr(text string) {
+	t.finishOnce.Do(func() {
+		body := truncateRunes(strings.TrimSpace(text), progressMaxTelegramChars)
+		if body == "" {
+			body = "请求处理失败。"
+		}
+		t.mu.Lock()
+		id := t.placeholderID
+		disabled := t.disabled
+		t.mu.Unlock()
+		// Edit before canceling tracker ctx, otherwise in-flight edit aborts immediately.
+		if id != 0 && !disabled {
+			_ = t.editPlaceholderWithRetry(context.Background(), body)
+		}
+		t.stopLoop()
+	})
 }
 
 func fetchLoggerEvents(ctx context.Context, cli *http.Client, orchURL string, limit int) ([]loggerEvent, error) {
@@ -501,33 +822,6 @@ func fetchLoggerEvents(ctx context.Context, cli *http.Client, orchURL string, li
 		return nil, fmt.Errorf("logger events success=false: %s", out.Error)
 	}
 	return out.Events, nil
-}
-
-func renderProgressEvent(evt loggerEvent, sessionID string) (string, bool) {
-	f := evt.Fields
-	if f == nil || f["session_id"] != sessionID {
-		return "", false
-	}
-	switch evt.Message {
-	case "runtime_run_start":
-		return fmt.Sprintf("开始执行任务。\ntrace_id: `%s`", f["trace_id"]), true
-	case "runtime_context_loaded":
-		return fmt.Sprintf("上下文加载完成，历史消息 %s 条。", defaultText(f["history_count"], "0")), true
-	case "react_step_start":
-		return fmt.Sprintf("执行到 Step %s。", defaultText(f["step"], "?")), true
-	case "tool_call_start":
-		return fmt.Sprintf("调用工具：`%s`（step %s）", defaultText(f["tool_name"], "unknown"), defaultText(f["step"], "?")), true
-	case "tool_call_end":
-		return fmt.Sprintf("工具完成：`%s`（耗时 %sms）", defaultText(f["tool_name"], "unknown"), defaultText(f["duration_ms"], "?")), true
-	case "tool_call_error":
-		return fmt.Sprintf("工具报错：`%s`\n%s", defaultText(f["tool_name"], "unknown"), defaultText(f["error_message"], "unknown error")), true
-	case "runtime_react_loop_error":
-		return fmt.Sprintf("执行失败：%s", defaultText(f["error_message"], "react loop error")), true
-	case "runtime_run_completed":
-		return fmt.Sprintf("任务执行完成（reply_latency_ms=%s）。", defaultText(f["reply_latency_ms"], "?")), true
-	default:
-		return "", false
-	}
 }
 
 func sendTelegramAttachments(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, sessionID, traceID string, attachments []chatAttachment, sessionCLI *http.Client, sessionURL string) {
@@ -747,13 +1041,13 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 		sessionID := conv.newSession(msg.Chat.ID)
 		return commandResult{
 			Handled: true,
-			Reply:   fmt.Sprintf("已开启新会话。\nsession_id: `%s`", sessionID),
+			Reply:   fmt.Sprintf("已开启新会话。\nsession_id: `%s`", telegramSessionID(sessionID)),
 		}
 	case "/end", "/stop":
 		sessionID := conv.endSession(msg.Chat.ID)
 		return commandResult{
 			Handled: true,
-			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n下一条消息将自动开始新会话，或发送 /new 立即开启。", sessionID),
+			Reply:   fmt.Sprintf("已结束当前会话。\nsession_id: `%s`\n下一条消息将自动开始新会话，或发送 /new 立即开启。", telegramSessionID(sessionID)),
 		}
 	case "/status":
 		sessionID, ended := conv.status(msg.Chat.ID)
@@ -763,7 +1057,7 @@ func handleCommand(conv *conversationManager, msg *tgbotapi.Message) commandResu
 		}
 		return commandResult{
 			Handled: true,
-			Reply:   fmt.Sprintf("当前状态：**%s**\nsession_id: `%s`", state, sessionID),
+			Reply:   fmt.Sprintf("当前状态：**%s**\nsession_id: `%s`", state, telegramSessionID(sessionID)),
 		}
 	default:
 		return commandResult{}
