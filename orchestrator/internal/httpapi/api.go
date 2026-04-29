@@ -60,6 +60,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/sessions/{id}", s.handleSessionDetail)
 		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/stats/overview", s.handleStatsOverview)
+		r.Get("/skills/search", s.handleSkillsSearch)
+		r.Get("/skills/{id}", s.handleSkillsGetOne)
+		r.Put("/skills/{id}", s.handleSkillsPutOne)
+		r.Delete("/skills/{id}", s.handleSkillsDeleteOne)
+		r.Get("/skills", s.handleSkillsList)
+		r.Post("/skills", s.handleSkillsCreate)
 		r.Get("/llm-components/{name}/config", s.handleLLMGetConfig)
 		r.Put("/llm-components/{name}/config", s.handleLLMPutConfig)
 		r.Post("/llm-components/{name}/active", s.handleLLMPostActive)
@@ -497,6 +503,75 @@ func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 	s.proxyGet(w, r, target)
+}
+
+func (s *Server) skillsUpstream() *registry.Component {
+	return s.Registry.FirstHealthyByType("skills")
+}
+
+func (s *Server) handleSkillsSearch(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	target := sk.Endpoint + "/skills/search"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleSkillsList(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	target := sk.Endpoint + "/skills"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	s.proxyPost(w, r, sk.Endpoint+"/skills")
+}
+
+func (s *Server) handleSkillsGetOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyGet(w, r, sk.Endpoint+"/skills/"+id)
+}
+
+func (s *Server) handleSkillsPutOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyPut(w, r, sk.Endpoint+"/skills/"+id)
+}
+
+func (s *Server) handleSkillsDeleteOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id)
 }
 
 // --- helpers ---

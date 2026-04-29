@@ -93,4 +93,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  skillsList: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit != null) q.set("limit", String(opts.limit));
+    if (opts.offset != null) q.set("offset", String(opts.offset));
+    const s = q.toString();
+    return req("/api/v1/skills" + (s ? "?" + s : ""));
+  },
+  skillsSearch: (q, limit = 10) =>
+    req(
+      "/api/v1/skills/search?" +
+        new URLSearchParams({ q, limit: String(limit) }).toString(),
+    ),
+  skillsGet: (id) => req("/api/v1/skills/" + encodeURIComponent(id)),
+  skillsCreate: (body) =>
+    req("/api/v1/skills", { method: "POST", body: JSON.stringify(body) }),
+  skillsUpdate: (id, body) =>
+    req("/api/v1/skills/" + encodeURIComponent(id), {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  skillsDelete: (id) =>
+    req("/api/v1/skills/" + encodeURIComponent(id), { method: "DELETE" }),
 };

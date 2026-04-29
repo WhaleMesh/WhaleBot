@@ -187,6 +187,7 @@ type availableRoutes struct {
 	CanUserDockerExport  bool
 	LoggerWriteEndpoint  string
 	StatsWriteEndpoint   string
+	SkillsSearchBase     string
 }
 
 func main() {
@@ -419,6 +420,12 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 			"phase":       "plan_confirmed",
 			"plan_status": "confirmed",
 		})
+	}
+	if getenv("RUNTIME_SKILLS_INJECT", "1") != "0" && routes.SkillsSearchBase != "" {
+		topK := getenvInt("RUNTIME_SKILLS_TOP_K", 5)
+		if sk := s.buildSkillsContext(r.Context(), routes.SkillsSearchBase, req.Message, topK); sk != "" {
+			msgs = append(msgs, cmMessage{Role: "system", Content: sk})
+		}
 	}
 	for _, m := range history {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -1690,6 +1697,10 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 			if hasCapability(c.Capabilities, "stats_ingest") {
 				routes.StatsWriteEndpoint = c.Endpoint
 			}
+		case "skills":
+			if hasCapability(c.Capabilities, "skills_search") {
+				routes.SkillsSearchBase = c.Endpoint
+			}
 		}
 	}
 	return catalog, routes, nil
@@ -2130,6 +2141,65 @@ func planFirstInjectionSystemPrompt() string {
 		"The user's request involves real execution. You MUST first output a concise numbered execution plan and explicitly ask whether to proceed (for example: “Proceed with this plan?”). Do not call any tools until the user confirms.",
 		"当前用户请求涉及实际执行。你必须先输出一个简洁执行计划（步骤列表），并明确询问用户“是否按此计划执行”。在用户确认前，不要调用任何工具，不要执行任务。",
 	})
+}
+
+func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg string, topK int) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	q := strings.TrimSpace(userMsg)
+	if q == "" {
+		return ""
+	}
+	u := strings.TrimSuffix(base, "/") + "/skills/search?" + url.Values{"q": {q}, "limit": {strconv.Itoa(topK)}}.Encode()
+	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, u, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		slog.Debug("skills search request failed", "err", err)
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		slog.Debug("skills search non-OK", "status", resp.StatusCode)
+		return ""
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Hits    []struct {
+			Title   string `json:"title"`
+			Summary string `json:"summary"`
+			BodyMd  string `json:"body_md"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil || !payload.Success {
+		return ""
+	}
+	if len(payload.Hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("以下为与当前用户消息相关的内部技能摘录，仅供推理；勿向用户暗示其逐字要求执行某条技能，除非用户明确如此表达。\n\n")
+	for _, h := range payload.Hits {
+		b.WriteString("## ")
+		b.WriteString(h.Title)
+		b.WriteString("\n")
+		if strings.TrimSpace(h.Summary) != "" {
+			b.WriteString(truncate(h.Summary, 600))
+			b.WriteString("\n\n")
+		}
+		body := truncate(h.BodyMd, 2000)
+		if strings.TrimSpace(body) != "" {
+			b.WriteString(body)
+			b.WriteString("\n\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func buildSystemPrompt(c runtimeCatalog) string {

@@ -25,13 +25,13 @@ Read this first, then read only the referenced source-of-truth files.
   - `webui` (browser) -> `orchestrator`
   - `adapter-telegram` (long poll) -> `orchestrator`
 - Core flow:
-  - `orchestrator` coordinates `session`, `llm-openai`, `runtime`, and tool components.
+  - `orchestrator` coordinates `session`, `llm-openai`, `runtime`, `skills`, and tool components.
 - Runtime/tooling:
   - `runtime` runs ReAct steps and calls model/tools.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `logger`, `stats`, `workspace` use named volumes (`memory` is deferred; see `memory/TODO.md`).
+  - `session`, `skills`, `logger`, `stats`, `workspace` use named volumes (`memory` is deferred; see `memory/TODO.md`).
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -45,6 +45,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
   - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): all of `runtime`, `session`, `llm` (registered component `llm-openai`) must be healthy to chat; `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
   - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
+  - note: reverse-proxies `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` to the healthy `type=skills` component (`503` when none)
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
@@ -70,6 +71,13 @@ Read this first, then read only the referenced source-of-truth files.
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
+  - note: when a healthy `type=skills` with `skills_search` is registered and `RUNTIME_SKILLS_INJECT` is not `0`, each main `/run` calls `GET {skills_endpoint}/skills/search` (top `RUNTIME_SKILLS_TOP_K` hits, FTS5/BM25) and appends an extra **system** message with excerpts for retrieval-first context (failure is non-fatal)
+- `skills`
+  - purpose: SQLite skill store + FTS5 full-text search (`bm25` ranking)
+  - entry: `skills/cmd/server/main.go`
+  - host exposed: no
+  - note: registers `type=skills`, name `skills`, capabilities `skills_list`, `skills_write`, `skills_search`; persistence `SKILLS_DB_PATH` (default `/data/skills.db` on volume `skills_data`)
+  - note: on first start (**empty `skills` table**), seeds one default in-chat skill titled **`whalemesh best practices`** (body in `skills/internal/defaults/whalemesh_best_practices.md`); existing DBs are not modified
 - `adapter-telegram`
   - purpose: Telegram user I/O adapter (`type=adapter` at orchestrator registration)
   - entry: `adapter-telegram/cmd/server/main.go`
@@ -128,6 +136,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
+  - note: top nav `Skills` opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
   - note: top nav `LLM` opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
@@ -145,9 +154,10 @@ Read this first, then read only the referenced source-of-truth files.
 - Telegram:
   - `TELEGRAM_BOT_TOKEN` (empty -> service registers, poll loop disabled)
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
+  - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `5`)
 - IM/session sync:
   - `SESSION_URL` (for `adapter-telegram` optional artifact append to session)
 - Orchestrator request timeout:
@@ -166,10 +176,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 12 services including `runtime`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
+- `docker-compose.yml` contains 13 services including `runtime`, `skills`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `logger_data`, `stats_data`, `workspace_data`.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
@@ -186,6 +196,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Only components with `status=healthy` are considered.
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
+- Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
 - `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
 - for Go compile tasks, prefer `whalesbot/userdocker-golang:latest` when listed in `action=list_images`.
@@ -201,6 +212,7 @@ Read this first, then read only the referenced source-of-truth files.
   - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
   - check userdocker allowed images: `curl -s http://localhost:8080/api/v1/tools/user-dockers/images`
   - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
+  - check skills list (when skills service running): `curl -s http://localhost:8080/api/v1/skills`
   - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
 
 ## 8) Mandatory Update Policy
