@@ -64,7 +64,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
   - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
   - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available; when `stats` (`stats_ingest`) is healthy, also posts batched overview metrics to `stats` `POST /events` (messages on successful session append, `tool_call` per tool start, `tokens` on `runtime_run_completed` when usage is present)
-  - note: execution-oriented requests now default to plan-first mode (ask for user confirmation before tool execution)
+  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `chatmodel` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; mutating `manage_user_docker` actions are blocked until the user message matches plan confirmation (`isPlanConfirmationMessage`) when restriction is on
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)

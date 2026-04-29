@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -391,11 +392,12 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	msgs := make([]cmMessage, 0, len(history)+4)
 	msgs = append(msgs, cmMessage{Role: "system", Content: buildSystemPrompt(catalog)})
 	planConfirmed := isPlanConfirmationMessage(req.Message, history)
-	forcePlanOnly := shouldForcePlanFirst(req.Message, history)
+	gate := s.decidePlanGate(r.Context(), req.Message, history, traceID, sessionID, routes.LoggerWriteEndpoint)
+	forcePlanOnly := gate.InjectPlanOnly
 	if forcePlanOnly {
 		msgs = append(msgs, cmMessage{
 			Role:    "system",
-			Content: "当前用户请求涉及实际执行。你必须先输出一个简洁执行计划（步骤列表），并明确询问用户“是否按此计划执行”。在用户确认前，不要调用任何工具，不要执行任务。",
+			Content: planFirstInjectionSystemPrompt(),
 		})
 		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "info", "runtime_plan", map[string]string{
 			"trace_id":     traceID,
@@ -426,7 +428,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs = append(msgs, cmMessage{Role: "user", Content: req.Message})
 
-	finalText, totalUsage, attachments, err := s.reactLoop(r.Context(), msgs, routes, traceID, sessionID, forcePlanOnly)
+	finalText, totalUsage, attachments, err := s.reactLoop(r.Context(), msgs, routes, traceID, sessionID, forcePlanOnly, gate.RestrictMutatingTools, req.Message, history)
 	if err != nil {
 		slog.Error("react loop failed", "err", err, "trace_id", traceID)
 		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "error", "runtime_react_loop_error", map[string]string{
@@ -631,7 +633,7 @@ func userDockerManagerToolDefinition() map[string]any {
 	}
 }
 
-func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string, forcePlanOnly bool) (string, *usage, []chatAttachment, error) {
+func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string, forcePlanOnly bool, restrictMutatingTools bool, userMessage string, gateHistory []sessionMessage) (string, *usage, []chatAttachment, error) {
 	tools := make([]map[string]any, 0, 1)
 	if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 		tools = append(tools, userDockerManagerToolDefinition())
@@ -645,6 +647,8 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 	hasUsage := false
 	lastToolSummary := ""
 	attachments := make([]chatAttachment, 0, 1)
+	um := strings.TrimSpace(strings.ToLower(userMessage))
+	allowMutatingTools := !restrictMutatingTools || isPlanConfirmationMessage(um, gateHistory)
 
 	for step := 0; step < s.maxSteps; step++ {
 		stepTools := tools
@@ -736,7 +740,28 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 				}(ep)
 			}
 
-			resText, err := s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
+			var resText string
+			var err error
+			if tc.Function.Name == "manage_user_docker" && !allowMutatingTools {
+				act := parseDockerActionFromArgs(tc.Function.Arguments)
+				if isMutatingDockerAction(act) {
+					resText = toolJSON(false, nil, mutatingToolBlockedMessage(act))
+					err = nil
+					s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "warn", "runtime_tool_gate_blocked", map[string]string{
+						"trace_id":     traceID,
+						"session_id":   sessionID,
+						"module":       "tool",
+						"phase":        "gate",
+						"tool_name":    tc.Function.Name,
+						"tool_call_id": tc.ID,
+						"step":         strconv.Itoa(step + 1),
+						"action":       act,
+					})
+				}
+			}
+			if resText == "" {
+				resText, err = s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
+			}
 			resForModel := sanitizeToolResultTextForModel(resText)
 			durationMS := time.Since(callStart).Milliseconds()
 			if err != nil {
@@ -1353,6 +1378,174 @@ func (s *reactService) invokeChatModel(ctx context.Context, msgs []cmMessage, to
 	return out, nil
 }
 
+// planGateDecision is produced by decidePlanGate (LLM JSON) or legacy_keyword mode.
+type planGateDecision struct {
+	InjectPlanOnly        bool `json:"inject_plan_only"`
+	RestrictMutatingTools bool `json:"restrict_mutating_tools"`
+}
+
+func conservativePlanGateDefault() planGateDecision {
+	return planGateDecision{InjectPlanOnly: false, RestrictMutatingTools: true}
+}
+
+func parsePlanGateResponse(raw string) (planGateDecision, bool) {
+	def := conservativePlanGateDefault()
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return def, false
+	}
+	if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+			s = s[idx+1:]
+		}
+		s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "```"))
+	}
+	var d struct {
+		InjectPlanOnly        *bool `json:"inject_plan_only"`
+		RestrictMutatingTools *bool `json:"restrict_mutating_tools"`
+	}
+	if err := json.Unmarshal([]byte(s), &d); err != nil {
+		return def, false
+	}
+	out := def
+	if d.InjectPlanOnly != nil {
+		out.InjectPlanOnly = *d.InjectPlanOnly
+	}
+	if d.RestrictMutatingTools != nil {
+		out.RestrictMutatingTools = *d.RestrictMutatingTools
+	}
+	return out, true
+}
+
+func buildPlanGateTranscript(message string, history []sessionMessage) string {
+	var b strings.Builder
+	start := len(history) - 4
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(history); i++ {
+		m := history[i]
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
+		}
+		line := strings.TrimSpace(m.Content)
+		if len(line) > 400 {
+			line = line[:400] + "…"
+		}
+		fmt.Fprintf(&b, "%s: %s\n", m.Role, line)
+	}
+	fmt.Fprintf(&b, "current_user: %s", message)
+	return b.String()
+}
+
+const planGateClassifierSystem = `You are a safety router for a coding assistant (ReAct + Docker tools). Reply with EXACTLY one JSON object on one line. No markdown, no code fences, no extra text.
+Schema: {"inject_plan_only":bool,"restrict_mutating_tools":bool}
+
+Meaning:
+- inject_plan_only: true if the user wants substantive execution (build, deploy, run commands, compile, create containers, bulk file writes, exec, destructive ops, CI-style tests) and should see a written step plan plus explicit confirmation before any tools run.
+- restrict_mutating_tools: false only if the user clearly wants immediate mutating execution with unambiguous low blast radius. If unsure, true.
+
+Heuristics: bare probes ("hi","test","ping", single-word checks) -> inject_plan_only false, restrict_mutating_tools true. Read-only intents ("list containers","list_images") -> inject_plan_only false, restrict_mutating_tools true (read-only tool calls are still ok). Dangerous or underspecified execution -> inject_plan_only true OR restrict_mutating_tools true (at least one must be true when risk is unclear).`
+
+func (s *reactService) decidePlanGate(ctx context.Context, userMessage string, history []sessionMessage, traceID, sessionID, logEP string) planGateDecision {
+	mode := strings.TrimSpace(strings.ToLower(getenv("RUNTIME_PLAN_GATE", "classifier")))
+	if mode == "legacy_keyword" {
+		force := shouldForcePlanFirst(userMessage, history)
+		return planGateDecision{InjectPlanOnly: force, RestrictMutatingTools: false}
+	}
+
+	gctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	userBlock := buildPlanGateTranscript(userMessage, history)
+	gateMsgs := []cmMessage{
+		{Role: "system", Content: planGateClassifierSystem},
+		{Role: "user", Content: userBlock},
+	}
+	out, err := s.invokeChatModel(gctx, gateMsgs, nil, map[string]any{
+		"temperature": 0.0,
+		"max_tokens":  128.0,
+	})
+	if err != nil {
+		slog.Warn("plan_gate invoke error", "err", err, "trace_id", traceID)
+		if logEP != "" {
+			s.emitRuntimeEvent(context.Background(), logEP, "warn", "runtime_plan_gate_error", map[string]string{
+				"trace_id":      traceID,
+				"session_id":    sessionID,
+				"module":        "runtime",
+				"phase":         "plan_gate",
+				"error_message": err.Error(),
+			})
+		}
+		return conservativePlanGateDefault()
+	}
+	if !out.Success {
+		slog.Warn("plan_gate invoke failed", "error", out.Error, "trace_id", traceID)
+		if logEP != "" {
+			s.emitRuntimeEvent(context.Background(), logEP, "warn", "runtime_plan_gate_error", map[string]string{
+				"trace_id":      traceID,
+				"session_id":    sessionID,
+				"module":        "runtime",
+				"phase":         "plan_gate",
+				"error_message": out.Error,
+			})
+		}
+		return conservativePlanGateDefault()
+	}
+	dec, parsed := parsePlanGateResponse(out.Message.Content)
+	if logEP != "" {
+		s.emitRuntimeEvent(context.Background(), logEP, "info", "runtime_plan_gate", map[string]string{
+			"trace_id":                 traceID,
+			"session_id":               sessionID,
+			"module":                   "runtime",
+			"phase":                    "plan_gate",
+			"inject_plan_only":         strconv.FormatBool(dec.InjectPlanOnly),
+			"restrict_mutating_tools": strconv.FormatBool(dec.RestrictMutatingTools),
+			"parsed_ok":                strconv.FormatBool(parsed),
+		})
+	}
+	if !parsed {
+		slog.Warn("plan_gate json parse failed; using conservative default", "trace_id", traceID, "snippet", truncate(strings.TrimSpace(out.Message.Content), 120))
+		if logEP != "" {
+			s.emitRuntimeEvent(context.Background(), logEP, "warn", "runtime_plan_gate_parse_error", map[string]string{
+				"trace_id":   traceID,
+				"session_id": sessionID,
+				"module":     "runtime",
+				"phase":      "plan_gate",
+			})
+		}
+	}
+	return dec
+}
+
+func parseDockerActionFromArgs(argsJSON string) string {
+	var v struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &v); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.ToLower(v.Action))
+}
+
+func isMutatingDockerAction(action string) bool {
+	switch action {
+	case "list_images", "list", "get_interface", "list_files", "read_file", "touch":
+		return false
+	case "":
+		return true
+	default:
+		return true
+	}
+}
+
+func mutatingToolBlockedMessage(action string) string {
+	return fmt.Sprintf(
+		"runtime_gate: mutating manage_user_docker action %q is blocked until you output a concise plan, ask the user to confirm (e.g. whether to proceed), and they approve. / 变更类操作 %q 已被拦截：请先说明计划并征得用户明确确认后再调用。",
+		action, action,
+	)
+}
+
 func (s *reactService) fetchContext(sessionID string) ([]sessionMessage, bool, error) {
 	body, _ := json.Marshal(map[string]string{"session_id": sessionID})
 	resp, err := s.http.Post(s.sessionURL+"/get_context", "application/json", bytes.NewReader(body))
@@ -1594,20 +1787,79 @@ func decodeToolResult(raw string) (ok bool, errMsg string) {
 	return payload.Success, payload.Error
 }
 
+// messageImpliesAutomatedOrExplicitTestRun matches concrete test-runner phrases, not bare "测试"/"test".
+func messageImpliesAutomatedOrExplicitTestRun(msg string) bool {
+	phrases := []string{
+		"go test", "npm test", "yarn test", "pnpm test", "cargo test",
+		"pytest", "jest", "vitest", "mocha", "gradle test", "dotnet test",
+		"运行测试", "执行测试", "单元测试", "集成测试", "跑测试",
+		"run test", "run tests", "running test", "running tests",
+		"unit test", "unit tests", "integration test", "integration tests",
+		"e2e test", "end-to-end test", "regression test",
+	}
+	for _, p := range phrases {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func testExecutionContextChinese(msg string) bool {
+	hints := []string{"运行", "执行", "编译", "./", "调用", "请求", "接口", "部署", "写文件", "exec"}
+	for _, h := range hints {
+		if strings.Contains(msg, h) {
+			return true
+		}
+	}
+	return false
+}
+
+func testExecutionContextEnglish(msg string) bool {
+	hints := []string{"run ", "exec", "build", "compile", "./", "deploy", "execute", "invoke", "call ", "request"}
+	for _, h := range hints {
+		if strings.Contains(msg, h) {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldForcePlanFirst(message string, history []sessionMessage) bool {
-	msg := strings.TrimSpace(strings.ToLower(message))
+	trimmed := strings.TrimSpace(message)
+	msg := strings.ToLower(trimmed)
 	if msg == "" {
 		return false
 	}
 	if isPlanConfirmationMessage(msg, history) {
 		return false
 	}
+	if messageImpliesAutomatedOrExplicitTestRun(msg) {
+		return true
+	}
 	keywords := []string{
-		"执行", "运行", "编译", "构建", "创建", "上传", "部署", "测试",
+		"执行", "运行", "编译", "构建", "创建", "上传", "部署",
 		"run", "exec", "build", "compile", "create", "deploy", "upload", "download",
 	}
 	for _, k := range keywords {
 		if strings.Contains(msg, k) {
+			return true
+		}
+	}
+	runes := utf8.RuneCountInString(trimmed)
+	if strings.Contains(msg, "测试") {
+		if runes >= 10 {
+			return true
+		}
+		if testExecutionContextChinese(msg) {
+			return true
+		}
+	}
+	if strings.Contains(msg, "test") {
+		if runes >= 15 {
+			return true
+		}
+		if testExecutionContextEnglish(msg) {
 			return true
 		}
 	}
@@ -1689,6 +1941,7 @@ func hasPendingPlanPrompt(history []sessionMessage) bool {
 		}
 		if strings.Contains(text, "是否按此计划执行") ||
 			strings.Contains(text, "是否按这个计划执行") ||
+			strings.Contains(text, "proceed with this plan") ||
 			(strings.Contains(text, "计划") && strings.Contains(text, "执行") && strings.Contains(text, "是否")) {
 			return true
 		}
@@ -1872,6 +2125,13 @@ func containsTool(tools []toolSpec, name string) bool {
 	return false
 }
 
+func planFirstInjectionSystemPrompt() string {
+	return joinLines([]string{
+		"The user's request involves real execution. You MUST first output a concise numbered execution plan and explicitly ask whether to proceed (for example: “Proceed with this plan?”). Do not call any tools until the user confirms.",
+		"当前用户请求涉及实际执行。你必须先输出一个简洁执行计划（步骤列表），并明确询问用户“是否按此计划执行”。在用户确认前，不要调用任何工具，不要执行任务。",
+	})
+}
+
 func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
 		"你是 WhalesBot MVP 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
@@ -1883,6 +2143,9 @@ func buildSystemPrompt(c runtimeCatalog) string {
 		"当关键结果（例如编译日志、访问结果、产物导出结果）已拿到时，立即停止继续调用工具并输出最终回复。",
 		"当 export_artifact 已返回成功时，不要再次调用 export_artifact；应直接总结并回复用户。",
 		"你绝对不能虚构任何工具名。只能使用和描述当前 runtime 显示的工具清单；禁止提及未注册工具。",
+		"Language: match the user's primary language in the latest user message for the user-visible reply (Chinese if they wrote Chinese, English if English; mixed → follow the dominant language).",
+		"When the request is underspecified: in a single reply, briefly state your best guess at intent, ask any needed follow-up in one combined sentence (avoid multi-step questionnaires), and if a guessed action is very low-cost and side-effect free (e.g. stating readiness or read-only capability), you may include it alongside the question. Do not start high-impact work (containers, exec, writes, deploy) without clarity or without plan-first when the runtime requires it.",
+		"When the user message is very short or lacks a clear object, do NOT use a numbered “execution plan” plus “是否按此计划执行？” unless the user explicitly asked for a written plan or the runtime has injected plan-first instructions in this turn.",
 	}
 	if len(c.Tools) == 0 {
 		lines = append(lines, "- 暂无可用 tool，只能直接回答。")
