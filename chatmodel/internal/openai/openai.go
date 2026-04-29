@@ -83,9 +83,15 @@ func normalizeBaseURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return trimmed
 	}
+	// Invoke appends "/v1/chat/completions". If MODEL_BASE_URL already ends
+	// with "/v1" (common in provider docs), strip it to avoid "/v1/v1/...".
+	if strings.Trim(u.Path, "/") == "v1" {
+		u.Path = ""
+		u.RawPath = ""
+	}
 	host := u.Hostname()
 	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-		return trimmed
+		return strings.TrimRight(u.String(), "/")
 	}
 	if port := u.Port(); port != "" {
 		u.Host = "host.docker.internal:" + port
@@ -210,7 +216,7 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, p
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return Message{}, nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return Message{}, nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 4096))
 	}
 	var parsed chatCompletionsResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
