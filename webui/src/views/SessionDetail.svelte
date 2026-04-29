@@ -190,7 +190,7 @@
 
   onMount(() => {
     refresh();
-    timer = setInterval(refresh, 3000);
+    timer = setInterval(refresh, 2000);
     tickTimer = setInterval(() => {
       t += 1;
     }, 1000);

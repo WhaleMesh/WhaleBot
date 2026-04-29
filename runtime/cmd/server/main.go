@@ -363,6 +363,31 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist the user turn immediately so WebUI/session list reflect activity before ReAct finishes.
+	userEarly := sessionMessage{Role: "user", Content: req.Message, Timestamp: start}
+	if err := s.appendMessages(sessionID, []sessionMessage{userEarly}); err != nil {
+		slog.Error("append_messages early user failed", "err", err, "trace_id", traceID)
+		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "warn", "runtime_session_append_error", map[string]string{
+			"trace_id":      traceID,
+			"session_id":    sessionID,
+			"module":        "session",
+			"phase":         "early_user",
+			"error_message": err.Error(),
+		})
+	} else if routes.StatsWriteEndpoint != "" {
+		tsU := start
+		if tsU.IsZero() {
+			tsU = time.Now()
+		}
+		go func(endpoint string) {
+			cctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			s.emitStatsEvents(cctx, endpoint, []map[string]any{
+				{"kind": "message", "ts": tsU.UTC().Format(time.RFC3339Nano)},
+			})
+		}(routes.StatsWriteEndpoint)
+	}
+
 	msgs := make([]cmMessage, 0, len(history)+4)
 	msgs = append(msgs, cmMessage{Role: "system", Content: buildSystemPrompt(catalog)})
 	planConfirmed := isPlanConfirmationMessage(req.Message, history)
@@ -422,17 +447,12 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 		Timestamp:      now,
 		ReplyLatencyMS: now.Sub(start).Milliseconds(),
 	}
-	userStored := sessionMessage{
-		Role:      "user",
-		Content:   req.Message,
-		Timestamp: start,
-	}
 	if totalUsage != nil {
 		assistantMsg.PromptTokens = totalUsage.PromptTokens
 		assistantMsg.CompletionTokens = totalUsage.CompletionTokens
 		assistantMsg.TotalTokens = totalUsage.TotalTokens
 	}
-	if err := s.appendMessages(sessionID, []sessionMessage{userStored, assistantMsg}); err != nil {
+	if err := s.appendMessages(sessionID, []sessionMessage{assistantMsg}); err != nil {
 		slog.Error("append_messages failed", "err", err, "trace_id", traceID)
 		s.emitRuntimeEvent(r.Context(), routes.LoggerWriteEndpoint, "error", "runtime_session_append_error", map[string]string{
 			"trace_id":      traceID,
@@ -449,23 +469,17 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 			"phase":      "end",
 		})
 		if ep := routes.StatsWriteEndpoint; ep != "" {
-			tsU := userStored.Timestamp
-			if tsU.IsZero() {
-				tsU = time.Now()
-			}
 			tsA := assistantMsg.Timestamp
 			if tsA.IsZero() {
 				tsA = time.Now()
-			}
-			evs := []map[string]any{
-				{"kind": "message", "ts": tsU.UTC().Format(time.RFC3339Nano)},
-				{"kind": "message", "ts": tsA.UTC().Format(time.RFC3339Nano)},
 			}
 			go func(endpoint string, batch []map[string]any) {
 				cctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 				defer cancel()
 				s.emitStatsEvents(cctx, endpoint, batch)
-			}(ep, evs)
+			}(ep, []map[string]any{
+				{"kind": "message", "ts": tsA.UTC().Format(time.RFC3339Nano)},
+			})
 		}
 	}
 	doneFields := map[string]string{

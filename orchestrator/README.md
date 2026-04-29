@@ -28,7 +28,7 @@ last_verified_from:
 
 ## Purpose
 - Owns the component registry and health lifecycle.
-- Exposes the stable northbound API used by `webui` and `im-telegram`.
+- Exposes the stable northbound API used by `webui` and `adapter-telegram`.
 - `POST /api/v1/chat` requires healthy `runtime`, `session`, and `chat_model` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+chatmodel path).
 
 ## External API
@@ -330,6 +330,6 @@ query_to_endpoint:
 ```
 
 ## Change Safety
-- Keep `/api/v1/chat` request/response schema backward compatible for `webui` and `im-telegram`.
+- Keep `/api/v1/chat` request/response schema backward compatible for `webui` and `adapter-telegram`.
 - Do not remove fallback chat path unless `worker` becomes mandatory.
 - Changes to component `type` strings break discovery (`session`, `chat_model`, `tool`, `environment`, `worker`).

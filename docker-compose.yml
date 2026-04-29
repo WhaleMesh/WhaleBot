@@ -99,22 +99,22 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  im-telegram:
-    build: ./im-telegram
-    image: whalesbot/im-telegram:latest
-    container_name: im-telegram
+  adapter-telegram:
+    build: ./adapter-telegram
+    image: whalesbot/adapter-telegram:latest
+    container_name: adapter-telegram
     environment:
-      IM_TELEGRAM_PORT: ${IM_TELEGRAM_PORT:-8084}
+      ADAPTER_TELEGRAM_PORT: ${ADAPTER_TELEGRAM_PORT:-8084}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       ORCHESTRATOR_URL: http://orchestrator:8080
       SESSION_URL: http://session:8090
-      IM_TELEGRAM_CHAT_TIMEOUT_SEC: ${IM_TELEGRAM_CHAT_TIMEOUT_SEC:-240}
-      SERVICE_HOST: im-telegram
+      ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC: ${ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC:-240}
+      SERVICE_HOST: adapter-telegram
     networks: [mvp_net]
     depends_on:
       orchestrator: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${IM_TELEGRAM_PORT:-8084}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${ADAPTER_TELEGRAM_PORT:-8084}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5

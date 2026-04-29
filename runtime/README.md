@@ -72,7 +72,7 @@ error_behavior:
 ## Internal Calls
 - `SESSION_URL`:
   - `POST /get_context`
-  - `POST /append_messages`
+  - `POST /append_messages` (main `/run` path: user row appended before ReAct, assistant row after completion)
 - `CHATMODEL_URL`:
   - `POST /invoke` (with tools + params)
 - `ORCHESTRATOR_URL`:

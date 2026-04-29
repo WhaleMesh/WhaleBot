@@ -23,7 +23,7 @@ Read this first, then read only the referenced source-of-truth files.
 
 - Ingress:
   - `webui` (browser) -> `orchestrator`
-  - `im-telegram` (long poll) -> `orchestrator`
+  - `adapter-telegram` (long poll) -> `orchestrator`
 - Core flow:
   - `orchestrator` coordinates `session`, `chatmodel`, `runtime`, and tool components.
 - Runtime/tooling:
@@ -67,16 +67,17 @@ Read this first, then read only the referenced source-of-truth files.
   - note: execution-oriented requests now default to plan-first mode (ask for user confirmation before tool execution)
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
-- `im-telegram`
-  - purpose: Telegram gateway
-  - entry: `im-telegram/cmd/server/main.go`
+  - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
+- `adapter-telegram`
+  - purpose: Telegram user I/O adapter (`type=adapter` at orchestrator registration)
+  - entry: `adapter-telegram/cmd/server/main.go`
   - host exposed: no
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
   - note: outbound send path strips internal thought/channel markers (for example `<|channel|>...`) before Telegram delivery
   - note: send flow includes retry + format-fallback (HTML -> plain text) and best-effort failure notice to avoid silent drops
-  - note: streams step-level progress updates from logger events (`react/tool/runtime` phases) during long-running tasks
+  - note: during long runs, polls logger every **2s** and edits one Telegram placeholder in place from logger events (`trace_id` + full `session_id` `telegram_<chatKey>`); text reflects current step/tool action; see `docs/adapter-progress-pattern.md` for the reusable adapter progress pattern (incl. no-edit IM variants)
   - note: can upload binary artifacts to Telegram as documents when runtime returns chat attachments
-  - note: writes progress/attachment status messages to `session` via `SESSION_URL` so Session page stays aligned with IM timeline
+  - note: may append brief artifact lines to `session` via `SESSION_URL` when uploads succeed (not used for per-step progress)
   - note: fenced code blocks are preserved as `<pre><code>` during Telegram markdown-to-HTML conversion
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: first contact uses an auto-generated session id (same key shape as `/new`, not a bare `chat_id` string); when a local chat is `/end`ed, the next plain message auto-starts a new session; background poll notifies IM when the **server** marks a session idle-expired and rotates to a new id
@@ -144,17 +145,17 @@ Read this first, then read only the referenced source-of-truth files.
   - `MODEL_PROVIDER`, `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`
   - localhost model endpoints are rewritten by `chatmodel` to `host.docker.internal`
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `IM_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `CHATMODEL_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
 - IM/session sync:
-  - `SESSION_URL` (for `im-telegram` progress message append)
+  - `SESSION_URL` (for `adapter-telegram` optional artifact append to session)
 - Orchestrator request timeout:
   - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
-- Telegram gateway timeout:
-  - `IM_TELEGRAM_CHAT_TIMEOUT_SEC`
-- Telegram progress stream:
-  - enabled by default via logger polling during chat execution (no extra env required)
+- Telegram adapter chat timeout:
+  - `ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC`
+- Telegram in-chat progress:
+  - single placeholder message edited from logger polling every 2s during chat execution (no extra env required); other adapters should follow `docs/adapter-progress-pattern.md`
 - Userdocker manager lifecycle:
   - `USERDOCKER_TEMP_TTL_SEC` (optional; temp `session_scoped` removal idle; default `USERDOCKER_IDLE_HOURS*3600`)
   - `USERDOCKER_IDLE_HOURS`, `USERDOCKER_IDLE_CHECK_SEC`, `USERDOCKER_ALLOWED_IMAGES`
