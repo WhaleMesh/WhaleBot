@@ -54,6 +54,12 @@ export function formatDurationSec(sec) {
   return `${r}s`;
 }
 
+/** Whole minutes (ceil), for idle / policy copy; 0 → "0". */
+export function formatDurationMinutesCeil(sec) {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '—';
+  return String(Math.ceil(sec / 60));
+}
+
 /**
  * @param {Record<string, unknown>} container — item from userDocker list API
  * @param {number | null} ttlSec

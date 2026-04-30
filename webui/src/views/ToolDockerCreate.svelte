@@ -128,7 +128,7 @@
 <div class="mx-auto max-w-3xl">
   <div class="mb-4 flex flex-wrap items-center gap-3">
     <button type="button" class="btn btn-outline" on:click={() => goto('tools')}>{$_('toolDocker.back')}</button>
-    <h1 class="font-semibold tracking-tight">{$_('toolDocker.title')}</h1>
+    <h1 class="wb-page-title">{$_('toolDocker.title')}</h1>
   </div>
 
   <p

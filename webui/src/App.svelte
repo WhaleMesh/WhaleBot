@@ -19,7 +19,7 @@
   }
 </script>
 
-<div class="app min-h-screen flex flex-col bg-base-100 text-base-content">
+<div class="app wb-page min-h-screen flex flex-col text-base-content">
   <!-- Explicit flex (not DaisyUI navbar) so the center nav keeps flex-1 width; DaisyUI navbar-center often collapses. -->
   <header
     class="flex w-full min-h-14 flex-nowrap items-center gap-2 border-b border-base-300 bg-base-200 px-2 sm:gap-3 sm:px-4"
@@ -66,7 +66,9 @@
     </div>
   </header>
 
-  <main class="flex-1 w-full max-w-[1200px] mx-auto p-4 text-base leading-relaxed sm:p-6">
+  <main
+    class="flex-1 min-w-0 w-full max-w-[1200px] mx-auto p-4 text-base leading-relaxed sm:p-6"
+  >
     {#if $route.name === 'overview'}
       <Overview />
     {:else if $route.name === 'components'}

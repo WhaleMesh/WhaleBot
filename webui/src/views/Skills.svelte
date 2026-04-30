@@ -8,6 +8,8 @@
 
   let list = [];
   let listErr = '';
+  let listInitialLoad = true;
+  let detailLoading = false;
   let detailErr = '';
   let saving = false;
   /** @type {'preview' | 'edit'} */
@@ -35,12 +37,15 @@
     } catch (e) {
       listErr = String(e.message || e);
       list = [];
+    } finally {
+      listInitialLoad = false;
     }
   }
 
   async function loadDetail(id) {
     const my = ++loadToken;
     detailErr = '';
+    detailLoading = true;
     try {
       const data = await api.skillsGet(id);
       if (my !== loadToken) return;
@@ -58,6 +63,8 @@
       detailErr = String(e.message || e);
       form = { title: '', summary: '', body_md: '', tags: '' };
       currentId = '';
+    } finally {
+      if (my === loadToken) detailLoading = false;
     }
   }
 
@@ -77,6 +84,7 @@
           currentId = '';
           form = { title: '', summary: '', body_md: '', tags: '' };
           detailErr = '';
+          detailLoading = false;
           viewMode = 'preview';
         }
       }
@@ -140,23 +148,30 @@
   }
 </script>
 
-<h1 class="font-semibold tracking-tight">{$_('skills.title')}</h1>
-<p class="mt-1 text-base text-base-content/70">{$_('skills.hint')}</p>
+<h1 class="wb-page-title">{$_('skills.title')}</h1>
+<p class="mb-4 text-base text-base-content/70">{$_('skills.hint')}</p>
 
 {#if listErr}
   <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{listErr}</div>
 {/if}
 
-<div class="mt-4 grid min-w-0 grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,17rem)_1fr]">
+<div class="mt-3 grid min-w-0 grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,17rem)_1fr]">
   <aside
-    class="card card-border min-w-0 max-w-full overflow-hidden bg-base-200 shadow-sm md:max-h-[calc(100vh-8rem)] md:overflow-y-auto"
+    class="min-w-0 max-w-full overflow-hidden rounded-xl border border-base-300/40 bg-base-200 p-3 md:max-h-[calc(100vh-8rem)] md:overflow-y-auto"
   >
-    <div class="card-body min-w-0 max-w-full gap-3 p-4">
+    <div class="flex min-w-0 max-w-full flex-col gap-2">
       <div class="flex min-w-0 flex-wrap gap-2">
         <button type="button" class="btn btn-primary shrink-0" on:click={createSkill}>{$_('skills.create')}</button>
         <button type="button" class="btn btn-outline shrink-0" on:click={refreshList}>{$_('skills.refresh')}</button>
       </div>
       <ul class="menu skills-sidebar w-full min-w-0 max-w-full rounded-box bg-base-100 p-0">
+        {#if listInitialLoad}
+          {#each [1, 2, 3, 4, 5, 6] as _}
+            <li class="px-2 py-2">
+              <div class="skeleton h-10 w-full"></div>
+            </li>
+          {/each}
+        {:else}
         {#each list as s (s.id)}
           <li class="min-w-0 max-w-full">
             <button
@@ -167,20 +182,38 @@
               on:click={() => selectRow(s.id)}
             >
               <span class="min-w-0 flex-1 truncate text-base">{s.title || $_('skills.noTitle')}</span>
-              <span class="badge badge-ghost shrink-0 whitespace-nowrap font-mono text-sm">#{s.id}</span>
+              <span class="badge badge-ghost wb-mono shrink-0 whitespace-nowrap text-sm">#{s.id}</span>
             </button>
           </li>
         {:else}
-          <li class="px-3 py-4 text-center text-sm text-base-content/60">{$_('skills.emptyList')}</li>
+          <li class="px-3 py-4 text-center text-base text-base-content/60">{$_('skills.emptyList')}</li>
         {/each}
+        {/if}
       </ul>
     </div>
   </aside>
 
-  <section class="card card-border min-w-0 bg-base-200 shadow-sm">
-    <div class="card-body min-h-[320px] grid gap-4 p-5 md:p-6">
+  <section
+    class="min-h-[320px] min-w-0 rounded-xl border border-base-300/40 bg-base-200 p-3 md:p-4"
+  >
+    <div class="grid min-h-[280px] gap-3">
       {#if !routeId}
         <p class="py-12 text-center text-base text-base-content/60">{$_('skills.placeholder')}</p>
+      {:else if detailLoading}
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="join">
+            <div class="skeleton btn join-item h-10 min-w-[6.5rem]"></div>
+            <div class="skeleton btn join-item h-10 min-w-[6.5rem]"></div>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <div class="skeleton h-10 w-24"></div>
+            <div class="skeleton h-10 w-24"></div>
+          </div>
+        </div>
+        <div class="skeleton h-10 w-full"></div>
+        <div class="skeleton h-24 w-full"></div>
+        <div class="skeleton h-10 w-full"></div>
+        <div class="skeleton min-h-[200px] w-full"></div>
       {:else}
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="join">

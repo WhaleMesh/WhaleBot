@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
   import { _ } from '../lib/i18n.js';
+  import { formatDateTime24 } from '../lib/datetime.js';
 
   let persistentEvents = [];
   let recentLogs = [];
@@ -17,6 +18,7 @@
   let expanded = {};
   let error = '';
   let timer;
+  let initialLoad = true;
 
   function normalize(items = [], sourceName = 'persistent') {
     return items.map((item, idx) => ({
@@ -40,6 +42,8 @@
       error = '';
     } catch (e) {
       error = String(e);
+    } finally {
+      initialLoad = false;
     }
   }
 
@@ -48,7 +52,9 @@
     timer = setInterval(refresh, 3000);
   });
 
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => {
+    if (timer) clearInterval(timer);
+  });
 
   $: activeLogs = source === 'persistent' ? persistentEvents : recentLogs;
   $: cutoff = minutes > 0 ? Date.now() - minutes * 60 * 1000 : 0;
@@ -238,12 +244,12 @@
   $: parsedCode = parsedArgs && typeof parsedArgs === 'object' ? parsedArgs.code : '';
 </script>
 
-<h1 class="font-semibold tracking-tight">{$_('logger.title')}</h1>
+<h1 class="wb-page-title">{$_('logger.title')}</h1>
 {#if error}
   <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
 {/if}
 
-<div class="mt-4 flex flex-wrap items-end gap-3">
+<div class="flex flex-wrap items-end gap-3">
   <label class="form-control w-full max-w-[11rem]">
     <span class="label py-1 text-xs">{$_('logger.source')}</span>
     <select class="select select-bordered select-sm" bind:value={source}>
@@ -314,6 +320,33 @@
   <button type="button" class="btn btn-sm btn-primary shrink-0" on:click={refresh}>{$_('logger.refresh')}</button>
 </div>
 
+{#if initialLoad}
+  <div class="stats stats-vertical shadow-sm sm:stats-horizontal mt-4 w-full max-w-2xl rounded-lg border border-base-300 bg-base-200">
+    {#each [1, 2, 3] as _}
+      <div class="stat place-items-start py-3">
+        <div class="skeleton mb-2 h-3 w-20"></div>
+        <div class="skeleton h-8 w-16"></div>
+      </div>
+    {/each}
+  </div>
+  <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr]">
+    <div class="rounded-lg border border-base-300 bg-base-200 p-2">
+      <div class="flex flex-col gap-0">
+        {#each [1, 2, 3, 4, 5, 6, 7, 8] as _}
+          <div class="skeleton h-10 w-full rounded-none border-b border-base-300/50 last:border-b-0"></div>
+        {/each}
+      </div>
+    </div>
+    <div class="card card-border bg-base-200 shadow-sm">
+      <div class="card-body gap-3 p-4">
+        <div class="skeleton h-6 w-40"></div>
+        <div class="skeleton h-4 w-full"></div>
+        <div class="skeleton h-4 w-[75%]"></div>
+        <div class="skeleton mt-4 h-32 w-full"></div>
+      </div>
+    </div>
+  </div>
+{:else}
 <div class="stats stats-vertical shadow-sm sm:stats-horizontal mt-4 w-full max-w-2xl rounded-lg border border-base-300 bg-base-200">
   <div class="stat place-items-start py-3">
     <div class="stat-title text-xs">{$_('logger.statTotal')}</div>
@@ -325,12 +358,12 @@
   </div>
   <div class="stat place-items-start py-3">
     <div class="stat-title text-xs">{$_('logger.statSource')}</div>
-    <div class="stat-value font-mono text-sm">{source}</div>
+    <div class="stat-value wb-mono text-sm">{source}</div>
   </div>
 </div>
 
 <div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr]">
-  <div class="rounded-lg border border-base-300 bg-base-200 p-2 font-mono text-sm">
+  <div class="rounded-lg border border-base-300 bg-base-200 p-2 text-sm">
     <div class="max-h-[62vh] overflow-y-auto">
       {#each filteredLogs as e}
         <button
@@ -340,7 +373,7 @@
           )}"
           on:click={() => (selected = e)}
         >
-          <span class="shrink-0 text-xs text-base-content/50">{new Date(e.time).toLocaleString()}</span>
+          <span class="wb-mono shrink-0 text-xs text-base-content/50">{formatDateTime24(e.time)}</span>
           <span class={levelBadgeClass(e.level)}>{e.level}</span>
           <span class="min-w-0 flex-1 text-balance text-base-content">{e.message}</span>
           <span class="badge badge-ghost badge-xs shrink-0 font-normal">{e.fields?.module || '-'}</span>
@@ -360,7 +393,10 @@
       <h2 class="card-title text-base">{$_('logger.detailTitle')}</h2>
       {#if selected}
         <div class="flex flex-col gap-1 text-sm">
-          <div><span class="font-semibold">{$_('logger.time')}</span>: {new Date(selected.time).toLocaleString()}</div>
+          <div>
+            <span class="font-semibold">{$_('logger.time')}</span>:
+            <span class="wb-mono">{formatDateTime24(selected.time)}</span>
+          </div>
           <div><span class="font-semibold">{$_('logger.lvl')}</span>: {selected.level}</div>
           <div><span class="font-semibold">{$_('logger.message')}</span>: {selected.message}</div>
           <div><span class="font-semibold">{$_('logger.sourceField')}</span>: {selected.source}</div>
@@ -461,7 +497,7 @@
   </div>
 </div>
 
-<h2 class="mt-6 text-base font-semibold">{$_('logger.flowsTitle')}</h2>
+<h2 class="wb-section-title">{$_('logger.flowsTitle')}</h2>
 <div class="mt-2 max-h-[34vh] overflow-y-auto rounded-lg border border-base-300 bg-base-200 p-3">
   {#each groupedToolFlows as flow}
     <div class="card card-border bg-base-100 shadow-sm mb-3 last:mb-0">
@@ -478,7 +514,7 @@
             class="flex w-full flex-wrap items-baseline gap-2 px-3 py-2 text-left text-xs {levelRowTint(step.level)}"
             on:click={() => (selected = step)}
           >
-            <span class="shrink-0 text-base-content/50">{new Date(step.time).toLocaleString()}</span>
+            <span class="wb-mono shrink-0 text-base-content/50">{formatDateTime24(step.time)}</span>
             <span class={levelBadgeClass(step.level)}>{step.level}</span>
             <span class="badge badge-ghost badge-xs shrink-0">{step.fields?.phase || '-'}</span>
             <span class="min-w-0 flex-1 text-base-content">{step.message}</span>
@@ -491,3 +527,4 @@
     <div class="p-6 text-center text-base-content/60">{$_('logger.noFlows')}</div>
   {/if}
 </div>
+{/if}

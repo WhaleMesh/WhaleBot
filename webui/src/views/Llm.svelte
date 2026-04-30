@@ -240,29 +240,55 @@
       {$_('llm.backAll')}
     </button>
   </div>
-  <h1>{$_('llm.detailTitle', { name: llmName })}</h1>
+  <h1 class="wb-page-title">{$_('llm.detailTitle', { name: llmName })}</h1>
   {#if listError}
     <div role="alert" class="alert alert-soft alert-error mt-3 text-base">{listError}</div>
   {/if}
   {#if !loaded}
-    <p class="mt-2 text-base-content/70">{$_('common.loading')}</p>
+    <div class="wb-surface mt-3 !py-5">
+      <div class="skeleton mb-4 h-5 w-48"></div>
+      <div class="skeleton mb-2 h-4 w-full max-w-xl"></div>
+      <div class="skeleton h-4 w-2/3 max-w-lg"></div>
+    </div>
+    <h2 class="wb-section-title">{$_('llm.modelProfiles')}</h2>
+    <div class="mt-3 overflow-x-auto rounded-xl border border-base-300/40">
+      <table class="table wb-table table-list text-base">
+        <thead>
+          <tr>
+            <th class="w-12"></th>
+            <th>{$_('llm.thName')}</th>
+            <th>{$_('llm.thBaseUrl')}</th>
+            <th>{$_('llm.thModelId')}</th>
+            <th>{$_('llm.thApiKey')}</th>
+            <th>{$_('llm.thActions')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each [1, 2, 3, 4, 5] as _}
+            <tr>
+              {#each [1, 2, 3, 4, 5, 6] as __}
+                <td><div class="skeleton my-1 h-8 w-full min-w-[4rem]"></div></td>
+              {/each}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {:else if !detail}
     <p class="mt-2 text-base-content/70">{$_('llm.notFound', { name: llmName })}</p>
   {:else}
-    <div class="card card-border bg-base-200 mt-3 shadow-sm">
-      <div class="card-body gap-2 p-4">
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span class="text-base text-base-content/60">{$_('llm.registryStatus')}</span>
-          <span class={statusBadgeClass(detail.status)}>{detail.status || $_('common.emDash')}</span>
-        </div>
-        <div class="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
-          <span class="shrink-0 text-base text-base-content/60">{$_('llm.endpoint')}</span>
-          <span class="font-mono text-base break-all text-base-content">{detail.endpoint || $_('common.emDash')}</span>
-        </div>
+    <div class="wb-surface mt-3">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span class="text-base text-base-content/60">{$_('llm.registryStatus')}</span>
+        <span class={statusBadgeClass(detail.status)}>{detail.status || $_('common.emDash')}</span>
+      </div>
+      <div class="mt-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+        <span class="shrink-0 text-base text-base-content/60">{$_('llm.endpoint')}</span>
+        <span class="wb-mono break-all text-base text-base-content">{detail.endpoint || $_('common.emDash')}</span>
       </div>
     </div>
 
-    <h2 class="mt-4 font-semibold text-base-content">{$_('llm.modelProfiles')}</h2>
+    <h2 class="wb-section-title">{$_('llm.modelProfiles')}</h2>
     {#if cfgLoading}<p class="text-base-content/70">{$_('llm.loadingCfg')}</p>{/if}
     {#if cfgError}
       <div role="alert" class="alert alert-soft alert-error mt-2 text-base">{cfgError}</div>
@@ -273,8 +299,8 @@
 
     <p class="hint-html mt-2 text-base text-base-content/70">{@html $_('llm.hintActive')}</p>
 
-    <div class="mt-3 overflow-x-auto rounded-lg border border-base-300">
-      <table class="table table-zebra table-list text-base">
+    <div class="mt-3 overflow-x-auto rounded-xl border border-base-300/40">
+      <table class="table wb-table table-list text-base">
         <thead>
           <tr>
             <th class="w-12 align-middle text-center">{$_('llm.thActive')}</th>
@@ -343,10 +369,10 @@
                 </div>
               </td>
               <td class="align-middle">
-                <input class="input input-bordered my-0 w-full min-w-0" bind:value={m.base_url} />
+                <input class="input input-bordered wb-mono my-0 w-full min-w-0" bind:value={m.base_url} />
               </td>
               <td class="align-middle">
-                <input class="input input-bordered my-0 w-full min-w-0" bind:value={m.model} />
+                <input class="input input-bordered wb-mono my-0 w-full min-w-0" bind:value={m.model} />
               </td>
               <td class="align-middle">
                 <div class="flex min-w-0 items-center gap-2 py-1">
@@ -429,12 +455,23 @@
       class="bg-base-300/40 mt-2 max-h-56 overflow-auto rounded-lg border border-base-300 p-4 font-mono text-base whitespace-pre-wrap break-words text-base-content">{testResult || $_('common.emDash')}</pre>
   {/if}
 {:else}
-  <h1>{$_('llm.listTitle')}</h1>
-  <p class="mt-1 text-base text-base-content/70">{$_('llm.listHint')}</p>
+  <h1 class="wb-page-title">{$_('llm.listTitle')}</h1>
+  <p class="mb-4 text-base text-base-content/70">{$_('llm.listHint')}</p>
   {#if listError}
     <div role="alert" class="alert alert-soft alert-error mt-3 text-base">{listError}</div>
   {/if}
-  <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+  {#if !loaded}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {#each [1, 2, 3, 4] as _}
+        <div class="wb-surface text-left">
+          <div class="skeleton mb-3 h-6 w-2/5"></div>
+          <div class="skeleton h-4 w-full"></div>
+          <div class="skeleton mt-2 h-4 w-4/5"></div>
+        </div>
+      {/each}
+    </div>
+  {:else}
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     {#each llmComponents as c}
       <button
         type="button"
@@ -450,13 +487,14 @@
               {c.status || $_('common.unknown')}
             </span>
           </div>
-          <p class="mt-2 font-mono text-base break-all text-base-content/70">{c.endpoint || $_('common.emDash')}</p>
+          <p class="wb-mono mt-2 break-all text-base text-base-content/70">{c.endpoint || $_('common.emDash')}</p>
         </div>
       </button>
     {:else}
       <p class="text-base-content/60 sm:col-span-2">{$_('llm.emptyRegistry')}</p>
     {/each}
   </div>
+  {/if}
 {/if}
 
 <style>

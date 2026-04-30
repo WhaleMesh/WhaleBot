@@ -2,19 +2,22 @@
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
   import { _, locale, translate } from '../lib/i18n.js';
+  import { formatDateTime24 } from '../lib/datetime.js';
   import {
     typeBadgeStyle,
     parseUserDockerManagerMeta,
     tempRemovalCountdown,
-    formatDurationSec,
   } from '../lib/userdockerPolicy.js';
 
   let components = [];
   let containers = [];
   let error = '';
+  /** @type {ReturnType<typeof setInterval> | undefined} */
   let timer;
   let tick = 0;
+  /** @type {ReturnType<typeof setInterval> | undefined} */
   let tickTimer;
+  let initialLoad = true;
 
   function isUserDockerComponent(c) {
     const type = String(c?.type || '').toLowerCase();
@@ -43,7 +46,10 @@
     const d = containerByName(c.name);
     const r = tempRemovalCountdown(d, udPolicy.ttlSec);
     if (r.kind === 'persistent') return translate(loc, 'components.idlePersistent');
-    if (r.kind === 'temp') return formatDurationSec(r.seconds);
+    if (r.kind === 'temp') {
+      const n = Math.max(1, Math.ceil(r.seconds / 60));
+      return translate(loc, 'common.minutesN', { n: String(n) });
+    }
     return translate(loc, 'common.emDash');
   }
 
@@ -60,11 +66,11 @@
   $: policyLine =
     udPolicy.ttlSec != null && udPolicy.sweepSec != null
       ? translate(loc, 'components.policyBoth', {
-          ttl: formatDurationSec(udPolicy.ttlSec),
-          sweep: formatDurationSec(udPolicy.sweepSec),
+          ttl: String(Math.ceil(udPolicy.ttlSec / 60)),
+          sweep: String(Math.ceil(udPolicy.sweepSec / 60)),
         })
       : udPolicy.ttlSec != null
-        ? translate(loc, 'components.policyTtl', { ttl: formatDurationSec(udPolicy.ttlSec) })
+        ? translate(loc, 'components.policyTtl', { ttl: String(Math.ceil(udPolicy.ttlSec / 60)) })
         : '';
 
   async function refresh() {
@@ -75,6 +81,8 @@
       error = '';
     } catch (e) {
       error = String(e);
+    } finally {
+      initialLoad = false;
     }
   }
 
@@ -86,102 +94,118 @@
     }, 1000);
   });
   onDestroy(() => {
-    clearInterval(timer);
-    if (tickTimer) clearInterval(tickTimer);
+    if (timer) clearInterval(timer);
+    if (tickTimer != null) clearInterval(tickTimer);
   });
 </script>
 
-<h1 class="font-semibold tracking-tight">{$_('components.title')}</h1>
+<h1 class="wb-page-title">{$_('components.title')}</h1>
 {#if error}
-  <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+  <div role="alert" class="alert alert-soft alert-error mt-3 text-base">{error}</div>
 {/if}
 
 {#if policyLine}
-  <p class="mt-3 text-sm text-base-content/70">{policyLine}</p>
+  <p class="mt-3 text-base text-base-content/70">{policyLine}</p>
 {/if}
 
-<h2 class="mt-4 text-base font-semibold text-base-content">{$_('components.udHeading')}</h2>
-<div class="mt-2 overflow-x-auto rounded-lg border border-base-300">
-  <table class="table table-zebra table-list text-base">
-    <thead>
-      <tr>
-        <th>{$_('components.thName')}</th>
-        <th>{$_('components.thType')}</th>
-        <th>{$_('components.thScope')}</th>
-        <th>{$_('components.thIdleRemoval')}</th>
-        <th>{$_('components.thEndpoint')}</th>
-        <th>{$_('components.thStatus')}</th>
-        <th>{$_('components.thVersion')}</th>
-        <th>{$_('components.thFailures')}</th>
-        <th>{$_('components.thLastCheck')}</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each userDockerComponents as c}
-        <tr>
-          <td class="font-medium">{c.name}</td>
-          <td>
-            <span
-              class="inline-flex max-w-full shrink-0 items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-              style={typeBadgeStyle(c.type)}>{c.type}</span
-            >
-          </td>
-          <td class="font-mono text-xs text-base-content/80">{scopeCell(c, loc)}</td>
-          <td class="font-mono text-xs text-warning">{idleRemovalCell(c, loc)}</td>
-          <td class="max-w-xs break-all font-mono text-xs">{c.endpoint}</td>
-          <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
-          <td>{c.version}</td>
-          <td>{c.failure_count}</td>
-          <td class="whitespace-nowrap text-xs">
-            {c.last_checked_at ? new Date(c.last_checked_at).toLocaleTimeString() : $_('common.emDash')}
-          </td>
-        </tr>
-      {:else}
-        <tr>
-          <td colspan="9" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
-        </tr>
+<h2 class="wb-section-title">{$_('components.udHeading')}</h2>
+<div class="overflow-x-auto rounded-lg border border-base-300">
+  {#if initialLoad}
+    <div class="p-4">
+      {#each [1, 2, 3, 4] as _}
+        <div class="skeleton mb-3 h-10 w-full"></div>
       {/each}
-    </tbody>
-  </table>
+    </div>
+  {:else}
+    <table class="table wb-table table-list text-base">
+      <thead>
+        <tr>
+          <th>{$_('components.thName')}</th>
+          <th>{$_('components.thType')}</th>
+          <th>{$_('components.thScope')}</th>
+          <th>{$_('components.thIdleRemoval')}</th>
+          <th>{$_('components.thEndpoint')}</th>
+          <th>{$_('components.thStatus')}</th>
+          <th>{$_('components.thVersion')}</th>
+          <th>{$_('components.thFailures')}</th>
+          <th>{$_('components.thLastCheck')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each userDockerComponents as c}
+          <tr class="hover:bg-base-300/15">
+            <td class="font-medium">{c.name}</td>
+            <td>
+              <span
+                class="inline-flex max-w-full shrink-0 items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+                style={typeBadgeStyle(c.type)}>{c.type}</span
+              >
+            </td>
+            <td class="wb-mono text-sm text-base-content/80">{scopeCell(c, loc)}</td>
+            <td class="wb-mono text-sm text-warning">{idleRemovalCell(c, loc)}</td>
+            <td class="wb-mono max-w-xs break-all text-sm">{c.endpoint}</td>
+            <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
+            <td>{c.version}</td>
+            <td>{c.failure_count}</td>
+            <td class="wb-mono whitespace-nowrap text-sm">
+              {c.last_checked_at ? formatDateTime24(c.last_checked_at) : $_('common.emDash')}
+            </td>
+          </tr>
+        {:else}
+          <tr>
+            <td colspan="9" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
 </div>
 
-<h2 class="mt-6 text-base font-semibold text-base-content">{$_('components.otherHeading')}</h2>
-<div class="mt-2 overflow-x-auto rounded-lg border border-base-300">
-  <table class="table table-zebra table-list text-base">
-    <thead>
-      <tr>
-        <th>{$_('components.thName')}</th>
-        <th>{$_('components.thType')}</th>
-        <th>{$_('components.thEndpoint')}</th>
-        <th>{$_('components.thStatus')}</th>
-        <th>{$_('components.thVersion')}</th>
-        <th>{$_('components.thFailures')}</th>
-        <th>{$_('components.thLastCheck')}</th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each otherComponents as c}
-        <tr>
-          <td class="font-medium">{c.name}</td>
-          <td>
-            <span
-              class="inline-flex max-w-full shrink-0 items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-              style={typeBadgeStyle(c.type)}>{c.type}</span
-            >
-          </td>
-          <td class="max-w-md break-all font-mono text-xs">{c.endpoint}</td>
-          <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
-          <td>{c.version}</td>
-          <td>{c.failure_count}</td>
-          <td class="whitespace-nowrap text-xs">
-            {c.last_checked_at ? new Date(c.last_checked_at).toLocaleTimeString() : $_('common.emDash')}
-          </td>
-        </tr>
-      {:else}
-        <tr>
-          <td colspan="7" class="text-center text-base-content/60">{$_('components.emptyOther')}</td>
-        </tr>
+<h2 class="wb-section-title">{$_('components.otherHeading')}</h2>
+<div class="overflow-x-auto rounded-lg border border-base-300">
+  {#if initialLoad}
+    <div class="p-4">
+      {#each [1, 2, 3] as _}
+        <div class="skeleton mb-3 h-10 w-full"></div>
       {/each}
-    </tbody>
-  </table>
+    </div>
+  {:else}
+    <table class="table wb-table table-list text-base">
+      <thead>
+        <tr>
+          <th>{$_('components.thName')}</th>
+          <th>{$_('components.thType')}</th>
+          <th>{$_('components.thEndpoint')}</th>
+          <th>{$_('components.thStatus')}</th>
+          <th>{$_('components.thVersion')}</th>
+          <th>{$_('components.thFailures')}</th>
+          <th>{$_('components.thLastCheck')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each otherComponents as c}
+          <tr class="hover:bg-base-300/15">
+            <td class="font-medium">{c.name}</td>
+            <td>
+              <span
+                class="inline-flex max-w-full shrink-0 items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+                style={typeBadgeStyle(c.type)}>{c.type}</span
+              >
+            </td>
+            <td class="wb-mono max-w-md break-all text-sm">{c.endpoint}</td>
+            <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
+            <td>{c.version}</td>
+            <td>{c.failure_count}</td>
+            <td class="wb-mono whitespace-nowrap text-sm">
+              {c.last_checked_at ? formatDateTime24(c.last_checked_at) : $_('common.emDash')}
+            </td>
+          </tr>
+        {:else}
+          <tr>
+            <td colspan="7" class="text-center text-base-content/60">{$_('components.emptyOther')}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
 </div>

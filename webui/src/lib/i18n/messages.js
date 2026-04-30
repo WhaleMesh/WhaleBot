@@ -30,6 +30,8 @@ const en = {
     emptyParen: '(empty)',
     copy: 'Copy',
     step: 'step',
+    minutesN: '{n} min',
+    minutesLessThanOne: '<1 min',
   },
   nav: {
     overview: 'Overview',
@@ -63,11 +65,13 @@ const en = {
     userdocker: 'Userdocker',
     systemDocker: 'System Docker',
     policyBoth:
-      'Temporary userdocker idle removal: {ttl} · sweeper every {sweep}',
-    policyTtl: 'Temporary userdocker idle removal: {ttl}',
+      'Temporary userdocker idle removal: {ttl} min without activity · sweeper every {sweep} min',
+    policyTtl: 'Temporary userdocker idle removal: {ttl} min without activity',
     removalPersistent: 'Persistent (no idle removal)',
     removalEta: '~{duration} until idle removal',
+    removalEtaMinutes: '~{n} min until idle removal',
     rowImage: 'Image',
+    rowStatus: 'Health',
     rowType: 'Type',
     rowScope: 'Scope',
     rowLastActive: 'Last active',
@@ -75,7 +79,6 @@ const en = {
     rowState: 'State',
     rowRawStatus: 'Raw Status',
     rowContainerId: 'Container ID',
-    rowType: 'Type',
     rowEndpoint: 'Endpoint',
     rowFailures: 'Failures',
     rowLastCheck: 'Last Check',
@@ -85,8 +88,8 @@ const en = {
   components: {
     title: 'Components',
     policyBoth:
-      'Framework policy: remove temporary (session_scoped) userdockers after {ttl} without activity · idle check every {sweep}',
-    policyTtl: 'Framework policy: temporary userdocker idle removal after {ttl}',
+      'Framework policy: remove temporary (session_scoped) userdockers after {ttl} min without activity · idle check every {sweep} min',
+    policyTtl: 'Framework policy: temporary userdocker idle removal after {ttl} min without activity',
     udHeading: 'Userdocker components',
     otherHeading: 'Other components',
     thName: 'Name',
@@ -115,6 +118,8 @@ const en = {
     empty: 'No sessions yet. Send a message to the bot to start one.',
     expired: 'Expired',
     confirmDelete: 'Delete session "{id}"? This cannot be undone.',
+    idleExpiryMinutes: '{n} min',
+    idleExpiryLessThanOne: '<1 min',
   },
   sessionDetail: {
     back: '← Back',
@@ -138,6 +143,7 @@ const en = {
     latencyLabel: 'latency',
     thoughtSummary: 'Thought (click to expand)',
     noMessages: 'No messages in this session.',
+    unavailable: 'Session data is not available.',
     planMarkPlan: 'plan',
     planMarkConfirmed: 'plan_confirmed',
     tracePlanStatus: 'plan_status:',
@@ -297,6 +303,10 @@ const en = {
 };
 
 const zhPart = {
+  common: {
+    minutesN: '{n} 分钟',
+    minutesLessThanOne: '不足 1 分钟',
+  },
   nav: {
     overview: '概览',
     components: '组件',
@@ -320,11 +330,13 @@ const zhPart = {
     statDelta: '近24小时 +{n}',
     userdocker: '用户 Docker',
     systemDocker: '系统组件',
-    policyBoth: '临时 userdocker 空闲移除：{ttl} · 扫描间隔 {sweep}',
-    policyTtl: '临时 userdocker 空闲移除：{ttl}',
+    policyBoth: '临时 userdocker：无活动 {ttl} 分钟后移除 · 扫描间隔 {sweep} 分钟',
+    policyTtl: '临时 userdocker：无活动 {ttl} 分钟后移除',
     removalPersistent: '持久（不按空闲移除）',
     removalEta: '约 {duration} 后空闲移除',
+    removalEtaMinutes: '约 {n} 分钟后空闲移除',
     rowLastActive: '最近活动',
+    rowStatus: '健康状态',
     rowIdleRemoval: '空闲移除',
     emptyUserdocker: '暂无 userdocker 容器。',
     emptySystem: '暂无系统组件。',
@@ -332,8 +344,8 @@ const zhPart = {
   components: {
     title: '组件',
     policyBoth:
-      '框架策略：临时（session_scoped）userdocker 在 {ttl} 无活动后移除 · 空闲检查间隔 {sweep}',
-    policyTtl: '框架策略：临时 userdocker 在 {ttl} 后按空闲移除',
+      '框架策略：临时（session_scoped）userdocker 无活动 {ttl} 分钟后移除 · 空闲检查间隔 {sweep} 分钟',
+    policyTtl: '框架策略：临时 userdocker 无活动 {ttl} 分钟后按空闲移除',
     udHeading: 'Userdocker 组件',
     otherHeading: '其他组件',
     thName: '名称',
@@ -358,6 +370,8 @@ const zhPart = {
     empty: '暂无会话。向机器人发消息即可开始。',
     expired: '已过期',
     confirmDelete: '删除会话「{id}」？此操作不可撤销。',
+    idleExpiryMinutes: '{n} 分钟',
+    idleExpiryLessThanOne: '不足 1 分钟',
   },
   sessionDetail: {
     back: '← 返回',
@@ -375,6 +389,7 @@ const zhPart = {
     traceEmpty: '此会话尚无运行时事件。',
     thoughtSummary: '思考过程（点击展开）',
     noMessages: '此会话暂无消息。',
+    unavailable: '无法加载会话数据。',
   },
   skills: {
     title: '技能',
@@ -496,6 +511,10 @@ const zhPart = {
 };
 
 const jaPart = {
+  common: {
+    minutesN: '{n} 分',
+    minutesLessThanOne: '1 分未満',
+  },
   nav: {
     overview: '概要',
     components: 'コンポーネント',
@@ -520,11 +539,13 @@ const jaPart = {
     statDelta: '過去24時間 +{n}',
     userdocker: 'ユーザードッカー',
     systemDocker: 'システム Docker',
-    policyBoth: '一時 userdocker のアイドル削除: {ttl} · スイーパ間隔 {sweep}',
-    policyTtl: '一時 userdocker のアイドル削除: {ttl}',
+    policyBoth: '一時 userdocker: 非アクティブ {ttl} 分で削除 · スイーパ間隔 {sweep} 分',
+    policyTtl: '一時 userdocker: 非アクティブ {ttl} 分でアイドル削除',
     removalPersistent: '永続（アイドル削除なし）',
     removalEta: '約 {duration} 後にアイドル削除',
+    removalEtaMinutes: '約 {n} 分後にアイドル削除',
     rowLastActive: '最終アクティブ',
+    rowStatus: 'ヘルス',
     rowIdleRemoval: 'アイドル削除',
     emptyUserdocker: 'userdocker コンテナはありません。',
     emptySystem: 'システムコンポーネントはありません。',
@@ -532,8 +553,8 @@ const jaPart = {
   components: {
     title: 'コンポーネント',
     policyBoth:
-      'フレームワーク方針: 一時（session_scoped）userdocker は {ttl} 非アクティブ後に削除 · チェック間隔 {sweep}',
-    policyTtl: 'フレームワーク方針: 一時 userdocker のアイドル削除は {ttl} 後',
+      'フレームワーク方針: 一時（session_scoped）userdocker は {ttl} 分非アクティブで削除 · チェック間隔 {sweep} 分',
+    policyTtl: 'フレームワーク方針: 一時 userdocker のアイドル削除は {ttl} 分後',
     udHeading: 'Userdocker コンポーネント',
     otherHeading: 'その他のコンポーネント',
     thName: '名前',
@@ -558,6 +579,8 @@ const jaPart = {
     empty: 'セッションはまだありません。ボットへメッセージを送って開始してください。',
     expired: '期限切れ',
     confirmDelete: 'セッション「{id}」を削除しますか？元に戻せません。',
+    idleExpiryMinutes: '{n} 分',
+    idleExpiryLessThanOne: '1 分未満',
   },
   sessionDetail: {
     back: '← 戻る',
@@ -575,6 +598,7 @@ const jaPart = {
     traceEmpty: 'このセッションのランタイムイベントはまだありません。',
     thoughtSummary: '思考（クリックで展開）',
     noMessages: 'このセッションにメッセージはありません。',
+    unavailable: 'セッションデータを読み込めません。',
   },
   skills: {
     title: 'スキル',

@@ -3,10 +3,10 @@
   import { get } from 'svelte/store';
   import { api } from '../lib/api.js';
   import { _, locale, translate } from '../lib/i18n.js';
+  import { formatDateTime24 } from '../lib/datetime.js';
   import {
     parseUserDockerManagerMeta,
     tempRemovalCountdown,
-    formatDurationSec,
     typeBadgeStyle,
   } from '../lib/userdockerPolicy.js';
 
@@ -16,11 +16,13 @@
   let statsError = '';
   let statsDisabled = false;
   let error = '';
-  /** Non-empty when GET /health reports chat_ready === false or health fetch failed. */
   let chatBlockedMessage = '';
+  /** @type {ReturnType<typeof setInterval> | undefined} */
   let timer;
   let tick = 0;
+  /** @type {ReturnType<typeof setInterval> | undefined} */
   let tickTimer;
+  let initialLoad = true;
 
   function fmtCount(n) {
     const v = Number(n);
@@ -28,22 +30,6 @@
     if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + 'M';
     if (v >= 10_000) return (v / 1_000).toFixed(1) + 'k';
     return String(Math.trunc(v));
-  }
-
-  function fmtTs(ts) {
-    if (!ts) return '—';
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return '—';
-    return d.toLocaleString();
-  }
-
-  /** yyyy/MM/dd HH:mm:ss (local wall clock) */
-  function fmtTsSlash(ts) {
-    if (!ts) return '—';
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return '—';
-    const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
   function shortId(v) {
@@ -75,20 +61,11 @@
   }
 
   /** @param {'healthy' | 'warn' | 'bad' | 'unknown'} n */
-  function statusBadgeClass(n) {
-    if (n === 'healthy') return 'badge badge-success badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
-    if (n === 'warn') return 'badge badge-warning badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
-    if (n === 'bad') return 'badge badge-error badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
-    return 'badge badge-ghost badge-sm shrink-0 max-w-[min(100%,14rem)] truncate';
-  }
-
-  /** Card border color aligned with status badge */
-  /** @param {'healthy' | 'warn' | 'bad' | 'unknown'} n */
-  function cardStatusBorderClass(n) {
-    if (n === 'healthy') return 'border-wb border-success';
-    if (n === 'warn') return 'border-wb border-warning';
-    if (n === 'bad') return 'border-wb border-error';
-    return 'border-wb border-base-300';
+  function statusTextClass(n) {
+    if (n === 'healthy') return 'font-medium text-success max-w-[min(100%,14rem)] truncate';
+    if (n === 'warn') return 'font-medium text-warning max-w-[min(100%,14rem)] truncate';
+    if (n === 'bad') return 'font-medium text-error max-w-[min(100%,14rem)] truncate';
+    return 'text-base-content/70 max-w-[min(100%,14rem)] truncate';
   }
 
   /** @param {Record<string, unknown>} d */
@@ -139,6 +116,8 @@
       error = '';
     } catch (e) {
       error = String(e);
+    } finally {
+      initialLoad = false;
     }
   }
 
@@ -150,8 +129,8 @@
     }, 1000);
   });
   onDestroy(() => {
-    clearInterval(timer);
-    if (tickTimer) clearInterval(tickTimer);
+    if (timer) clearInterval(timer);
+    if (tickTimer != null) clearInterval(tickTimer);
   });
 
   $: systemComponents = components.filter((c) => !isUserDockerType(c?.type));
@@ -181,7 +160,8 @@
     const r = tempRemovalCountdown(d, udPolicy.ttlSec);
     if (r.kind === 'persistent') return translate(loc, 'overview.removalPersistent');
     if (r.kind === 'temp') {
-      return translate(loc, 'overview.removalEta', { duration: formatDurationSec(r.seconds) });
+      const n = Math.max(1, Math.ceil(r.seconds / 60));
+      return translate(loc, 'overview.removalEtaMinutes', { n: String(n) });
     }
     return translate(loc, 'common.emDash');
   }
@@ -190,128 +170,197 @@
   $: policyLine =
     udPolicy.ttlSec != null && udPolicy.sweepSec != null
       ? translate(loc, 'overview.policyBoth', {
-          ttl: formatDurationSec(udPolicy.ttlSec),
-          sweep: formatDurationSec(udPolicy.sweepSec),
+          ttl: String(Math.ceil(udPolicy.ttlSec / 60)),
+          sweep: String(Math.ceil(udPolicy.sweepSec / 60)),
         })
       : udPolicy.ttlSec != null
-        ? translate(loc, 'overview.policyTtl', { ttl: formatDurationSec(udPolicy.ttlSec) })
+        ? translate(loc, 'overview.policyTtl', { ttl: String(Math.ceil(udPolicy.ttlSec / 60)) })
         : '';
 </script>
 
-<h1 class="font-semibold tracking-tight">{$_('overview.title')}</h1>
+<h1 class="wb-page-title">{$_('overview.title')}</h1>
 
 {#if chatBlockedMessage}
-  <div role="alert" class="alert alert-warning mt-3 text-sm">
+  <div role="alert" class="alert alert-warning mt-3 text-base">
     {chatBlockedMessage}
   </div>
 {/if}
 {#if error}
-  <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{error}</div>
+  <div role="alert" class="alert alert-soft alert-error mt-3 text-base">{error}</div>
 {/if}
 
 {#if statsDisabled}
-  <div role="status" class="alert alert-soft mt-3 text-sm">
+  <div role="status" class="alert alert-soft mt-3 text-base">
     {@html $_('overview.statsDisabled')}
   </div>
 {:else if statsError}
-  <div role="status" class="alert alert-soft alert-warning mt-3 text-sm">
+  <div role="status" class="alert alert-soft alert-warning mt-3 text-base">
     {$_('overview.statsErrPrefix')}{statsError}
   </div>
 {/if}
 
 {#if !statsDisabled}
-  <div
-    class="stats stats-vertical mb-6 w-full rounded-box border border-base-300 bg-base-200 shadow-sm lg:stats-horizontal"
-  >
-    <div class="stat place-items-center border-base-300 px-4 py-3 lg:border-e">
-      <div class="stat-title text-base text-base-content/70">{$_('overview.statMessages')}</div>
-      <div class="stat-value font-mono text-primary">{fmtCount(messagesStat.total)}</div>
-      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(messagesStat.delta) })}</div>
+  {#if initialLoad}
+    <div
+      class="stats stats-vertical mb-6 w-full shadow-sm lg:stats-horizontal rounded-lg border border-base-300 bg-base-200"
+    >
+      {#each [1, 2, 3] as _}
+        <div class="stat place-items-start py-4">
+          <div class="skeleton h-3 w-28"></div>
+          <div class="skeleton mt-2 h-9 w-24"></div>
+          <div class="skeleton mt-2 h-3 w-32"></div>
+        </div>
+      {/each}
     </div>
-    <div class="stat place-items-center border-base-300 px-4 py-3 lg:border-e">
-      <div class="stat-title text-base text-base-content/70">{$_('overview.statToolCalls')}</div>
-      <div class="stat-value font-mono text-secondary">{fmtCount(toolCallsStat.total)}</div>
-      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(toolCallsStat.delta) })}</div>
+  {:else}
+    <div
+      class="stats stats-vertical mb-6 w-full shadow-sm lg:stats-horizontal rounded-lg border border-base-300 bg-base-200"
+    >
+      <div class="stat place-items-start py-4">
+        <div class="stat-title text-base text-base-content/70">{$_('overview.statMessages')}</div>
+        <div class="stat-value font-mono text-primary">{fmtCount(messagesStat.total)}</div>
+        <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(messagesStat.delta) })}</div>
+      </div>
+      <div class="stat place-items-start py-4">
+        <div class="stat-title text-base text-base-content/70">{$_('overview.statToolCalls')}</div>
+        <div class="stat-value font-mono text-secondary">{fmtCount(toolCallsStat.total)}</div>
+        <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(toolCallsStat.delta) })}</div>
+      </div>
+      <div class="stat place-items-start py-4">
+        <div class="stat-title text-base text-base-content/70">{$_('overview.statTokens')}</div>
+        <div class="stat-value font-mono text-accent">{fmtCount(tokensStat.total)}</div>
+        <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(tokensStat.delta) })}</div>
+      </div>
     </div>
-    <div class="stat place-items-center px-4 py-3">
-      <div class="stat-title text-base text-base-content/70">{$_('overview.statTokens')}</div>
-      <div class="stat-value font-mono text-accent">{fmtCount(tokensStat.total)}</div>
-      <div class="stat-desc text-success">{$_('overview.statDelta', { n: fmtCount(tokensStat.delta) })}</div>
-    </div>
-  </div>
+  {/if}
 {/if}
 
-<h2 class="mt-2 text-base font-semibold text-base-content">{$_('overview.userdocker')}</h2>
+<h2 class="wb-section-title">{$_('overview.userdocker')}</h2>
 {#if policyLine}
   <p class="mb-3 text-base text-base-content/70">{policyLine}</p>
 {/if}
-<div class="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-  {#each userdockers as d}
-    {@const ns = normalizeStatus(d.status || d.state)}
-    <div class="card bg-base-200 shadow-sm {cardStatusBorderClass(ns)}">
-      <div class="card-body gap-3 p-4">
-        <div class="flex min-w-0 items-start justify-between gap-2">
-          <h3 class="card-title min-w-0 flex-1 text-lg font-semibold leading-snug">
+<div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {#if initialLoad}
+    {#each [1, 2, 3] as _}
+      <div class="wb-surface flex flex-col gap-3">
+        <div class="flex min-w-0 items-center justify-between gap-2">
+          <div class="skeleton h-7 min-w-0 flex-1 max-w-[14rem]"></div>
+          <div class="skeleton h-7 w-14 shrink-0 rounded-md"></div>
+        </div>
+        <div class="skeleton h-4 w-28"></div>
+        <div class="grid gap-2 [grid-template-columns:max-content_1fr]">
+          {#each [1, 2, 3, 4, 5] as __}
+            <div class="skeleton h-4 w-16"></div>
+            <div class="skeleton h-4 w-full"></div>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  {:else}
+    {#each userdockers as d}
+      {@const ns = normalizeStatus(d.status || d.state)}
+      <div class="wb-surface flex flex-col gap-3">
+        <div class="flex min-w-0 items-center justify-between gap-2">
+          <h3 class="min-w-0 flex-1 text-xl font-bold leading-snug text-base-content">
             {d.name || $_('common.emDash')}
           </h3>
-          <span class={statusBadgeClass(ns)}>{displayStatus(d.status || d.state)}</span>
+          <span
+            class="inline-flex max-w-[min(100%,12rem)] shrink-0 items-center truncate rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+            style={typeBadgeStyle(userDockerTypeLabel(d))}>{userDockerTypeLabel(d)}</span
+          >
         </div>
-        <dl class="space-y-1.5 text-base">
-          <div class="flex gap-2">
-            <dt class="text-base-content/60 shrink-0">{$_('overview.rowType')}</dt>
-            <dd class="min-w-0 text-right">
-              <span
-                class="inline-flex max-w-full items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-                style={typeBadgeStyle(userDockerTypeLabel(d))}>{userDockerTypeLabel(d)}</span
-              >
-            </dd>
-          </div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowImage')}</dt><dd class="min-w-0 break-all font-mono text-right">{d.image || $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowScope')}</dt><dd class="min-w-0 break-all text-right">{d.scope || $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowLastActive')}</dt><dd class="min-w-0 text-right">{fmtTs(d.last_active_at)}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowIdleRemoval')}</dt><dd class="min-w-0 text-right text-warning">{removalLine(d, loc)}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowState')}</dt><dd class="min-w-0 break-all text-right">{d.state || $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowRawStatus')}</dt><dd class="min-w-0 break-all text-right">{d.status || $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowContainerId')}</dt><dd class="font-mono text-right">{shortId(d.id)}</dd></div>
+        <p class="text-sm text-neutral-content/50 wb-mono">{shortId(d.id)}</p>
+        <dl class="grid gap-x-4 gap-y-2 text-base [grid-template-columns:max-content_minmax(0,1fr)]">
+          <dt class="text-base-content/60">{$_('overview.rowStatus')}</dt>
+          <dd class="min-w-0 flex justify-end">
+            <span class={statusTextClass(ns)}>{displayStatus(d.status || d.state)}</span>
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowImage')}</dt>
+          <dd class="min-w-0 text-right">
+            <span class="wb-mono line-clamp-2 break-all text-sm" title={d.image || ''}>{d.image || $_('common.emDash')}</span>
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowScope')}</dt>
+          <dd class="min-w-0 text-right">
+            <span class="line-clamp-2 break-all" title={d.scope || ''}>{d.scope || $_('common.emDash')}</span>
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowLastActive')}</dt>
+          <dd class="wb-mono min-w-0 text-right text-sm">{formatDateTime24(d.last_active_at)}</dd>
+          <dt class="text-base-content/60">{$_('overview.rowIdleRemoval')}</dt>
+          <dd class="min-w-0 text-right text-warning">{removalLine(d, loc)}</dd>
+          <dt class="text-base-content/60">{$_('overview.rowState')}</dt>
+          <dd class="min-w-0 text-right">
+            <span class="line-clamp-2 break-all" title={d.state || ''}>{d.state || $_('common.emDash')}</span>
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowRawStatus')}</dt>
+          <dd class="min-w-0 text-right">
+            <span class="line-clamp-2 break-all" title={d.status || ''}>{d.status || $_('common.emDash')}</span>
+          </dd>
         </dl>
       </div>
-    </div>
-  {:else}
-    <div class="alert alert-soft col-span-full text-sm">{$_('overview.emptyUserdocker')}</div>
-  {/each}
+    {:else}
+      <div class="alert alert-soft col-span-full text-base">{$_('overview.emptyUserdocker')}</div>
+    {/each}
+  {/if}
 </div>
 
-<h2 class="text-base font-semibold text-base-content">{$_('overview.systemDocker')}</h2>
-<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-  {#each systemComponents as c}
-    {@const ns = normalizeStatus(c.status)}
-    <div class="card bg-base-200 shadow-sm {cardStatusBorderClass(ns)}">
-      <div class="card-body gap-3 p-4">
-        <div class="flex min-w-0 items-start justify-between gap-2">
-          <h3 class="card-title min-w-0 flex-1 text-lg font-semibold leading-snug">
+<h2 class="wb-section-title">{$_('overview.systemDocker')}</h2>
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {#if initialLoad}
+    {#each [1, 2] as _}
+      <div class="wb-surface flex flex-col gap-3">
+        <div class="flex min-w-0 items-center justify-between gap-2">
+          <div class="skeleton h-7 min-w-0 flex-1 max-w-[14rem]"></div>
+          <div class="skeleton h-7 w-14 shrink-0 rounded-md"></div>
+        </div>
+        <div class="grid gap-2 [grid-template-columns:max-content_1fr]">
+          {#each [1, 2, 3, 4] as __}
+            <div class="skeleton h-4 w-20"></div>
+            <div class="skeleton h-4 w-full"></div>
+          {/each}
+        </div>
+      </div>
+    {/each}
+  {:else}
+    {#each systemComponents as c}
+      {@const ns = normalizeStatus(c.status)}
+      <div class="wb-surface flex flex-col gap-3">
+        <div class="flex min-w-0 items-center justify-between gap-2">
+          <h3 class="min-w-0 flex-1 text-xl font-bold leading-snug text-base-content">
             {c.name || $_('common.emDash')}
           </h3>
-          <span class={statusBadgeClass(ns)}>{c.status || $_('common.unknown')}</span>
+          <span
+            class="inline-flex max-w-[min(100%,12rem)] shrink-0 items-center truncate rounded-md px-2 py-0.5 font-mono text-xs font-normal"
+            style={typeBadgeStyle(c.type || '')}>{c.type || $_('common.emDash')}</span
+          >
         </div>
-        <dl class="space-y-1.5 text-base">
-          <div class="flex gap-2">
-            <dt class="text-base-content/60 shrink-0">{$_('overview.rowType')}</dt>
-            <dd class="min-w-0 text-right">
-              <span
-                class="inline-flex max-w-full items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-                style={typeBadgeStyle(c.type || '')}>{c.type || $_('common.emDash')}</span
+        <dl class="grid gap-x-4 gap-y-2 text-base [grid-template-columns:max-content_minmax(0,1fr)]">
+          <dt class="text-base-content/60">{$_('overview.rowStatus')}</dt>
+          <dd class="min-w-0 flex justify-end">
+            <span class={statusTextClass(ns)}>{c.status || $_('common.unknown')}</span>
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowEndpoint')}</dt>
+          <dd class="min-w-0 text-right">
+            {#if c.endpoint}
+              <div
+                class="tooltip tooltip-top inline-block max-w-full text-right before:max-w-[min(100vw-2rem,42rem)] before:break-all before:text-left"
+                data-tip={c.endpoint}
               >
-            </dd>
-          </div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowEndpoint')}</dt><dd class="min-w-0 break-all font-mono text-right">{c.endpoint || $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowFailures')}</dt><dd class="text-right">{Number.isFinite(c.failure_count) ? c.failure_count : $_('common.emDash')}</dd></div>
-          <div class="flex gap-2"><dt class="text-base-content/60 shrink-0">{$_('overview.rowLastCheck')}</dt><dd class="text-right font-mono">{fmtTsSlash(c.last_checked_at)}</dd></div>
+                <span class="wb-mono block text-sm leading-snug line-clamp-2 break-all" title={c.endpoint}>{c.endpoint}</span>
+              </div>
+            {:else}
+              <span class="text-sm">{$_('common.emDash')}</span>
+            {/if}
+          </dd>
+          <dt class="text-base-content/60">{$_('overview.rowFailures')}</dt>
+          <dd class="text-right">{Number.isFinite(c.failure_count) ? c.failure_count : $_('common.emDash')}</dd>
+          <dt class="text-base-content/60">{$_('overview.rowLastCheck')}</dt>
+          <dd class="wb-mono text-right text-sm">{formatDateTime24(c.last_checked_at)}</dd>
         </dl>
       </div>
-    </div>
-  {:else}
-    <div class="alert alert-soft col-span-full text-sm">{$_('overview.emptySystem')}</div>
-  {/each}
+    {:else}
+      <div class="alert alert-soft col-span-full text-base">{$_('overview.emptySystem')}</div>
+    {/each}
+  {/if}
 </div>
 
 <style>

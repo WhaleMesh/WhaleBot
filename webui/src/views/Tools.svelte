@@ -5,7 +5,7 @@
   const tools = [{ id: 'docker-create', status: 'available' }];
 </script>
 
-<h1>{$_('tools.title')}</h1>
+<h1 class="wb-page-title">{$_('tools.title')}</h1>
 <p class="mb-4 text-base text-base-content/70">{$_('tools.hint')}</p>
 
 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
