@@ -173,7 +173,7 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
-Implementation: resolves `FirstHealthyByType("stats")` and reverse-proxies the response body and status code.
+Implementation: resolves `FirstReadyByType("stats")` (liveness + optional `status_endpoint` / `operational_state`) and reverse-proxies the response body and status code.
 
 ### Skills API (reverse proxy)
 

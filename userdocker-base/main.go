@@ -23,13 +23,14 @@ import (
 )
 
 type registerRequest struct {
-	Name           string            `json:"name"`
-	Type           string            `json:"type"`
-	Version        string            `json:"version"`
-	Endpoint       string            `json:"endpoint"`
-	HealthEndpoint string            `json:"health_endpoint"`
-	Capabilities   []string          `json:"capabilities"`
-	Meta           map[string]string `json:"meta"`
+	Name             string            `json:"name"`
+	Type             string            `json:"type"`
+	Version          string            `json:"version"`
+	Endpoint         string            `json:"endpoint"`
+	HealthEndpoint   string            `json:"health_endpoint"`
+	StatusEndpoint   string            `json:"status_endpoint,omitempty"`
+	Capabilities     []string          `json:"capabilities"`
+	Meta             map[string]string `json:"meta"`
 }
 
 type interfaceEndpoint struct {

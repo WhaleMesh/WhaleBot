@@ -43,7 +43,8 @@ Read this first, then read only the referenced source-of-truth files.
   - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
   - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
-  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): all of `runtime`, `session`, `llm` (registered component `llm-openai`) must be healthy to chat; `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
+  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (`status=healthy` from `health_endpoint` probes) **and** operationally ready when they register an optional `status_endpoint` (`operational_state` from `GET status_endpoint` must be `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
+  - note: periodic health loop: **liveness** uses each component’s `health_endpoint` only (2xx resets failure counter; failures can mark `removed` after `HEALTHCHECK_FAIL_THRESHOLD`). If `status_endpoint` is set, the loop also `GET`s it (JSON `operational_state`, English snake_case) and stores `operational_state` / `operational_checked_at` on the registry row **without** affecting removal.
   - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
   - note: reverse-proxies `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` to the healthy `type=skills` component (`503` when none)
 - `session`
@@ -58,7 +59,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
   - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
-  - note: without an **active** model profile, `GET /health` returns **503** (so chat min-stack treats the component as not ready) and `POST /invoke` returns `success=false` with an explanatory `error`.
+  - note: `GET /health` is **liveness-only** (always HTTP 200 when the process is up). `GET /status` returns JSON `{"service":"llm-openai","operational_state":"normal"|"no_valid_configuration"}` (HTTP 200); orchestrator ingests `operational_state` for readiness/chat gating. Without an active model, `POST /invoke` still returns `success=false` with an explanatory `error`.
 - `runtime`
   - purpose: ReAct loop execution engine
   - entry: `runtime/cmd/server/main.go`
@@ -201,7 +202,7 @@ Read this first, then read only the referenced source-of-truth files.
 ## 7) Runtime Capability Injection
 
 - Runtime discovers capabilities per chat run from `GET /api/v1/components` on orchestrator.
-- Only components with `status=healthy` are considered.
+- Only components that pass **readiness** are considered: `status=healthy` from liveness, and when `status_endpoint` is registered, `operational_state` must be `normal` (or omit `status_endpoint` to rely on liveness only).
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).

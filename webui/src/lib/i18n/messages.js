@@ -148,6 +148,13 @@ const en = {
     idlePersistent: 'Persistent',
     emptyUd: 'No userdocker components registered yet.',
     emptyOther: 'No non-userdocker components registered yet.',
+    operationalState: {
+      normal: 'Operating normally',
+      no_valid_configuration: 'No valid configuration',
+      status_check_error: 'Status check failed',
+      unknown: 'Readiness unknown',
+    },
+    registryStatusHint: 'Registry: {status}',
   },
   sessions: {
     title: 'Sessions',
@@ -473,6 +480,13 @@ const zhPart = {
     idlePersistent: '持久',
     emptyUd: '尚未注册 userdocker 组件。',
     emptyOther: '尚未注册非 userdocker 组件。',
+    operationalState: {
+      normal: '运行正常',
+      no_valid_configuration: '无有效配置',
+      status_check_error: '状态检查失败',
+      unknown: '就绪状态未知',
+    },
+    registryStatusHint: '注册表状态：{status}',
   },
   sessions: {
     title: '会话',
@@ -751,6 +765,13 @@ const jaPart = {
     idlePersistent: '永続',
     emptyUd: 'userdocker コンポーネントが未登録です。',
     emptyOther: 'userdocker 以外のコンポーネントが未登録です。',
+    operationalState: {
+      normal: '正常稼働',
+      no_valid_configuration: '有効な設定がありません',
+      status_check_error: 'ステータス取得に失敗',
+      unknown: '準備状態が不明',
+    },
+    registryStatusHint: 'レジストリ: {status}',
   },
   sessions: {
     title: 'セッション',
