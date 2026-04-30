@@ -121,7 +121,6 @@
       <thead>
         <tr>
           <th>{$_('components.thName')}</th>
-          <th>{$_('components.thType')}</th>
           <th>{$_('components.thScope')}</th>
           <th>{$_('components.thIdleRemoval')}</th>
           <th>{$_('components.thEndpoint')}</th>
@@ -135,12 +134,6 @@
         {#each userDockerComponents as c}
           <tr class="hover:bg-base-300/15">
             <td class="font-medium">{c.name}</td>
-            <td>
-              <span
-                class="inline-flex max-w-full shrink-0 items-center rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-                style={typeBadgeStyle(c.type)}>{c.type}</span
-              >
-            </td>
             <td class="wb-mono text-sm text-base-content/80">{scopeCell(c, loc)}</td>
             <td class="wb-mono text-sm text-warning">{idleRemovalCell(c, loc)}</td>
             <td class="wb-mono max-w-xs break-all text-sm">{c.endpoint}</td>
@@ -153,7 +146,7 @@
           </tr>
         {:else}
           <tr>
-            <td colspan="9" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
+            <td colspan="8" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
           </tr>
         {/each}
       </tbody>

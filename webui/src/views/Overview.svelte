@@ -68,16 +68,6 @@
     return 'text-base-content/70 max-w-[min(100%,14rem)] truncate';
   }
 
-  /** @param {Record<string, unknown>} d */
-  function userDockerTypeLabel(d) {
-    const raw = d && typeof d.labels === 'object' && d.labels != null ? d.labels : {};
-    const labels = /** @type {Record<string, unknown>} */ (raw);
-    const fromLabel = labels['mvp.type'];
-    const t = String(fromLabel != null ? fromLabel : d?.type || '')
-      .trim();
-    return t || 'userdocker';
-  }
-
   async function refresh() {
     const loc = get(locale);
     try {
@@ -245,7 +235,6 @@
       <div class="wb-surface flex flex-col gap-3">
         <div class="flex min-w-0 items-center justify-between gap-2">
           <div class="skeleton h-7 min-w-0 flex-1 max-w-[14rem]"></div>
-          <div class="skeleton h-7 w-14 shrink-0 rounded-md"></div>
         </div>
         <div class="skeleton h-4 w-28"></div>
         <div class="grid gap-2 [grid-template-columns:max-content_1fr]">
@@ -264,10 +253,6 @@
           <h3 class="min-w-0 flex-1 text-xl font-bold leading-snug text-base-content">
             {d.name || $_('common.emDash')}
           </h3>
-          <span
-            class="inline-flex max-w-[min(100%,12rem)] shrink-0 items-center truncate rounded-md px-2 py-0.5 font-mono text-xs font-normal"
-            style={typeBadgeStyle(userDockerTypeLabel(d))}>{userDockerTypeLabel(d)}</span
-          >
         </div>
         <p class="text-sm text-neutral-content/50 wb-mono">{shortId(d.id)}</p>
         <dl class="grid gap-x-4 gap-y-2 text-base [grid-template-columns:max-content_minmax(0,1fr)]">
