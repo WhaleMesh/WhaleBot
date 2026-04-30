@@ -18,10 +18,13 @@ export function typeBadgeStyle(type) {
   const h = hashString32(type);
   const hue = h % 360;
   const sat = 46 + (h % 24);
-  const bgL = 20 + (h % 10);
-  const fgL = 76 + (h % 14);
-  const brL = 34 + (h % 12);
-  return `--tb-bg:hsl(${hue},${sat}%,${bgL}%);--tb-fg:hsl(${hue},62%,${fgL}%);--tb-border:hsl(${hue},${sat}%,${brL}%);`;
+  const bgL = 14 + (h % 8);
+  const fgL = 78 + (h % 14);
+  const brL = 28 + (h % 12);
+  const bg = `hsl(${hue},${sat}%,${bgL}%)`;
+  const fg = `hsl(${hue},62%,${fgL}%)`;
+  const br = `hsl(${hue},${sat}%,${brL}%)`;
+  return `background-color:${bg};color:${fg};border:1px solid ${br};`;
 }
 
 /**
@@ -49,6 +52,12 @@ export function formatDurationSec(sec) {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${r}s`;
   return `${r}s`;
+}
+
+/** Whole minutes (ceil), for idle / policy copy; 0 → "0". */
+export function formatDurationMinutesCeil(sec) {
+  if (sec == null || !Number.isFinite(sec) || sec < 0) return '—';
+  return String(Math.ceil(sec / 60));
 }
 
 /**

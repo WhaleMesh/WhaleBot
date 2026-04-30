@@ -126,13 +126,16 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Svelte dashboard via caddy
   - entry: `webui/src/main.js`
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalesbot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
+  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Navbar includes a language selector.
   - note: router is hash-based so refresh keeps current page
+  - note: top navbar uses **equal-width** grid columns for primary routes; brand + language selector sit at the ends.
   - note: includes dedicated `Logger` page in addition to overview logs
   - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
   - note: session list/detail support hard-delete via orchestrator `DELETE /api/v1/sessions/{id}`; list shows idle-expiry column; session detail shows expiry countdown
   - note: Overview + Components read `user-docker-manager` registry `meta.userdocker_temp_ttl_sec` / `meta.userdocker_idle_check_sec` and combine with `GET /api/v1/tools/user-dockers` list (`last_active_at`, `scope`) for temporary-container idle-removal countdown; Components type badges use a string-hash palette
-  - note: Overview top renders three stat cards (对话数量 / 工具调用次数 / Token 消耗) from `GET /api/v1/stats/overview` when the stats service is enabled; shows an explicit "未启用统计服务" banner on `503 stats_disabled`; values use k/M shorthand (>10k -> `Nk`, >1M -> `NM`, one decimal) and a small `近24小时 +N` delta line (`last_24h` from stats service window)
+  - note: Overview top renders three stat cards (messages / tool calls / tokens) from `GET /api/v1/stats/overview` when the stats service is enabled; shows a stats-disabled banner on `503 stats_disabled`; values use k/M shorthand (>10k -> `Nk`, >1M -> `NM`, one decimal) and a small last-24h delta line (`last_24h` from stats service window)
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
@@ -188,7 +191,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Treat `docker-compose.yml` + `.env.example` as runtime truth.
 - Do not infer service wiring from stale docs without compose confirmation.
 - Keep changes minimal and consistent with current compose/network model.
-- If you change architecture, service list, env vars, ports, run commands, or status assumptions, you MUST update this file in the same change.
+- If you change architecture, service list, env vars, ports, run commands, or status assumptions, you MUST update this file in the same change, and update the relevant per-service `README.md` when that service’s documented behavior or stack changes.
 
 ## 7) Runtime Capability Injection
 
@@ -226,6 +229,7 @@ Update triggers (any one requires update):
 - add/remove/rename env vars in `.env.example` or service env defaults
 - change local runbook, bootstrap steps, or operational constraints
 - change project status, known drifts, or active roadmap assumptions
+- when a **component’s** behavior, stack, or operational contract changes, also update that component’s **`README.md`** under its directory (same spirit as updating this file), e.g. `webui/README.md`, `orchestrator/README.md`, etc.
 
 ## 9) Update Checklist (after each project change)
 
@@ -233,4 +237,5 @@ Update triggers (any one requires update):
 - env groups still match `.env.example`
 - runbook still works (`cp .env.example .env` + `docker compose up --build`)
 - drift notes still accurate (remove resolved drift, add new drift)
+- root `README.md` and any touched service `README.md` under subdirectories stay aligned with reality
 - this file stays concise (high-signal, low-token)
