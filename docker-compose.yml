@@ -247,6 +247,8 @@ services:
       # Browser-facing URL — must be reachable from the host, not just from
       # inside the mvp_net network.
       ORCHESTRATOR_URL: http://localhost:${ORCHESTRATOR_PORT:-8080}
+    volumes:
+      - webui_data:/data
     ports:
       - "${WEBUI_PORT:-3000}:80"
     networks: [mvp_net]
@@ -299,3 +301,4 @@ volumes:
   stats_data:
   workspace_data:
   llm_openai_data:
+  webui_data:

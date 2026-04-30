@@ -1,9 +1,14 @@
 :80 {
-    root * /srv
+	handle /api/webui/* {
+		reverse_proxy 127.0.0.1:8089
+	}
+	handle {
+		root * /srv
 
-    @envjs path /env.js
-    header @envjs Cache-Control "no-store"
+		@envjs path /env.js
+		header @envjs Cache-Control "no-store"
 
-    try_files {path} /index.html
-    file_server
+		try_files {path} /index.html
+		file_server
+	}
 }
