@@ -1,4 +1,4 @@
-module github.com/whalesbot/workspace
+module github.com/whalebot/workspace
 
 go 1.22
 

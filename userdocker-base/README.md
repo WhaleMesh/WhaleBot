@@ -5,7 +5,7 @@
 service: userdocker-base
 role: minimal_spawnable_user_container_image
 compose_service: userdocker-base
-image: whalesbot/userdocker-base:latest
+image: whalebot/userdocker-base:latest
 build_context: ./userdocker-base
 owner: tbd
 runtime: go_http_binary_used_as_base_image
@@ -17,17 +17,25 @@ component_registration:
   type: COMPONENT_TYPE
   capabilities:
     - long_running
+    - introspection
+    - exec
+    - files
+    - artifact_export
+    - userdocker.v1
   meta:
-    origin: tool-docker-creator
+    origin: user-docker-manager
+    interface_version: userdocker.v1
 last_verified_from:
   - docker-compose.yml
   - userdocker-base/main.go
 ```
 
 ## Purpose
-- Provides a tiny HTTP service image intended to be spawned dynamically by `tool-docker-creator`.
+- Provides a tiny HTTP service image intended to be spawned dynamically by the user-docker-manager.
 - Optionally self-registers to orchestrator when `ORCHESTRATOR_URL` is provided.
 - In compose, it is kept running as a build/helper container (`sleep infinity`).
+- Implements the public `userdocker.v1` interface descriptor endpoint.
+- Provides workspace-bounded exec/files/artifact APIs used by `user-docker-manager`.
 
 ## External API
 ### Endpoint: GET /health
@@ -51,6 +59,34 @@ response:
   content_type: text/plain
   body: "userdocker <name> (type=<type>)"
 error_behavior: standard_http_status
+```
+
+### Endpoint: GET /api/v1/userdocker/interface
+```yaml
+method: GET
+path: /api/v1/userdocker/interface
+request: none
+response:
+  interface_version: userdocker.v1
+  service_name: string
+  service_type: userdocker
+  description: string
+  endpoints: {method,path,description}[]
+  capabilities: {name,description}[]
+error_behavior: standard_http_status
+```
+
+### Endpoint Group: Workspace command and file APIs
+```yaml
+exec: POST /api/v1/userdocker/exec
+files_list: GET /api/v1/userdocker/files?path=.
+file_read: GET /api/v1/userdocker/file?path=...
+file_write: PUT /api/v1/userdocker/file
+file_delete: DELETE /api/v1/userdocker/file?path=...
+mkdir: POST /api/v1/userdocker/files/mkdir
+move: POST /api/v1/userdocker/files/move
+artifact_export: GET /api/v1/userdocker/artifacts/export?path=...
+path_policy: all paths are constrained under WORKSPACE_ROOT
 ```
 
 ## Internal Calls
@@ -90,8 +126,16 @@ required: false
 effect: when_empty_no_self_registration_when_set_periodic_registration_enabled
 ```
 
+### WORKSPACE_ROOT
+```yaml
+name: WORKSPACE_ROOT
+default: /workspace
+required: false
+effect: root_dir_for_exec_and_file_operations
+```
+
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: none.
 - healthcheck: none in compose helper mode.
 - volumes: none.
@@ -106,11 +150,14 @@ aliases:
 query_to_endpoint:
   health: GET /health
   root_info: GET /
+  exec: POST /api/v1/userdocker/exec
+  file_ops: /api/v1/userdocker/file(s)*
+  export_artifact: GET /api/v1/userdocker/artifacts/export
 used_by:
-  tool-docker-creator: as_default_spawn_image
+  user-docker-manager: as_default_spawn_image
 ```
 
 ## Change Safety
-- Keep backward-compatible self-registration payload keys (`name`, `type`, `endpoint`, `health_endpoint`, `capabilities`, `meta`).
+- Keep self-registration payload keys (`name`, `type`, `endpoint`, `health_endpoint`, `capabilities`, `meta`) stable across all userdocker implementations.
 - Compose helper behavior (`sleep infinity`) should not be mistaken for production spawned container behavior.
 - Endpoint host is built from `COMPONENT_NAME`; changing this affects discoverability.

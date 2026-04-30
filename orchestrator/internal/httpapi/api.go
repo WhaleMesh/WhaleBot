@@ -5,19 +5,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/whalesbot/orchestrator/internal/logs"
-	"github.com/whalesbot/orchestrator/internal/registry"
+	"github.com/whalebot/orchestrator/internal/logs"
+	"github.com/whalebot/orchestrator/internal/registry"
 )
 
 type Server struct {
@@ -26,11 +26,14 @@ type Server struct {
 	HTTP     *http.Client
 }
 
-func NewServer(r *registry.Registry, lg *logs.Ring) *Server {
+func NewServer(r *registry.Registry, lg *logs.Ring, upstreamTimeout time.Duration) *Server {
+	if upstreamTimeout <= 0 {
+		upstreamTimeout = 60 * time.Second
+	}
 	return &Server{
 		Registry: r,
 		Logs:     lg,
-		HTTP:     &http.Client{Timeout: 60 * time.Second},
+		HTTP:     &http.Client{Timeout: upstreamTimeout},
 	}
 }
 
@@ -53,16 +56,60 @@ func (s *Server) Router() http.Handler {
 		r.Get("/components", s.handleListComponents)
 		r.Post("/chat", s.handleChat)
 		r.Get("/logs/recent", s.handleLogsRecent)
+		r.Get("/logger/events/recent", s.handleLoggerEventsRecent)
 		r.Get("/sessions", s.handleSessionsList)
 		r.Get("/sessions/{id}", s.handleSessionDetail)
-		r.Post("/tools/docker-create", s.handleDockerCreate)
-		r.Post("/environments/golang/run", s.handleGolangRun)
+		r.Delete("/sessions/{id}", s.handleSessionDelete)
+		r.Get("/stats/overview", s.handleStatsOverview)
+		r.Get("/skills/search", s.handleSkillsSearch)
+		r.Get("/skills/{id}", s.handleSkillsGetOne)
+		r.Put("/skills/{id}", s.handleSkillsPutOne)
+		r.Delete("/skills/{id}", s.handleSkillsDeleteOne)
+		r.Get("/skills", s.handleSkillsList)
+		r.Post("/skills", s.handleSkillsCreate)
+		r.Get("/llm-components/{name}/config", s.handleLLMGetConfig)
+		r.Put("/llm-components/{name}/config", s.handleLLMPutConfig)
+		r.Post("/llm-components/{name}/active", s.handleLLMPostActive)
+		r.Post("/llm-components/{name}/test", s.handleLLMPostTest)
+		r.Get("/adapter-components/{name}/config", s.handleAdapterGetConfig)
+		r.Put("/adapter-components/{name}/config", s.handleAdapterPutConfig)
+		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
+		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
+		r.Get("/tools/user-dockers", s.handleUserDockerList)
+		r.Post("/tools/user-dockers", s.handleUserDockerCreate)
+		r.Get("/tools/user-dockers/{name}/interface", s.handleUserDockerInterface)
+		r.Delete("/tools/user-dockers/{name}", s.handleUserDockerRemove)
+		r.Post("/tools/user-dockers/{name}/restart", s.handleUserDockerRestart)
+		r.Post("/tools/user-dockers/{name}/start", s.handleUserDockerStart)
+		r.Post("/tools/user-dockers/{name}/stop", s.handleUserDockerStop)
+		r.Post("/tools/user-dockers/{name}/touch", s.handleUserDockerTouch)
+		r.Post("/tools/user-dockers/touch-creator-session", s.handleUserDockerTouchCreatorSession)
+		r.Post("/tools/user-dockers/{name}/switch-scope", s.handleUserDockerSwitchScope)
+		r.Post("/tools/user-dockers/{name}/exec", s.handleUserDockerExec)
+		r.Get("/tools/user-dockers/{name}/files", s.handleUserDockerFilesList)
+		r.Get("/tools/user-dockers/{name}/file", s.handleUserDockerFileRead)
+		r.Put("/tools/user-dockers/{name}/file", s.handleUserDockerFileWrite)
+		r.Delete("/tools/user-dockers/{name}/file", s.handleUserDockerFileDelete)
+		r.Post("/tools/user-dockers/{name}/files/mkdir", s.handleUserDockerFilesMkdir)
+		r.Post("/tools/user-dockers/{name}/files/move", s.handleUserDockerFilesMove)
+		r.Get("/tools/user-dockers/{name}/artifacts/export", s.handleUserDockerArtifactExport)
 	})
 	return r
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]any{"status": "ok", "service": "orchestrator"})
+	ready, chatErr := evalChatMinStack(s.Registry)
+	payload := map[string]any{
+		"status":     "ok",
+		"service":    "orchestrator",
+		"chat_ready": ready,
+	}
+	if !ready {
+		payload["chat_error"] = chatErr
+	} else {
+		payload["chat_error"] = ""
+	}
+	writeJSON(w, 200, payload)
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +120,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.Name == "" || c.Type == "" || c.Endpoint == "" || c.HealthEndpoint == "" {
 		writeError(w, 400, "name, type, endpoint and health_endpoint are required")
+		return
+	}
+	if strings.TrimSpace(c.StatusEndpoint) != "" && !registry.ValidStatusEndpoint(c.StatusEndpoint) {
+		writeError(w, 400, "status_endpoint must be a valid http(s) URL")
 		return
 	}
 	comp := s.Registry.Upsert(&c)
@@ -95,8 +146,21 @@ func (s *Server) handleLogsRecent(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (s *Server) handleLoggerEventsRecent(w http.ResponseWriter, r *http.Request) {
+	loggerComp := s.Registry.FirstReadyByCapability("events_recent")
+	if loggerComp == nil {
+		writeError(w, 503, "no healthy logger service")
+		return
+	}
+	target := loggerComp.Endpoint + "/events/recent"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
-	sess := s.Registry.FirstHealthyByType("session")
+	sess := s.Registry.FirstReadyByType("session")
 	if sess == nil {
 		writeError(w, 503, "no healthy session service")
 		return
@@ -105,13 +169,27 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
-	sess := s.Registry.FirstHealthyByType("session")
+	sess := s.Registry.FirstReadyByType("session")
 	if sess == nil {
 		writeError(w, 503, "no healthy session service")
 		return
 	}
 	id := chi.URLParam(r, "id")
 	s.proxyGet(w, r, sess.Endpoint+"/sessions/"+id)
+}
+
+func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	sess := s.Registry.FirstReadyByType("session")
+	if sess == nil {
+		writeError(w, 503, "no healthy session service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, 400, "session id is required")
+		return
+	}
+	s.proxyDelete(w, r, sess.Endpoint+"/sessions/"+id)
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -130,153 +208,380 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if req.Channel == "" {
 		req.Channel = "web"
 	}
-	traceID := randomHex(8)
+	traceID := req.TraceID
+	if traceID == "" {
+		traceID = randomHex(8)
+	}
 	sessionID := fmt.Sprintf("%s_%s", req.Channel, req.ChatID)
 
-		if wk := s.Registry.FirstHealthyByType("runtime"); wk != nil {
-		req.TraceID = traceID
-		body, err := json.Marshal(req)
-		if err != nil {
-			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		r2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, wk.Endpoint+"/run", bytes.NewReader(body))
-		if err != nil {
-			writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		r2.Header.Set("Content-Type", "application/json")
-		resp, err := s.HTTP.Do(r2)
-		if err != nil {
-					s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-					writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
-			return
-		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+	ready, minStackErr := evalChatMinStack(s.Registry)
+	if !ready {
+		s.log("error", "chat min stack not ready", map[string]string{"trace_id": traceID})
+		writeJSON(w, 200, ChatResponse{
+			Success:   false,
+			Error:     minStackErr,
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
 		return
 	}
 
-	sess := s.Registry.FirstHealthyByType("session")
-	model := s.Registry.FirstHealthyByType("chat_model")
-	if sess == nil || model == nil {
-		msg := "no healthy session or chat_model available"
-		s.log("error", msg, map[string]string{"trace_id": traceID})
-		writeJSON(w, 200, ChatResponse{Success: false, Error: msg, TraceID: traceID})
+	wk := s.Registry.FirstReadyByType("runtime")
+	if wk == nil {
+		s.log("error", "runtime missing after min stack check", map[string]string{"trace_id": traceID})
+		writeJSON(w, 200, ChatResponse{
+			Success:   false,
+			Error:     "Internal error: runtime became unavailable after readiness check; please retry.",
+			TraceID:   traceID,
+			SessionID: sessionID,
+		})
 		return
 	}
-
-	history, err := s.fetchContext(sess.Endpoint, sessionID)
+	req.TraceID = traceID
+	body, err := json.Marshal(req)
 	if err != nil {
-		s.log("error", "get_context failed", map[string]string{"err": err.Error(), "trace_id": traceID})
-	}
-
-	userMsg := Message{Role: "user", Content: req.Message}
-	invokeMsgs := make([]Message, 0, len(history)+2)
-	invokeMsgs = append(invokeMsgs, Message{Role: "system", Content: "你是一个简洁友好的 AI 助手。"})
-	invokeMsgs = append(invokeMsgs, history...)
-	invokeMsgs = append(invokeMsgs, userMsg)
-
-	assistantMsg, err := s.invokeChatModel(model.Endpoint, invokeMsgs)
-	if err != nil {
-		s.log("error", "chatmodel invoke failed", map[string]string{"err": err.Error(), "trace_id": traceID})
 		writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
 		return
 	}
-
-	if err := s.appendMessages(sess.Endpoint, sessionID, []Message{userMsg, assistantMsg}); err != nil {
-		s.log("error", "append_messages failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+	r2, err := http.NewRequestWithContext(r.Context(), http.MethodPost, wk.Endpoint+"/run", bytes.NewReader(body))
+	if err != nil {
+		writeJSON(w, 200, ChatResponse{Success: false, Error: err.Error(), TraceID: traceID, SessionID: sessionID})
+		return
 	}
-
-	s.log("info", "chat completed", map[string]string{
-		"trace_id":   traceID,
-		"session_id": sessionID,
-		"channel":    req.Channel,
-		"chat_id":    req.ChatID,
-	})
-
-	writeJSON(w, 200, ChatResponse{
-		Success:   true,
-		SessionID: sessionID,
-		Reply:     assistantMsg.Content,
-		TraceID:   traceID,
-	})
+	r2.Header.Set("Content-Type", "application/json")
+	resp, err := s.HTTP.Do(r2)
+	if err != nil {
+		s.log("error", "runtime proxy failed", map[string]string{"err": err.Error(), "trace_id": traceID})
+		writeJSON(w, 200, ChatResponse{Success: false, Error: "runtime: " + err.Error(), TraceID: traceID, SessionID: sessionID})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
-func (s *Server) handleDockerCreate(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByType("tool")
+func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_interface_contract")
 	if tool == nil {
-		writeError(w, 503, "no healthy tool service")
+		writeError(w, 503, "no healthy user-docker-manager service")
 		return
 	}
-	s.proxyPost(w, r, tool.Endpoint+"/create_container")
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/interface-contract")
 }
 
-func (s *Server) handleGolangRun(w http.ResponseWriter, r *http.Request) {
-	env := s.Registry.FirstHealthyByType("environment")
-	if env == nil {
-		writeError(w, 503, "no healthy environment service")
+func (s *Server) handleUserDockerImages(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_images")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
 		return
 	}
-	s.proxyPost(w, r, env.Endpoint+"/run")
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/images")
+}
+
+func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_list")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers?"+r.URL.RawQuery)
+}
+
+func (s *Server) handleUserDockerCreate(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_create")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers")
+}
+
+func (s *Server) handleUserDockerInterface(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_interface_discovery")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/interface", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerRemove(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_remove")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyDelete(w, r, target)
+}
+
+func (s *Server) handleUserDockerRestart(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_restart")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/restart", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerStart(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_start")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/start", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerStop(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_stop")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/stop", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerTouch(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_touch")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/touch", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerTouchCreatorSession(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_touch_creator")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers/touch-creator-session")
+}
+
+func (s *Server) handleUserDockerSwitchScope(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_switch_scope")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/switch-scope", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerExec(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_exec")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/exec", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesList(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileRead(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileWrite(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	s.proxyPut(w, r, target)
+}
+
+func (s *Server) handleUserDockerFileDelete(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/file", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyDelete(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesMkdir(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files/mkdir", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerFilesMove(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/files/move", tool.Endpoint, name)
+	s.proxyPost(w, r, target)
+}
+
+func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_artifact_export")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/artifacts/export", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
+	st := s.Registry.FirstReadyByType("stats")
+	if st == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"success": false,
+			"error":   "stats service not enabled",
+			"code":    "stats_disabled",
+		})
+		return
+	}
+	target := st.Endpoint + "/stats/overview"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) skillsUpstream() *registry.Component {
+	return s.Registry.FirstReadyByType("skills")
+}
+
+func (s *Server) handleSkillsSearch(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	target := sk.Endpoint + "/skills/search"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleSkillsList(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	target := sk.Endpoint + "/skills"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	s.proxyPost(w, r, sk.Endpoint+"/skills")
+}
+
+func (s *Server) handleSkillsGetOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyGet(w, r, sk.Endpoint+"/skills/"+id)
+}
+
+func (s *Server) handleSkillsPutOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyPut(w, r, sk.Endpoint+"/skills/"+id)
+}
+
+func (s *Server) handleSkillsDeleteOne(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id)
 }
 
 // --- helpers ---
-
-func (s *Server) fetchContext(sessionURL, sessionID string) ([]Message, error) {
-	body, _ := json.Marshal(GetContextRequest{SessionID: sessionID})
-	resp, err := s.HTTP.Post(sessionURL+"/get_context", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("session returned %d", resp.StatusCode)
-	}
-	var gr GetContextResponse
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, err
-	}
-	return gr.Messages, nil
-}
-
-func (s *Server) invokeChatModel(modelURL string, messages []Message) (Message, error) {
-	body, _ := json.Marshal(ChatModelInvokeRequest{
-		Messages: messages,
-		Params:   map[string]any{"temperature": 0.7, "max_tokens": 512},
-	})
-	resp, err := s.HTTP.Post(modelURL+"/invoke", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return Message{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return Message{}, fmt.Errorf("chatmodel returned %d", resp.StatusCode)
-	}
-	var ir ChatModelInvokeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&ir); err != nil {
-		return Message{}, err
-	}
-	if !ir.Success {
-		return Message{}, errors.New(ir.Error)
-	}
-	return ir.Message, nil
-}
-
-func (s *Server) appendMessages(sessionURL, sessionID string, msgs []Message) error {
-	body, _ := json.Marshal(AppendMessagesRequest{SessionID: sessionID, Messages: msgs})
-	resp, err := s.HTTP.Post(sessionURL+"/append_messages", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("session append returned %d", resp.StatusCode)
-	}
-	return nil
-}
 
 func (s *Server) proxyGet(w http.ResponseWriter, r *http.Request, target string) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
@@ -294,6 +599,31 @@ func (s *Server) proxyPost(w http.ResponseWriter, r *http.Request, target string
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(buf))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
+func (s *Server) proxyPut(w http.ResponseWriter, r *http.Request, target string) {
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, 400, "body read failed: "+err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, target, bytes.NewReader(buf))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
+func (s *Server) proxyDelete(w http.ResponseWriter, r *http.Request, target string) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete, target, nil)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

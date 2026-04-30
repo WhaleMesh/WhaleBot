@@ -5,7 +5,7 @@
 service: orchestrator
 role: component_registry_and_api_gateway
 compose_service: orchestrator
-image: whalesbot/orchestrator:latest
+image: whalebot/orchestrator:latest
 build_context: ./orchestrator
 owner: tbd
 runtime: go_http_service
@@ -21,14 +21,15 @@ last_verified_from:
   - docker-compose.yml
   - orchestrator/cmd/server/main.go
   - orchestrator/internal/httpapi/api.go
+  - orchestrator/internal/httpapi/chat_min_stack.go
   - orchestrator/internal/httpapi/types.go
   - orchestrator/internal/registry/registry.go
 ```
 
 ## Purpose
 - Owns the component registry and health lifecycle.
-- Exposes the stable northbound API used by `webui` and `im-telegram`.
-- Routes chat requests to `worker` when available, otherwise falls back to direct `session + chatmodel`.
+- Exposes the stable northbound API used by `webui` and `adapter-telegram`.
+- `POST /api/v1/chat` requires healthy `runtime`, `session`, and `llm` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+llm-openai path).
 
 ## External API
 ### Endpoint: GET /health
@@ -39,6 +40,12 @@ request: none
 response:
   status: ok
   service: orchestrator
+  chat_ready: boolean
+  chat_error: string
+notes:
+  - HTTP status is always 200 when the orchestrator process is up (including when chat_ready is false), so container healthchecks that hit /health still pass.
+  - chat_ready is true only when registry has healthy components for types runtime, session, and llm (same gate as POST /api/v1/chat).
+  - chat_error is empty when chat_ready is true; when false, an English explanation (same text as chat rejection error).
 error_behavior: standard_http_status
 ```
 
@@ -86,7 +93,7 @@ request:
     channel: string
     chat_id: string
     message: string (required)
-    trace_id: string (optional; injected internally for worker path)
+    trace_id: string (optional)
 response:
   success: boolean
   session_id: string
@@ -94,8 +101,8 @@ response:
   trace_id: string
   error: string
 error_behavior:
-  worker_path: upstream_worker_status_and_body_passthrough
-  fallback_path: often_http_200_with_success_false
+  min_stack_not_ready: http_200_with_success_false_and_error_message
+  runtime_proxy: upstream_runtime_status_and_body_passthrough
 ```
 
 ### Endpoint: GET /api/v1/logs/recent
@@ -107,6 +114,17 @@ response:
   success: true
   logs: log_entry[]
 error_behavior: standard_http_status
+```
+
+### Endpoint: GET /api/v1/logger/events/recent
+```yaml
+method: GET
+path: /api/v1/logger/events/recent?limit=200
+request: none
+response: proxied_from_logger_events_recent
+error_behavior:
+  no_logger_component: http_503
+  upstream_failure: propagated_or_502
 ```
 
 ### Endpoint: GET /api/v1/sessions
@@ -133,10 +151,69 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
-### Endpoint: POST /api/v1/tools/docker-create
+### Endpoint: GET /api/v1/stats/overview
+```yaml
+method: GET
+path: /api/v1/stats/overview
+request: none
+response:
+  proxied_from_stats_service: GET {stats_endpoint}/stats/overview
+  body_includes:
+    success: true
+    window: { start: RFC3339Nano, end: RFC3339Nano, label: rolling_24h_hour_aligned }
+    stats:
+      messages: { total: int, last_24h: int }
+      tool_calls: { total: int, last_24h: int }
+      tokens:
+        prompt: { total: int, last_24h: int }
+        completion: { total: int, last_24h: int }
+        total: { total: int, last_24h: int }
+error_behavior:
+  no_healthy_stats_component: http_503 { success: false, error: stats service not enabled, code: stats_disabled }
+  upstream_failure: propagated_or_502
+```
+
+Implementation: resolves `FirstReadyByType("stats")` (liveness + optional `status_endpoint` / `operational_state`) and reverse-proxies the response body and status code.
+
+### Skills API (reverse proxy)
+
+When a healthy `type=skills` component is registered, the orchestrator reverse-proxies JSON to `{skills_endpoint}` (same pattern as session/logger):
+
+- `GET /api/v1/skills` → `GET {endpoint}/skills`
+- `GET /api/v1/skills/search?q=...&limit=...` → `GET {endpoint}/skills/search?...`
+- `POST /api/v1/skills` → `POST {endpoint}/skills`
+- `GET /api/v1/skills/{id}` → `GET {endpoint}/skills/{id}`
+- `PUT /api/v1/skills/{id}` → `PUT {endpoint}/skills/{id}`
+- `DELETE /api/v1/skills/{id}` → `DELETE {endpoint}/skills/{id}`
+
+If no healthy skills component: **503** with `success: false` and an English `error` message.
+
+### Endpoint: GET /api/v1/tools/user-dockers
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers?all=true|false
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: GET /api/v1/tools/user-dockers/images
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/images
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: POST /api/v1/tools/user-dockers
 ```yaml
 method: POST
-path: /api/v1/tools/docker-create
+path: /api/v1/tools/user-dockers
 request:
   content_type: application/json
   body:
@@ -147,32 +224,65 @@ request:
     labels: object<string,string>
     network: string
     auto_register: boolean
-response: proxied_from_tool_service
+    port: int
+response: proxied_from_user_docker_manager
 error_behavior:
-  no_tool_component: http_503
+  no_userdocker_manager_component: http_503
   upstream_failure: propagated_or_502
 ```
 
-### Endpoint: POST /api/v1/environments/golang/run
+### Endpoint: DELETE /api/v1/tools/user-dockers/{name}
+```yaml
+method: DELETE
+path: /api/v1/tools/user-dockers/{name}?force=true|false
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: POST /api/v1/tools/user-dockers/{name}/restart
 ```yaml
 method: POST
-path: /api/v1/environments/golang/run
-request:
-  content_type: application/json
-  body:
-    code: string
-    timeout_sec: int
-response: proxied_from_environment_service
+path: /api/v1/tools/user-dockers/{name}/restart?timeout_sec=10
+request: none
+response: proxied_from_user_docker_manager
 error_behavior:
-  no_environment_component: http_503
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: GET /api/v1/tools/user-dockers/interface-contract
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/interface-contract
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
+  upstream_failure: propagated_or_502
+```
+
+### Endpoint: GET /api/v1/tools/user-dockers/{name}/interface
+```yaml
+method: GET
+path: /api/v1/tools/user-dockers/{name}/interface?port=9000
+request: none
+response: proxied_from_user_docker_manager
+error_behavior:
+  no_userdocker_manager_component: http_503
   upstream_failure: propagated_or_502
 ```
 
 ## Internal Calls
 - `session`: `/get_context`, `/append_messages`, `/sessions`, `/sessions/{id}`.
-- `chatmodel`: `/invoke`.
+- `llm` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/llm-components/{name}/config`, `POST /api/v1/llm-components/{name}/active`, `POST /api/v1/llm-components/{name}/test` to `{endpoint}/api/v1/llm/*` (WebUI model admin).
+- `adapter` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/adapter-components/{name}/config` to `{endpoint}/api/v1/adapter/config` (WebUI adapter admin, e.g. Telegram token + whitelist).
+- `llm-openai` (typical): `/invoke` at the service root (not under `/api/v1/llm`).
 - `worker`: `/run` when a healthy worker exists.
-- Generic proxy to `tool` and `environment` components by type lookup.
+- Generic proxy to `tool` components by capability lookup.
+- User docker operations route by capability lookup (`userdocker_*`) to the manager component.
 
 ## Environment Variables
 ### ORCHESTRATOR_PORT
@@ -199,8 +309,16 @@ required: false
 effect: consecutive_failures_before_component_removed
 ```
 
+### ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+```yaml
+name: ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC
+default: "240"
+required: false
+effect: timeout_seconds_for_orchestrator_http_proxy_to_runtime_tool_and_other_upstreams
+```
+
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: none.
 - healthcheck: `wget http://localhost:8080/health`.
 - volumes: none.
@@ -216,11 +334,17 @@ query_to_endpoint:
   register_component: POST /api/v1/components/register
   chat: POST /api/v1/chat
   list_components: GET /api/v1/components
-  create_container_tool: POST /api/v1/tools/docker-create
-  run_go_code: POST /api/v1/environments/golang/run
+  list_persistent_logger_events: GET /api/v1/logger/events/recent
+  list_userdockers: GET /api/v1/tools/user-dockers
+  list_userdocker_images: GET /api/v1/tools/user-dockers/images
+  create_userdocker: POST /api/v1/tools/user-dockers
+  remove_userdocker: DELETE /api/v1/tools/user-dockers/{name}
+  restart_userdocker: POST /api/v1/tools/user-dockers/{name}/restart
+  userdocker_contract: GET /api/v1/tools/user-dockers/interface-contract
+  userdocker_interface: GET /api/v1/tools/user-dockers/{name}/interface
 ```
 
 ## Change Safety
-- Keep `/api/v1/chat` request/response schema backward compatible for `webui` and `im-telegram`.
+- Keep `/api/v1/chat` request/response schema backward compatible for `webui` and `adapter-telegram`.
 - Do not remove fallback chat path unless `worker` becomes mandatory.
-- Changes to component `type` strings break discovery (`session`, `chat_model`, `tool`, `environment`, `worker`).
+- Changes to component `type` strings break discovery (`session`, `llm`, `tool`, `environment`, `worker`).

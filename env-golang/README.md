@@ -5,7 +5,7 @@
 service: env-golang
 role: go_code_execution_environment
 compose_service: env-golang
-image: whalesbot/env-golang:latest
+image: whalebot/env-golang:latest
 build_context: ./env-golang
 owner: tbd
 runtime: go_http_service
@@ -25,6 +25,7 @@ last_verified_from:
 ```
 
 ## Purpose
+- Deprecated in current compose topology. Runtime now uses `manage_user_docker` + container `exec` for Go/project execution.
 - Executes user-provided Go snippets through `go run`.
 - Returns stdout/stderr, exit code, duration, and failure details.
 - Serves as an environment component routed by orchestrator.
@@ -93,7 +94,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${ENV_GOLANG_PORT}/health`.
 - volumes: none.

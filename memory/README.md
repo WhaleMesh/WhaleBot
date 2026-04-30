@@ -1,8 +1,9 @@
 # memory
 
-Minimal persistent memory service for the MVP.
+Minimal persistent memory service for WhaleBot.
 
-- Local image tag: `whalesbot/memory:latest`
-- Built locally via Docker Compose
+- **Not** included in the root `docker-compose.yml` by default; roadmap: [`TODO.md`](TODO.md).
+- Local image tag: `whalebot/memory:latest`
+- Build: `docker build -t whalebot/memory:latest ./memory` (or re-add the service to compose when ready)
 - Provides `/health`, `POST /notes`, `GET /notes/{key}`
 - Stores notes in SQLite

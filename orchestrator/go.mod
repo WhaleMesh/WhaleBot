@@ -1,4 +1,4 @@
-module github.com/whalesbot/orchestrator
+module github.com/whalebot/orchestrator
 
 go 1.22
 

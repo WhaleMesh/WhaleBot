@@ -1,4 +1,4 @@
-module github.com/whalesbot/runtime
+module github.com/whalebot/runtime
 
 go 1.22
 

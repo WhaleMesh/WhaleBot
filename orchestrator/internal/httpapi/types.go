@@ -1,8 +1,15 @@
 package httpapi
 
+import "time"
+
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string    `json:"role"`
+	Content          string    `json:"content"`
+	Timestamp        time.Time `json:"timestamp,omitempty"`
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	TotalTokens      int       `json:"total_tokens,omitempty"`
+	ReplyLatencyMS   int64     `json:"reply_latency_ms,omitempty"`
 }
 
 type ChatRequest struct {
@@ -14,11 +21,19 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Success   bool   `json:"success"`
-	SessionID string `json:"session_id,omitempty"`
-	Reply     string `json:"reply,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Success     bool             `json:"success"`
+	SessionID   string           `json:"session_id,omitempty"`
+	Reply       string           `json:"reply,omitempty"`
+	TraceID     string           `json:"trace_id,omitempty"`
+	Attachments []ChatAttachment `json:"attachments,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+type ChatAttachment struct {
+	Filename      string `json:"filename"`
+	MimeType      string `json:"mime_type,omitempty"`
+	ContentBase64 string `json:"content_base64"`
+	SourcePath    string `json:"source_path,omitempty"`
 }
 
 type GetContextRequest struct {
@@ -29,6 +44,8 @@ type GetContextResponse struct {
 	Success   bool      `json:"success"`
 	SessionID string    `json:"session_id"`
 	Messages  []Message `json:"messages"`
+	Expired   bool      `json:"expired"`
+	ExpiresAt *string   `json:"expires_at,omitempty"`
 }
 
 type AppendMessagesRequest struct {
@@ -49,7 +66,14 @@ type ChatModelInvokeRequest struct {
 type ChatModelInvokeResponse struct {
 	Success bool    `json:"success"`
 	Message Message `json:"message"`
+	Usage   *Usage  `json:"usage,omitempty"`
 	Error   string  `json:"error,omitempty"`
+}
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type DockerCreateRequest struct {
@@ -60,13 +84,35 @@ type DockerCreateRequest struct {
 	Labels       map[string]string `json:"labels"`
 	Network      string            `json:"network"`
 	AutoRegister bool              `json:"auto_register"`
+	Port         int               `json:"port,omitempty"`
 }
 
 type DockerCreateResponse struct {
 	Success     bool   `json:"success"`
 	ContainerID string `json:"container_id,omitempty"`
 	Name        string `json:"name,omitempty"`
+	Port        int    `json:"port,omitempty"`
 	Error       string `json:"error,omitempty"`
+}
+
+type UserDockerListResponse struct {
+	Success    bool             `json:"success"`
+	Containers []map[string]any `json:"containers,omitempty"`
+	Error      string           `json:"error,omitempty"`
+}
+
+type LoggerEvent struct {
+	ID      int64             `json:"id,omitempty"`
+	Time    time.Time         `json:"time"`
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Fields  map[string]string `json:"fields,omitempty"`
+}
+
+type LoggerEventsRecentResponse struct {
+	Success bool          `json:"success"`
+	Events  []LoggerEvent `json:"events,omitempty"`
+	Error   string        `json:"error,omitempty"`
 }
 
 type GolangRunRequest struct {

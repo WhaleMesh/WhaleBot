@@ -1,4 +1,4 @@
-// Development fallback; the nginx container rewrites this at runtime.
-window.__WHALESBOT_ENV__ = {
+// Development fallback; the runtime web server rewrites this in container deployments.
+window.__WHALEBOT_ENV__ = {
   ORCHESTRATOR_URL: "http://localhost:8080"
 };

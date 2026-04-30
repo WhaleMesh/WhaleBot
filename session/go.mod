@@ -1,4 +1,4 @@
-module github.com/whalesbot/session
+module github.com/whalebot/session
 
 go 1.22
 
