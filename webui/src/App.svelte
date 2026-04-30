@@ -3,6 +3,7 @@
   import { route, goto } from './lib/route.js';
   import { _, setLocale, locale } from './lib/i18n.js';
   import * as auth from './lib/auth.js';
+  import NavGlyph from './lib/NavGlyph.svelte';
   import Overview from './views/Overview.svelte';
   import Components from './views/Components.svelte';
   import Sessions from './views/Sessions.svelte';
@@ -15,6 +16,7 @@
   import Adapters from './views/Adapters.svelte';
 
   const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'llm', 'adapter'];
+  const SIDEBAR_LS_KEY = 'whalesbot_sidebar_collapsed';
 
   /** @type {'loading' | 'anon' | 'user'} */
   let authPhase = 'loading';
@@ -29,6 +31,8 @@
   let loginErr = '';
 
   let accountMenuOpen = false;
+  let langMenuOpen = false;
+  let sidebarCollapsed = false;
   let modalAccount = false;
   let acUsername = '';
   let acCurrent = '';
@@ -57,12 +61,56 @@
     }
   }
 
-  onMount(refreshAuth);
-
-  function onLangChange(/** @type {Event & { currentTarget: HTMLSelectElement }} */ e) {
-    const v = e.currentTarget.value;
-    if (v === 'en' || v === 'zh' || v === 'ja') setLocale(v);
+  function readSidebarPref() {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_LS_KEY) === '1') {
+        sidebarCollapsed = true;
+      }
+    } catch {
+      /* ignore */
+    }
   }
+
+  function persistSidebar() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(SIDEBAR_LS_KEY, sidebarCollapsed ? '1' : '0');
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    accountMenuOpen = false;
+    langMenuOpen = false;
+    persistSidebar();
+  }
+
+  /**
+   * @param {string} id
+   * @param {string} routeName
+   */
+  function isNavActive(id, routeName) {
+    if (id === 'sessions' && (routeName === 'sessions' || routeName === 'session')) return true;
+    if (id === 'skills' && routeName === 'skills') return true;
+    if (id === 'llm' && routeName === 'llm') return true;
+    if (id === 'adapter' && routeName === 'adapter') return true;
+    if (id === 'tools' && (routeName === 'tools' || routeName === 'tool')) return true;
+    return routeName === id;
+  }
+
+  /** @param {'en' | 'zh' | 'ja'} code */
+  function pickLang(code) {
+    setLocale(code);
+    langMenuOpen = false;
+  }
+
+  onMount(() => {
+    readSidebarPref();
+    refreshAuth();
+  });
 
   async function submitLogin(/** @type {SubmitEvent} */ e) {
     e.preventDefault();
@@ -206,53 +254,138 @@
     </div>
   </div>
 {:else}
-  <div class="app wb-page min-h-screen flex flex-col text-base-content">
-    <header
-      class="flex w-full min-h-14 flex-nowrap items-center gap-2 border-b border-base-300 bg-base-200 px-2 sm:gap-3 sm:px-4"
+  <div class="app wb-page flex min-h-screen flex-row text-base-content">
+    <aside
+      id="app-sidebar"
+      class="sticky top-0 flex h-screen min-h-0 shrink-0 flex-col border-r border-base-300 bg-base-200 transition-[width] duration-200 ease-out {sidebarCollapsed
+        ? 'w-16'
+        : 'w-56'}"
     >
-      <div class="shrink-0">
-        <span class="text-2xl font-bold tracking-tight text-primary">
-          {$_('brand.title')}
-          <span class="text-base font-normal text-base-content">{$_('brand.mvp')}</span>
-        </span>
+      <div
+        class="flex shrink-0 items-center gap-2 border-b border-base-300 p-2 {sidebarCollapsed ? 'flex-col justify-center py-3' : 'justify-between'}"
+      >
+        {#if !sidebarCollapsed}
+          <span class="min-w-0 flex-1 truncate text-lg font-bold leading-tight tracking-tight text-primary">
+            {$_('brand.title')}
+            <span class="block text-sm font-normal text-base-content">{$_('brand.mvp')}</span>
+          </span>
+        {:else}
+          <span class="inline-flex text-primary" title={$_('layout.brandShort')}>
+            <svg class="h-7 w-7 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"
+              />
+            </svg>
+            <span class="sr-only">{$_('layout.brandShort')}</span>
+          </span>
+        {/if}
+        <button
+          type="button"
+          class="btn btn-ghost btn-square btn-sm shrink-0 border border-base-300"
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="app-sidebar"
+          title={sidebarCollapsed ? $_('layout.sidebarToggleExpand') : $_('layout.sidebarToggleCollapse')}
+          aria-label={sidebarCollapsed ? $_('layout.sidebarToggleExpand') : $_('layout.sidebarToggleCollapse')}
+          on:click={toggleSidebar}
+        >
+          {#if sidebarCollapsed}
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
+          {:else}
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          {/if}
+        </button>
       </div>
 
-      <div class="min-w-0 flex-1 overflow-x-auto px-0.5">
-        <nav
-          class="mx-auto grid w-full max-w-5xl gap-2"
-          style="grid-template-columns: repeat({navIds.length}, minmax(0, 1fr));"
-          aria-label="Main"
-        >
-          {#each navIds as id}
-            <button
-              type="button"
-              class="border-wb min-h-11 w-full min-w-0 max-w-full truncate rounded-lg border-base-300 bg-base-100 px-2 py-2 text-center text-base font-medium leading-snug text-base-content shadow-none transition-colors hover:border-primary/60 hover:bg-base-300 sm:px-3 {$route.name === id
-                ? 'border-primary bg-primary text-primary-content hover:border-primary hover:bg-primary'
-                : ''}"
-              on:click={() => goto(id)}
-            >
-              {$_('nav.' + id)}
-            </button>
-          {/each}
-        </nav>
-      </div>
+      <nav class="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={$_('layout.mainNav')}>
+        <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+        {#each navIds as id}
+          <button
+            type="button"
+            class="border-wb flex min-h-11 w-full min-w-0 items-center rounded-lg border-base-300 bg-base-100 text-sm font-medium text-base-content shadow-none transition-colors hover:border-primary/60 hover:bg-base-300 {sidebarCollapsed
+              ? 'justify-center px-0 py-2'
+              : 'gap-3 px-3 py-2'} {isNavActive(id, $route.name)
+              ? 'border-primary bg-primary text-primary-content hover:border-primary hover:bg-primary hover:text-primary-content'
+              : ''}"
+            title={$_('nav.' + id)}
+            aria-current={isNavActive(id, $route.name) ? 'page' : undefined}
+            on:click={() => goto(id)}
+          >
+            <NavGlyph {id} />
+            {#if !sidebarCollapsed}
+              <span class="min-w-0 flex-1 truncate text-left">{$_('nav.' + id)}</span>
+            {:else}
+              <span class="sr-only">{$_('nav.' + id)}</span>
+            {/if}
+          </button>
+        {/each}
+        </div>
+      </nav>
 
-      <div class="flex shrink-0 flex-nowrap items-center gap-2">
-        <label class="sr-only" for="lang-select">{$_('lang.aria')}</label>
-        <select
-          id="lang-select"
-          class="select select-bordered max-w-full w-[8.25rem] text-sm"
-          value={$locale}
-          on:change={onLangChange}
-        >
-          <option value="en">{$_('lang.en')}</option>
-          <option value="zh">{$_('lang.zh')}</option>
-          <option value="ja">{$_('lang.ja')}</option>
-        </select>
+      <div class="mt-auto flex shrink-0 flex-col gap-2 border-t border-base-300 p-2">
+        <details class="relative" bind:open={langMenuOpen}>
+          <summary
+            class="btn btn-ghost h-auto min-h-11 w-full flex-nowrap justify-start gap-2 border border-base-300 py-2 {sidebarCollapsed
+              ? 'justify-center px-0'
+              : 'px-3'} list-none [&::-webkit-details-marker]:hidden"
+          >
+            <svg class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"
+              />
+            </svg>
+            {#if !sidebarCollapsed}
+              <span class="min-w-0 flex-1 truncate text-left text-sm">{$_('lang.' + $locale)}</span>
+            {:else}
+              <span class="sr-only">{$_('lang.aria')}</span>
+            {/if}
+          </summary>
+          <ul
+            class="menu absolute bottom-0 left-full z-[110] mb-0 ml-1 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          >
+            <li>
+              <button type="button" class={$locale === 'en' ? 'active' : ''} on:click={() => pickLang('en')}>{$_('lang.en')}</button>
+            </li>
+            <li>
+              <button type="button" class={$locale === 'zh' ? 'active' : ''} on:click={() => pickLang('zh')}>{$_('lang.zh')}</button>
+            </li>
+            <li>
+              <button type="button" class={$locale === 'ja' ? 'active' : ''} on:click={() => pickLang('ja')}>{$_('lang.ja')}</button>
+            </li>
+          </ul>
+        </details>
 
-        <details class="dropdown dropdown-end" bind:open={accountMenuOpen}>
-          <summary class="btn btn-ghost max-w-[10rem] truncate border border-base-300">{authUsername}</summary>
-          <ul class="menu dropdown-content z-[100] mt-1 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow">
+        <details class="relative" bind:open={accountMenuOpen}>
+          <summary
+            class="btn btn-ghost h-auto min-h-11 w-full flex-nowrap justify-start gap-2 border border-base-300 py-2 {sidebarCollapsed
+              ? 'justify-center px-0'
+              : 'max-w-full px-3'} list-none [&::-webkit-details-marker]:hidden"
+            title={authUsername}
+            aria-label={$_('auth.account')}
+          >
+            {#if sidebarCollapsed}
+              <svg class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
+                />
+              </svg>
+              <span class="sr-only">{authUsername}</span>
+            {:else}
+              <span class="min-w-0 flex-1 truncate text-left text-sm">{authUsername}</span>
+            {/if}
+          </summary>
+          <ul
+            class="menu absolute left-full bottom-0 z-[110] mb-0 ml-1 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          >
             <li>
               <button type="button" class="justify-start" on:click={openAccountModal}>{$_('auth.accountSettings')}</button>
             </li>
@@ -262,9 +395,9 @@
           </ul>
         </details>
       </div>
-    </header>
+    </aside>
 
-    <main class="mx-auto w-full max-w-[1200px] flex-1 min-w-0 p-4 text-base leading-relaxed sm:p-6">
+    <main class="mx-auto w-full min-w-0 max-w-[1200px] flex-1 p-4 text-base leading-relaxed sm:p-6">
       {#if $route.name === 'overview'}
         <Overview />
       {:else if $route.name === 'components'}

@@ -67,7 +67,7 @@ last_verified_from:
 - Copy defaults to **English**; **Chinese (zh)** and **Japanese (ja)** are provided as overlays merged onto English keys in [`src/lib/i18n/messages.js`](src/lib/i18n/messages.js).
 - Runtime: [`src/lib/i18n.js`](src/lib/i18n.js) exposes `locale` store, `setLocale`, `translate`, reactive `$_` for templates, and `t()` for non-reactive script use.
 - **Auto-detect**: on first visit (no saved preference), `navigator.language` maps `zh*` → `zh`, `ja*` → `ja`, else `en`.
-- **Manual**: navbar language `<select>`; choice persists under `localStorage` key **`whalesbot_lang`** (`en` | `zh` | `ja`).
+- **Manual**: sidebar language menu (flyout next to the sidebar); choice persists under `localStorage` key **`whalesbot_lang`** (`en` | `zh` | `ja`).
 - `document.documentElement.lang` is updated (`en`, `zh-Hans`, `ja`) when the locale changes.
 
 ## External API
