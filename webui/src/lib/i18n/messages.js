@@ -44,6 +44,12 @@ const en = {
     adapter: 'Adapters',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
+  layout: {
+    sidebarToggleCollapse: 'Collapse sidebar',
+    sidebarToggleExpand: 'Expand sidebar',
+    mainNav: 'Main navigation',
+    brandShort: 'WhalesBot MVP',
+  },
   lang: {
     aria: 'Language',
     en: 'English',
@@ -377,6 +383,12 @@ const zhPart = {
     adapter: '适配器',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
+  layout: {
+    sidebarToggleCollapse: '收起侧栏',
+    sidebarToggleExpand: '展开侧栏',
+    mainNav: '主导航',
+    brandShort: 'WhalesBot MVP',
+  },
   auth: {
     loginTitle: '登录',
     loginSubtitle: '访问控制台',
@@ -643,6 +655,12 @@ const jaPart = {
     adapter: 'アダプター',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
+  layout: {
+    sidebarToggleCollapse: 'サイドバーを折りたたむ',
+    sidebarToggleExpand: 'サイドバーを展開',
+    mainNav: 'メインナビ',
+    brandShort: 'WhalesBot MVP',
+  },
   auth: {
     loginTitle: 'サインイン',
     loginSubtitle: 'ダッシュボード',

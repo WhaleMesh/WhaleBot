@@ -127,11 +127,11 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Svelte dashboard via Caddy plus small loopback **auth** process (`webui-auth` from `webui/authsrv`)
   - entry: `webui/src/main.js` (UI); `webui/authsrv/main.go` (auth API on `127.0.0.1:8089`, proxied by Caddy as `/api/webui/*`)
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
-  - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalesbot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; header dropdown opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
+  - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalesbot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; sidebar account menu opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
   - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalesbot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
-  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Navbar includes a language selector and account menu (when signed in).
+  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Left **collapsible sidebar** (when signed in) includes primary routes, a language menu, and account menu; collapsed width shows **icons only** (including a compact brand placeholder icon); collapse state persists in `localStorage` key `whalesbot_sidebar_collapsed` (`0`/`1`).
   - note: router is hash-based so refresh keeps current page
-  - note: top navbar uses **equal-width** grid columns for primary routes; brand left; language select and account dropdown on the right.
+  - note: sidebar lists primary routes with icons (`webui/src/lib/NavGlyph.svelte`); nested routes keep parent highlights (e.g. session detail highlights **Sessions**).
   - note: includes dedicated `Logger` page in addition to overview logs
   - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
@@ -141,9 +141,9 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
-  - note: top nav `Skills` opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
-  - note: top nav `LLM` opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
-  - note: top nav `Adapters` opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits Telegram token + whitelist via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to `/api/v1/adapter/config`)
+  - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
+  - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
+  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits Telegram token + whitelist via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to `/api/v1/adapter/config`)
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
