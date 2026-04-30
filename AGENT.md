@@ -9,7 +9,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Network: fixed Docker network `mvp_net`.
 - Entry runbook:
   - `cp .env.example .env`
-  - optional: fill `TELEGRAM_BOT_TOKEN`
+  - optional: configure Telegram in WebUI → Adapters → `adapter-telegram`
   - `docker compose up --build`
 - Host URLs:
   - WebUI: `http://localhost:3000`
@@ -82,6 +82,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Telegram user I/O adapter (`type=adapter` at orchestrator registration)
   - entry: `adapter-telegram/cmd/server/main.go`
   - host exposed: no
+  - note: bot token and optional `allowed_user_ids` whitelist live in **`ADAPTER_CONFIG_PATH`** JSON (default `/data/adapter-config.json` on volume `adapter_telegram_data`), edited through WebUI Adapters page (or `PUT /api/v1/adapter-components/{name}/config` via orchestrator). Empty whitelist = no user filter.
   - note: outbound replies are converted from standard markdown to Telegram-friendly HTML at send time
   - note: outbound send path strips internal thought/channel markers (for example `<|channel|>...`) before Telegram delivery
   - note: send flow includes retry + format-fallback (HTML -> plain text) and best-effort failure notice to avoid silent drops
@@ -142,6 +143,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
   - note: top nav `Skills` opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
   - note: top nav `LLM` opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
+  - note: top nav `Adapters` opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits Telegram token + whitelist via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to `/api/v1/adapter/config`)
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
@@ -155,8 +157,8 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 4) Env Variables (grouped, minimal)
 
-- Telegram:
-  - `TELEGRAM_BOT_TOKEN` (empty -> service registers, poll loop disabled)
+- Telegram adapter:
+  - `ADAPTER_CONFIG_PATH` (default `/data/adapter-config.json` in compose; no token -> register only, no long poll)
 - Ports:
   - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
@@ -183,7 +185,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `docker-compose.yml` contains 13 services including `runtime`, `skills`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `webui_data`.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `webui_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)

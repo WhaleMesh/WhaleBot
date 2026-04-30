@@ -41,7 +41,7 @@ cp .env.example .env
 
 2. Fill `.env` values as needed
 
-- `TELEGRAM_BOT_TOKEN`: if empty, `adapter-telegram` starts and registers, but skips long polling.
+- Telegram: configure `adapter-telegram` in WebUI **Adapters** (bot token and optional user ID whitelist). Without a token, the service still registers but skips long polling.
 - LLM upstream URL, keys, and model ids are not set in root `.env`; configure on the `llm-openai` service (defaults use echo mode without a key).
 
 3. Start all services

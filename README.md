@@ -40,7 +40,7 @@ cp .env.example .env
 
 2. 按需填写 `.env`（最常见）
 
-- `TELEGRAM_BOT_TOKEN`：为空时 `adapter-telegram` 会启动并注册，但不进入长轮询。
+- Telegram：在 WebUI「适配器」页配置 `adapter-telegram`（bot token 与可选用户 ID 白名单）；未配置 token 时服务仍会注册，但不进入长轮询。
 - 模型与密钥不在根 `.env` 配置；由 `llm-openai` 服务侧配置（默认内置占位 client，无 key 时为 echo 模式）。
 
 3. 启动系统

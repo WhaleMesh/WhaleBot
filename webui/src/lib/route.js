@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
 
 // Minimal hash router:
-// { name: 'overview' | 'components' | 'sessions' | 'session' | 'tools' | 'tool' | 'logger' | 'skills' | 'llm', params: { id? } }
+// { name: 'overview' | 'components' | 'sessions' | 'session' | 'tools' | 'tool' | 'logger' | 'skills' | 'llm' | 'adapter', params: { id? } }
 const DEFAULT_ROUTE = { name: 'overview', params: {} };
 
 function parseHash() {
@@ -23,6 +23,12 @@ function parseHash() {
     }
     return { name: 'llm', params: {} };
   }
+  if (parts[0] === 'adapter') {
+    if (parts[1]) {
+      return { name: 'adapter', params: { id: decodeURIComponent(parts[1]) } };
+    }
+    return { name: 'adapter', params: {} };
+  }
   if (parts[0] === 'skills') {
     if (parts[1]) {
       return { name: 'skills', params: { id: decodeURIComponent(parts[1]) } };
@@ -40,8 +46,9 @@ function routeToHash(name, params = {}) {
   if (name === 'session' && params.id) return `#/session/${encodeURIComponent(params.id)}`;
   if (name === 'tool' && params.id) return `#/tool/${encodeURIComponent(params.id)}`;
   if (name === 'llm' && params.id) return `#/llm/${encodeURIComponent(params.id)}`;
+  if (name === 'adapter' && params.id) return `#/adapter/${encodeURIComponent(params.id)}`;
   if (name === 'skills' && params.id) return `#/skills/${encodeURIComponent(params.id)}`;
-  if (name === 'overview' || name === 'components' || name === 'sessions' || name === 'tools' || name === 'logger' || name === 'skills' || name === 'llm') {
+  if (name === 'overview' || name === 'components' || name === 'sessions' || name === 'tools' || name === 'logger' || name === 'skills' || name === 'llm' || name === 'adapter') {
     return `#/${name}`;
   }
   return '#/overview';
