@@ -30,7 +30,7 @@ last_verified_from:
 ```
 
 ## Purpose
-- Provides the human-facing dashboard for component status, logs, sessions, and tool operations.
+- Provides the human-facing dashboard for component status, logs, sessions, tool operations, LLM profiles, and **adapter** configuration (e.g. Telegram bot token + user ID whitelist via orchestrator `adapter-components` proxy).
 - Calls orchestrator REST API from the browser (same origin as the UI for auth only; orchestrator base URL remains `ORCHESTRATOR_URL` in `env.js`).
 - Is not a backend component in the orchestrator registry.
 - Renders session content as standard Markdown (no IM-specific formatting conversion).

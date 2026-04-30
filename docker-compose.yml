@@ -107,11 +107,13 @@ services:
     container_name: adapter-telegram
     environment:
       ADAPTER_TELEGRAM_PORT: ${ADAPTER_TELEGRAM_PORT:-8084}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      ADAPTER_CONFIG_PATH: /data/adapter-config.json
       ORCHESTRATOR_URL: http://orchestrator:8080
       SESSION_URL: http://session:8090
       ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC: ${ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC:-240}
       SERVICE_HOST: adapter-telegram
+    volumes:
+      - adapter_telegram_data:/data
     networks: [mvp_net]
     depends_on:
       orchestrator: { condition: service_started }
@@ -301,4 +303,5 @@ volumes:
   stats_data:
   workspace_data:
   llm_openai_data:
+  adapter_telegram_data:
   webui_data:

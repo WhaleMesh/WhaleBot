@@ -278,6 +278,7 @@ error_behavior:
 ## Internal Calls
 - `session`: `/get_context`, `/append_messages`, `/sessions`, `/sessions/{id}`.
 - `llm` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/llm-components/{name}/config`, `POST /api/v1/llm-components/{name}/active`, `POST /api/v1/llm-components/{name}/test` to `{endpoint}/api/v1/llm/*` (WebUI model admin).
+- `adapter` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/adapter-components/{name}/config` to `{endpoint}/api/v1/adapter/config` (WebUI adapter admin, e.g. Telegram token + whitelist).
 - `llm-openai` (typical): `/invoke` at the service root (not under `/api/v1/llm`).
 - `worker`: `/run` when a healthy worker exists.
 - Generic proxy to `tool` components by capability lookup.

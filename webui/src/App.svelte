@@ -12,8 +12,9 @@
   import ToolDockerCreate from './views/ToolDockerCreate.svelte';
   import Logger from './views/Logger.svelte';
   import Llm from './views/Llm.svelte';
+  import Adapters from './views/Adapters.svelte';
 
-  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'llm'];
+  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'llm', 'adapter'];
 
   /** @type {'loading' | 'anon' | 'user'} */
   let authPhase = 'loading';
@@ -280,6 +281,8 @@
         <Skills />
       {:else if $route.name === 'llm'}
         <Llm llmName={$route.params.id || ''} />
+      {:else if $route.name === 'adapter'}
+        <Adapters adapterName={$route.params.id || ''} />
       {:else if $route.name === 'tool' && $route.params.id === 'docker-create'}
         <ToolDockerCreate />
       {/if}

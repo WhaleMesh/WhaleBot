@@ -70,6 +70,8 @@ func (s *Server) Router() http.Handler {
 		r.Put("/llm-components/{name}/config", s.handleLLMPutConfig)
 		r.Post("/llm-components/{name}/active", s.handleLLMPostActive)
 		r.Post("/llm-components/{name}/test", s.handleLLMPostTest)
+		r.Get("/adapter-components/{name}/config", s.handleAdapterGetConfig)
+		r.Put("/adapter-components/{name}/config", s.handleAdapterPutConfig)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
 		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
 		r.Get("/tools/user-dockers", s.handleUserDockerList)

@@ -83,6 +83,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  adapterConfigGet: (name) =>
+    req(`/api/v1/adapter-components/${encodeURIComponent(name)}/config`),
+  adapterConfigPut: (name, body) =>
+    req(`/api/v1/adapter-components/${encodeURIComponent(name)}/config`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   llmActivePost: (name, body) =>
     req(`/api/v1/llm-components/${encodeURIComponent(name)}/active`, {
       method: "POST",

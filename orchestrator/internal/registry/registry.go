@@ -122,6 +122,19 @@ func (r *Registry) GetLLMByName(name string) *Component {
 	return &cp
 }
 
+// GetAdapterByName returns a registered adapter component by name (any status except removed).
+// Used for WebUI admin proxies so configuration can recover when health is degraded.
+func (r *Registry) GetAdapterByName(name string) *Component {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.components[name]
+	if !ok || strings.ToLower(c.Type) != "adapter" || c.Status == StatusRemoved {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
+
 // FirstHealthyByCapability returns the first healthy component containing the
 // requested capability.
 func (r *Registry) FirstHealthyByCapability(capability string) *Component {

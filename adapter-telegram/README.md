@@ -28,7 +28,7 @@ last_verified_from:
 - Sends orchestrator replies back to Telegram chats.
 - Converts standard Markdown replies into Telegram-friendly HTML before sending (Telegram-specific render path).
 - Provides basic Telegram chat commands (`/new`, `/end`, `/status`, `/help`) for session lifecycle control.
-- Exposes only a health endpoint for infrastructure checks.
+- Exposes `GET /health` and admin `GET|PUT /api/v1/adapter/config` (bot token + optional user ID whitelist, persisted to `ADAPTER_CONFIG_PATH` JSON).
 
 ## External API
 ### Endpoint: GET /health
@@ -41,6 +41,12 @@ response:
   service: adapter-telegram
 error_behavior: standard_http_status
 ```
+
+### Admin: GET /api/v1/adapter/config
+Returns `{ success, config }` with `has_bot_token`, `bot_token_hint`, `allowed_user_ids` (no raw token).
+
+### Admin: PUT /api/v1/adapter/config
+Body: `bot_token` (empty string keeps existing token), `allowed_user_ids` (empty list = no whitelist filter). Persists JSON then restarts the Telegram long-poll loop.
 
 ## Internal Calls
 - `POST ${ORCHESTRATOR_URL}/api/v1/chat` for each incoming Telegram text message.
@@ -72,12 +78,12 @@ required: false
 effect: bind_port_for_health_endpoint
 ```
 
-### TELEGRAM_BOT_TOKEN
+### ADAPTER_CONFIG_PATH
 ```yaml
-name: TELEGRAM_BOT_TOKEN
-default: ""
+name: ADAPTER_CONFIG_PATH
+default: "/data/adapter-config.json"
 required: false
-effect: when_empty_service_skips_poll_loop_but_keeps_health_and_registration
+effect: JSON_file_for_bot_token_and_allowed_user_ids_parent_dir_created_on_start
 ```
 
 ### ORCHESTRATOR_URL
@@ -116,7 +122,7 @@ effect: advertised_endpoint_host_for_registration
 - network: `mvp_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${ADAPTER_TELEGRAM_PORT}/health`.
-- volumes: none.
+- volumes: compose mounts a named volume at `/data` for `adapter-config.json` by default.
 - security_notes: bot token is sensitive; keep out of logs and commits.
 
 ## AI Lookup Hints
@@ -133,6 +139,6 @@ upstream_chat_target:
 
 ## Change Safety
 - Keep Telegram forward payload fields (`user_id`, `channel`, `chat_id`, `message`) unchanged.
-- Preserve behavior when `TELEGRAM_BOT_TOKEN` is empty (non-failing degraded mode).
+- Preserve behavior when no bot token is configured (non-failing degraded mode: register only, no long poll).
 - Do not add blocking logic on health endpoint; infra checks depend on it.
 - Keep IM formatting conversion isolated to Telegram egress; do not rewrite session storage content.

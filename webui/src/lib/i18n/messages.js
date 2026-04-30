@@ -41,6 +41,7 @@ const en = {
     tools: 'Tools',
     skills: 'Skills',
     llm: 'LLM',
+    adapter: 'Adapters',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
   lang: {
@@ -333,6 +334,31 @@ const en = {
     testOk: 'OK — upstream accepted the minimal completion request.',
     testNoErr: '(no error message)',
   },
+  adapter: {
+    backAll: '← All adapters',
+    detailTitle: 'Adapter · {name}',
+    listTitle: 'Adapters',
+    listHint:
+      'Components with type "adapter". Open one to edit Telegram token and optional user ID whitelist (via orchestrator proxy).',
+    emptyRegistry: 'No adapter-type components in the registry.',
+    notFound: 'No registered component named "{name}" with type "adapter".',
+    registryStatus: 'Registry status',
+    endpoint: 'Endpoint',
+    settings: 'Configuration',
+    loadingCfg: 'Loading configuration…',
+    hintWhitelist:
+      'Leave the user ID list empty to allow all Telegram users. When non-empty, only listed numeric user IDs can use the bot.',
+    botToken: 'Bot token',
+    tokenUnchanged: '(unchanged if empty)',
+    tokenRequired: 'Paste bot token from @BotFather',
+    storedHint: 'Stored token hint: {hint}',
+    whitelistLabel: 'User ID whitelist',
+    whitelistPlaceholder: 'One numeric Telegram user ID per line, or comma-separated',
+    save: 'Save',
+    saved: 'Saved.',
+    badUserId: 'Invalid user id: "{value}". Use integers only.',
+    tokenRequiredSave: 'Enter a bot token before saving (no token is stored yet).',
+  },
 };
 
 const zhPart = {
@@ -348,6 +374,7 @@ const zhPart = {
     tools: '工具',
     skills: '技能',
     llm: '大模型',
+    adapter: '适配器',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
   auth: {
@@ -574,6 +601,30 @@ const zhPart = {
     testOk: '成功 — 上游接受了最小补全请求。',
     testNoErr: '（无错误信息）',
   },
+  adapter: {
+    backAll: '← 全部适配器',
+    detailTitle: '适配器 · {name}',
+    listTitle: '适配器',
+    listHint: '类型为 adapter 的组件。打开其一可编辑 Telegram bot token 与可选用户 ID 白名单（经编排器代理）。',
+    emptyRegistry: '注册表中没有 adapter 类型组件。',
+    notFound: '未找到名为「{name}」且类型为「adapter」的已注册组件。',
+    registryStatus: '注册状态',
+    endpoint: '端点',
+    settings: '配置',
+    loadingCfg: '正在加载配置…',
+    hintWhitelist:
+      '用户 ID 列表留空则不限制，任何人可与机器人对话。非空时仅列表中的数字型 Telegram user id 可用。',
+    botToken: 'Bot token',
+    tokenUnchanged: '（留空表示不变）',
+    tokenRequired: '从 @BotFather 粘贴 bot token',
+    storedHint: '已存储 token 提示：{hint}',
+    whitelistLabel: '用户 ID 白名单',
+    whitelistPlaceholder: '每行一个数字型 user id，或用逗号分隔',
+    save: '保存',
+    saved: '已保存。',
+    badUserId: '无效的用户 ID：「{value}」，仅允许整数。',
+    tokenRequiredSave: '尚未保存过 token，请先填写 bot token 再保存。',
+  },
 };
 
 const jaPart = {
@@ -589,6 +640,7 @@ const jaPart = {
     tools: 'ツール',
     skills: 'スキル',
     llm: 'LLM',
+    adapter: 'アダプター',
   },
   brand: { title: 'WhalesBot', mvp: 'MVP' },
   auth: {
@@ -816,6 +868,31 @@ const jaPart = {
     testing: 'テスト中…',
     testOk: 'OK — 上流が最小補完リクエストを受け付けました。',
     testNoErr: '（エラーメッセージなし）',
+  },
+  adapter: {
+    backAll: '← すべてのアダプター',
+    detailTitle: 'アダプター · {name}',
+    listTitle: 'アダプター',
+    listHint:
+      'type が adapter のコンポーネント。開くと Telegram の bot token と任意の user ID ホワイトリストを編集（オーケストレーター経由）。',
+    emptyRegistry: 'レジストリに adapter タイプのコンポーネントがありません。',
+    notFound: '名前「{name}」で type が adapter の登録コンポーネントがありません。',
+    registryStatus: 'レジストリ状態',
+    endpoint: 'エンドポイント',
+    settings: '設定',
+    loadingCfg: '設定を読み込み中…',
+    hintWhitelist:
+      'ユーザー ID 一覧を空にすると全員が利用できます。値がある場合は、列挙された数値の Telegram user id のみ許可します。',
+    botToken: 'Bot トークン',
+    tokenUnchanged: '（空なら変更なし）',
+    tokenRequired: '@BotFather から取得したトークンを貼り付け',
+    storedHint: '保存済みトークン表記: {hint}',
+    whitelistLabel: 'ユーザー ID ホワイトリスト',
+    whitelistPlaceholder: '1 行に 1 つの数値 user id、またはカンマ区切り',
+    save: '保存',
+    saved: '保存しました。',
+    badUserId: '無効なユーザー ID: 「{value}」。整数のみ使用してください。',
+    tokenRequiredSave: 'まだトークンが保存されていません。先に bot トークンを入力して保存してください。',
   },
 };
 

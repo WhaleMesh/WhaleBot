@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/whalesbot/adaptertelegram/internal/configstore"
 	"github.com/whalesbot/adaptertelegram/internal/imfmt"
 	"github.com/whalesbot/adaptertelegram/internal/registerclient"
 )
@@ -64,6 +65,51 @@ func getenvInt(k string, def int) int {
 		}
 	}
 	return def
+}
+
+// pollMgr owns at most one telegram long-poll goroutine; restart waits for the previous to exit.
+type pollMgr struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func (m *pollMgr) stopLocked() {
+	if m.cancel != nil {
+		m.cancel()
+		m.wg.Wait()
+		m.cancel = nil
+	}
+}
+
+func (m *pollMgr) restart(appCtx context.Context, st *configstore.Store, orchURL string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stopLocked()
+	token := strings.TrimSpace(st.GetBotToken())
+	if token == "" {
+		slog.Warn("no bot token in config; skipping telegram long poll (service still registered)")
+		return
+	}
+	allowed := st.AllowedUserIDSet()
+	pollCtx, cancel := context.WithCancel(appCtx)
+	m.cancel = cancel
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		pollLoop(pollCtx, token, orchURL, allowed)
+	}()
+}
+
+func allowedTelegramUser(allowed map[int64]struct{}, from *tgbotapi.User) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	if from == nil {
+		return false
+	}
+	_, ok := allowed[from.ID]
+	return ok
 }
 
 type chatRequest struct {
@@ -299,7 +345,18 @@ func main() {
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	selfHost := getenv("SERVICE_HOST", "adapter-telegram")
 	self := "http://" + selfHost + ":" + port
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	cfgPath := getenv("ADAPTER_CONFIG_PATH", "/data/adapter-config.json")
+
+	st, err := configstore.Open(cfgPath)
+	if err != nil {
+		slog.Error("adapter config store", "err", err, "path", cfgPath)
+		os.Exit(1)
+	}
+
+	appCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	var polls pollMgr
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -307,8 +364,30 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "adapter-telegram"})
 	})
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	r.Route("/api/v1/adapter", func(sr chi.Router) {
+		sr.Get("/config", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "config": st.GetPublic()})
+		})
+		sr.Put("/config", func(w http.ResponseWriter, req *http.Request) {
+			var body configstore.PutBody
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "invalid json: " + err.Error()})
+				return
+			}
+			if err := st.ApplyPut(body); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": err.Error()})
+				return
+			}
+			polls.restart(appCtx, st, orchURL)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "config": st.GetPublic()})
+		})
+	})
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
 		Name:           "adapter-telegram",
@@ -318,30 +397,29 @@ func main() {
 		HealthEndpoint: self + "/health",
 		Capabilities:   []string{"telegram_text"},
 	})
-	rc.Start(ctx)
+	rc.Start(appCtx)
 
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("adapter-telegram listening", "port", port)
+		slog.Info("adapter-telegram listening", "port", port, "config", cfgPath)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)
 		}
 	}()
 
-	if token == "" {
-		slog.Warn("TELEGRAM_BOT_TOKEN empty; skipping long poll. Service still runs and is registered.")
-	} else {
-		go pollLoop(ctx, token, orchURL)
-	}
+	polls.restart(appCtx, st, orchURL)
 
-	<-ctx.Done()
+	<-appCtx.Done()
+	polls.mu.Lock()
+	polls.stopLocked()
+	polls.mu.Unlock()
 	shCtx, c2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer c2()
 	_ = srv.Shutdown(shCtx)
 }
 
-func pollLoop(ctx context.Context, token, orchURL string) {
+func pollLoop(ctx context.Context, token, orchURL string, allowed map[int64]struct{}) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		slog.Error("telegram bot init failed", "err", err)
@@ -370,6 +448,14 @@ func pollLoop(ctx context.Context, token, orchURL string) {
 		case update := <-updates:
 			msg := update.Message
 			if msg == nil || msg.Text == "" {
+				continue
+			}
+			if !allowedTelegramUser(allowed, msg.From) {
+				var uid any
+				if msg.From != nil {
+					uid = msg.From.ID
+				}
+				slog.Debug("telegram message ignored (user not in whitelist)", "user_id", uid)
 				continue
 			}
 			cmd := handleCommand(conv, msg)
