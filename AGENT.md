@@ -31,7 +31,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `skills`, `logger`, `stats`, `workspace` use named volumes (`memory` is deferred; see `memory/TODO.md`).
+  - `session`, `skills`, `logger`, `stats`, `workspace`, `webui` use named volumes (`memory` is deferred; see `memory/TODO.md`); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`).
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -123,13 +123,14 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `workspace/cmd/server/main.go`
   - host exposed: no
 - `webui`
-  - purpose: Svelte dashboard via caddy
-  - entry: `webui/src/main.js`
+  - purpose: Svelte dashboard via Caddy plus small loopback **auth** process (`webui-auth` from `webui/authsrv`)
+  - entry: `webui/src/main.js` (UI); `webui/authsrv/main.go` (auth API on `127.0.0.1:8089`, proxied by Caddy as `/api/webui/*`)
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalesbot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; header dropdown opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
   - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalesbot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
-  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Navbar includes a language selector.
+  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Navbar includes a language selector and account menu (when signed in).
   - note: router is hash-based so refresh keeps current page
-  - note: top navbar uses **equal-width** grid columns for primary routes; brand + language selector sit at the ends.
+  - note: top navbar uses **equal-width** grid columns for primary routes; brand left; language select and account dropdown on the right.
   - note: includes dedicated `Logger` page in addition to overview logs
   - note: `Logger` page supports persistent logger events (`/api/v1/logger/events/recent`) + orchestrator recent logs dual-source diagnosis
   - note: session detail auto-scroll follows new messages only when user is near bottom; header/meta stays sticky
@@ -182,7 +183,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `docker-compose.yml` contains 13 services including `runtime`, `skills`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `webui_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)

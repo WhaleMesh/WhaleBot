@@ -8,7 +8,7 @@ compose_service: webui
 image: whalesbot/webui:latest
 build_context: ./webui
 owner: tbd
-runtime: static_frontend_served_by_caddy
+runtime: caddy_static_spa_plus_loopback_go_auth
 default_port: 80
 health_endpoint: GET /
 component_registration:
@@ -20,22 +20,48 @@ component_registration:
 last_verified_from:
   - docker-compose.yml
   - webui/src/lib/api.js
+  - webui/src/lib/auth.js
   - webui/src/lib/i18n.js
   - webui/src/styles/global.css
   - webui/vite.config.js
   - webui/Dockerfile
+  - webui/Caddyfile
+  - webui/authsrv/main.go
 ```
 
 ## Purpose
 - Provides the human-facing dashboard for component status, logs, sessions, and tool operations.
-- Calls orchestrator REST API from the browser.
+- Calls orchestrator REST API from the browser (same origin as the UI for auth only; orchestrator base URL remains `ORCHESTRATOR_URL` in `env.js`).
 - Is not a backend component in the orchestrator registry.
 - Renders session content as standard Markdown (no IM-specific formatting conversion).
+
+## Dashboard authentication
+- **Process**: `webui-auth` (Go, `webui/authsrv`) listens on **`127.0.0.1:8089`** inside the container. **Caddy** reverse-proxies **`/api/webui/*`** to that address; browsers never talk to 8089 directly.
+- **Persistence** (Docker volume **`webui_data` → `/data`**):
+  - `credentials.json` — `username` and `password_hash` (bcrypt). Created on first start with defaults **`admin` / `whalesbot`**.
+  - `jwt-secret.bin` — random signing material for session JWTs (created on first start).
+- **Cookie**: HttpOnly **`webui_token`**, `SameSite=Lax`, `Path=/` (no `Secure` so local HTTP works).
+- **REST API** (all under `/api/webui/auth`, JSON bodies, `Set-Cookie` on login/credential update):
+  - `GET /health` — liveness for container entrypoint.
+  - `POST /login` — body `{ "username", "password" }`.
+  - `POST /logout` — clears session cookie.
+  - `GET /me` — returns `{ "username" }` when cookie valid; `401` when not.
+  - `PUT /credentials` — body `{ "current_password", "new_username" (trimmed; may match current), "new_password?" }`. Omit `new_password` or send empty to keep the existing password. Request is rejected with **`no changes`** when the username is unchanged and no new password is supplied. Usernames: Unicode letters or numbers plus `_` `-` `.`, length 1–128. New password length **8–256** when set.
+- **Scope**: The SPA hides routes until signed in. The **orchestrator host port is not gated** by this mechanism; callers can still use the API without the WebUI.
 
 ## Frontend stack
 - **Svelte 4** + **Vite 5**.
 - **Tailwind CSS v4** via `@tailwindcss/vite` and **DaisyUI v5**; theme tokens and plugin config live in [`src/styles/global.css`](src/styles/global.css) (custom theme name `whalesbot`, `data-theme="whalesbot"` on `<html>`).
 - Build: `npm run build` produces static assets consumed by the container Caddy image.
+
+## Local development (`npm run dev`)
+- Vite dev server proxies **`/api/webui`** → **`http://127.0.0.1:8099`** (see [`vite.config.js`](vite.config.js)).
+- In a second terminal, from `webui/authsrv`:
+  ```bash
+  mkdir -p /tmp/whalesbot-webui-auth-data
+  go run . -listen 127.0.0.1:8099 -data-dir /tmp/whalesbot-webui-auth-data
+  ```
+- Then open the Vite URL (default `http://localhost:5173`). Sign in with `admin` / `whalesbot` after the auth process is running.
 
 ## Internationalization (i18n)
 - Copy defaults to **English**; **Chinese (zh)** and **Japanese (ja)** are provided as overlays merged onto English keys in [`src/lib/i18n/messages.js`](src/lib/i18n/messages.js).
@@ -57,7 +83,9 @@ error_behavior: standard_http_status_from_caddy
 ```
 
 ## Internal Calls
-- Browser-side fetch calls to orchestrator:
+- **Same-origin auth** (`credentials: 'include'`) via [`src/lib/auth.js`](src/lib/auth.js):
+  - `GET /api/webui/auth/me`, `POST /api/webui/auth/login`, `POST /api/webui/auth/logout`, `PUT /api/webui/auth/credentials`
+- Browser-side fetch calls to **orchestrator** (`ORCHESTRATOR_URL`, [`src/lib/api.js`](src/lib/api.js)):
   - `GET /health` (Overview uses `chat_ready` / `chat_error` when `chat_ready` is false)
   - `GET /api/v1/components`
   - `GET /api/v1/logs/recent`
@@ -110,15 +138,15 @@ effect: host_port_mapping_to_container_port_80_in_compose
 - network: `mvp_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost/`.
-- volumes: none.
-- security_notes: frontend trusts configured orchestrator URL; CORS and host reachability must match deployment.
+- volumes: **`webui_data:/data`** (auth state; see above).
+- security_notes: frontend trusts configured orchestrator URL; CORS and host reachability must match deployment. Dashboard login does not authenticate orchestrator traffic.
 
 ## Gateway Layering Notes (Outer Caddy/Nginx)
 
-- Current inner server is Caddy inside the `webui` container.
+- Current inner server is Caddy inside the `webui` container, forwarding `/api/webui/*` to the co-located `webui-auth` listener.
 - Using an outer gateway (Caddy, nginx, ingress) in front of `webui` is supported and does not conflict.
 - Recommended responsibility split:
-  - inner Caddy: static files + SPA fallback + runtime `env.js` serving.
+  - inner Caddy: static files + SPA fallback + runtime `env.js` serving + `/api/webui` reverse proxy to loopback auth.
   - outer gateway: TLS, domain routing, auth, rate limit, access logs, WAF-like policies.
 - Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:8080` in public deployments).
 - Keep `/env.js` non-cached (`Cache-Control: no-store`) so runtime endpoint changes can take effect without rebuilding.
@@ -136,9 +164,11 @@ aliases:
 query_to_endpoint:
   ui_health: GET /
 backend_api_base: ORCHESTRATOR_URL
+auth_api_base: /api/webui/auth
 ```
 
 ## Change Safety
 - Keep API base env injection path stable, otherwise browser fetches fail.
 - `ORCHESTRATOR_URL` must be host-reachable for browsers (not only Docker-internal DNS).
 - UI assumes orchestrator response contracts from `/api/v1/*` endpoints.
+- Auth paths under `/api/webui/auth` are reserved for the embedded auth service.
