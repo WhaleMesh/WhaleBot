@@ -5,7 +5,7 @@
 service: user-docker-manager
 role: user_docker_manager_system_tool
 compose_service: user-docker-manager
-image: whalesbot/user-docker-manager:latest
+image: whalebot/user-docker-manager:latest
 build_context: ./user-docker-manager
 owner: tbd
 runtime: go_http_service_with_docker_socket_access
@@ -31,9 +31,9 @@ component_registration:
     - userdocker_images
     - userdocker_interface_discovery
   meta:
-    default_image: whalesbot/userdocker-base:latest
-    go_build_image: whalesbot/userdocker-golang:latest
-    default_network: mvp_net
+    default_image: whalebot/userdocker-base:latest
+    go_build_image: whalebot/userdocker-golang:latest
+    default_network: whalebot_net
 last_verified_from:
   - docker-compose.yml
   - user-docker-manager/cmd/server/main.go
@@ -115,7 +115,7 @@ response:
   allowed_images: string[]
   profiles:
     go_build:
-      recommended_image: whalesbot/userdocker-golang:latest
+      recommended_image: whalebot/userdocker-golang:latest
 ```
 
 ### Endpoint: DELETE /api/v1/user-dockers/{name}
@@ -220,7 +220,7 @@ effect: advertised_endpoint_host_for_registration
 ### USERDOCKER_DEFAULT_IMAGE
 ```yaml
 name: USERDOCKER_DEFAULT_IMAGE
-default: whalesbot/userdocker-base:latest
+default: whalebot/userdocker-base:latest
 required: false
 effect: fallback_image_when_request_image_is_empty
 ```
@@ -228,7 +228,7 @@ effect: fallback_image_when_request_image_is_empty
 ### DOCKER_NETWORK
 ```yaml
 name: DOCKER_NETWORK
-default: mvp_net
+default: whalebot_net
 required: false
 effect: fallback_network_for_spawned_containers
 ```
@@ -236,7 +236,7 @@ effect: fallback_network_for_spawned_containers
 ### USERDOCKER_ALLOWED_IMAGES
 ```yaml
 name: USERDOCKER_ALLOWED_IMAGES
-default: whalesbot/userdocker-base:latest,whalesbot/userdocker-golang:latest
+default: whalebot/userdocker-base:latest,whalebot/userdocker-golang:latest
 required: false
 effect: comma_separated_allowlist_for_framework_images
 ```
@@ -258,7 +258,7 @@ effect: idle_sweeper_poll_interval_seconds
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`, `userdocker-base`, `userdocker-golang`.
 - healthcheck: `wget http://localhost:${USER_DOCKER_MANAGER_PORT}/health`.
 - volumes: `/var/run/docker.sock:/var/run/docker.sock`.
@@ -298,8 +298,8 @@ compatible_orchestrator_proxy:
 
 ## Change Safety
 - Keep `name` mandatory to avoid ambiguous container identity.
-- Preserve default labels (`mvp.component`, `mvp.type`, `mvp.userdocker.interface_version`) for downstream discovery.
-- Preserve scope/session/workspace labels (`mvp.userdocker.scope`, `mvp.userdocker.session_id`, `mvp.userdocker.workspace`) for access control and sweeper logic.
+- Preserve default labels (`whalebot.component`, `whalebot.type`, `whalebot.userdocker.interface_version`) for downstream discovery.
+- Preserve scope/session/workspace labels (`whalebot.userdocker.scope`, `whalebot.userdocker.session_id`, `whalebot.userdocker.workspace`) for access control and sweeper logic.
 - Never skip userdocker contract validation for create requests.
 - Do not allow unapproved external images in create requests.
 - Any docker socket mount change impacts core feature availability.

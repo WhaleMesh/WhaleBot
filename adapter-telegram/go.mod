@@ -1,4 +1,4 @@
-module github.com/whalesbot/adaptertelegram
+module github.com/whalebot/adaptertelegram
 
 go 1.22
 

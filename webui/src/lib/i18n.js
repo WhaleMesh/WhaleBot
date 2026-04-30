@@ -1,7 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { bundles } from './i18n/messages.js';
 
-const STORAGE_KEY = 'whalesbot_lang';
+const STORAGE_KEY = 'whalebot_lang';
 
 /** @param {string} path */
 function getNested(obj, path) {
@@ -40,7 +40,7 @@ function syncDocument(/** @type {'en' | 'zh' | 'ja'} */ loc) {
   if (typeof document === 'undefined') return;
   const langMap = { en: 'en', zh: 'zh-Hans', ja: 'ja' };
   document.documentElement.lang = langMap[loc] || 'en';
-  document.documentElement.setAttribute('data-theme', 'whalesbot');
+  document.documentElement.setAttribute('data-theme', 'whalebot');
 }
 
 locale.subscribe(syncDocument);

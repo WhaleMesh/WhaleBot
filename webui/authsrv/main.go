@@ -26,7 +26,7 @@ const (
 	credentialsFile  = "credentials.json"
 	jwtSecretFile    = "jwt-secret.bin"
 	defaultUsername  = "admin"
-	defaultPassword  = "whalesbot"
+	defaultPassword  = "whalebot"
 	jwtTTL           = 7 * 24 * time.Hour
 	maxPasswordLen   = 256
 )

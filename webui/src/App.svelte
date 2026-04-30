@@ -14,9 +14,11 @@
   import Logger from './views/Logger.svelte';
   import Llm from './views/Llm.svelte';
   import Adapters from './views/Adapters.svelte';
+  import WbBrandIcon from './lib/WbBrandIcon.svelte';
+  import { BRAND_REPO_URL, WHALEMESH_ORG_URL } from './lib/brandUrls.js';
 
   const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'llm', 'adapter'];
-  const SIDEBAR_LS_KEY = 'whalesbot_sidebar_collapsed';
+  const SIDEBAR_LS_KEY = 'whalebot_sidebar_collapsed';
 
   /** @type {'loading' | 'anon' | 'user'} */
   let authPhase = 'loading';
@@ -213,8 +215,21 @@
     <div class="card w-full max-w-md border border-base-300 bg-base-100 shadow-xl">
       <div class="card-body gap-4">
         <div>
-          <h1 class="text-2xl font-bold text-primary">{$_('brand.title')} <span class="font-normal text-base-content">{$_('brand.mvp')}</span></h1>
-          <p class="text-sm text-base-content/70">{$_('auth.loginSubtitle')}</p>
+          <div class="flex items-start gap-3">
+            <a
+              href={BRAND_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="shrink-0 text-primary hover:opacity-90"
+              aria-label={$_('layout.brandRepoAria')}
+            >
+              <WbBrandIcon className="h-9 w-9 shrink-0" />
+            </a>
+            <div class="min-w-0 flex-1">
+              <h1 class="text-2xl font-bold text-primary">{$_('brand.title')}</h1>
+              <p class="text-sm text-base-content/70">{$_('auth.loginSubtitle')}</p>
+            </div>
+          </div>
         </div>
         <h2 class="card-title text-lg">{$_('auth.loginTitle')}</h2>
         {#if bootError}
@@ -265,21 +280,32 @@
         class="flex shrink-0 items-center gap-2 border-b border-base-300 p-2 {sidebarCollapsed ? 'flex-col justify-center py-3' : 'justify-between'}"
       >
         {#if !sidebarCollapsed}
-          <span class="min-w-0 flex-1 truncate text-lg font-bold leading-tight tracking-tight text-primary">
-            {$_('brand.title')}
-            <span class="block text-sm font-normal text-base-content">{$_('brand.mvp')}</span>
-          </span>
+          <div class="flex min-w-0 flex-1 items-center gap-2">
+            <a
+              href={BRAND_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="shrink-0 text-primary hover:opacity-90"
+              aria-label={$_('layout.brandRepoAria')}
+            >
+              <WbBrandIcon className="h-7 w-7 shrink-0" />
+            </a>
+            <span class="min-w-0 flex-1 truncate text-lg font-bold leading-tight tracking-tight text-primary" title={$_('layout.brandShort')}>
+              {$_('brand.title')}
+            </span>
+          </div>
         {:else}
-          <span class="inline-flex text-primary" title={$_('layout.brandShort')}>
-            <svg class="h-7 w-7 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"
-              />
-            </svg>
+          <a
+            href={BRAND_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex text-primary hover:opacity-90"
+            title={$_('layout.brandShort')}
+            aria-label={$_('layout.brandRepoAria')}
+          >
+            <WbBrandIcon className="h-7 w-7 shrink-0" />
             <span class="sr-only">{$_('layout.brandShort')}</span>
-          </span>
+          </a>
         {/if}
         <button
           type="button"
@@ -394,6 +420,20 @@
             </li>
           </ul>
         </details>
+
+        <p
+          class="border-t border-base-300/60 pt-2 text-center text-[10px] leading-snug text-base-content/55 sm:text-xs {sidebarCollapsed
+            ? 'px-0'
+            : 'px-1'}"
+        >
+          <span>{$_('layout.poweredByBefore')}</span>
+          <a
+            href={WHALEMESH_ORG_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="link link-hover font-medium text-primary/90"
+          >{$_('layout.whaleMesh')}</a><span>{$_('layout.poweredByAfter')}</span>
+        </p>
       </div>
     </aside>
 

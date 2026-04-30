@@ -9,14 +9,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/whalesbot/orchestrator/internal/logs"
-	"github.com/whalesbot/orchestrator/internal/registry"
+	"github.com/whalebot/orchestrator/internal/logs"
+	"github.com/whalebot/orchestrator/internal/registry"
 )
 
 type Server struct {
@@ -121,6 +122,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "name, type, endpoint and health_endpoint are required")
 		return
 	}
+	if strings.TrimSpace(c.StatusEndpoint) != "" && !registry.ValidStatusEndpoint(c.StatusEndpoint) {
+		writeError(w, 400, "status_endpoint must be a valid http(s) URL")
+		return
+	}
 	comp := s.Registry.Upsert(&c)
 	s.log("info", "component registered",
 		map[string]string{"name": comp.Name, "type": comp.Type, "endpoint": comp.Endpoint})
@@ -142,7 +147,7 @@ func (s *Server) handleLogsRecent(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleLoggerEventsRecent(w http.ResponseWriter, r *http.Request) {
-	loggerComp := s.Registry.FirstHealthyByCapability("events_recent")
+	loggerComp := s.Registry.FirstReadyByCapability("events_recent")
 	if loggerComp == nil {
 		writeError(w, 503, "no healthy logger service")
 		return
@@ -155,7 +160,7 @@ func (s *Server) handleLoggerEventsRecent(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
-	sess := s.Registry.FirstHealthyByType("session")
+	sess := s.Registry.FirstReadyByType("session")
 	if sess == nil {
 		writeError(w, 503, "no healthy session service")
 		return
@@ -164,7 +169,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
-	sess := s.Registry.FirstHealthyByType("session")
+	sess := s.Registry.FirstReadyByType("session")
 	if sess == nil {
 		writeError(w, 503, "no healthy session service")
 		return
@@ -174,7 +179,7 @@ func (s *Server) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
-	sess := s.Registry.FirstHealthyByType("session")
+	sess := s.Registry.FirstReadyByType("session")
 	if sess == nil {
 		writeError(w, 503, "no healthy session service")
 		return
@@ -221,7 +226,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wk := s.Registry.FirstHealthyByType("runtime")
+	wk := s.Registry.FirstReadyByType("runtime")
 	if wk == nil {
 		s.log("error", "runtime missing after min stack check", map[string]string{"trace_id": traceID})
 		writeJSON(w, 200, ChatResponse{
@@ -257,7 +262,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_interface_contract")
+	tool := s.Registry.FirstReadyByCapability("userdocker_interface_contract")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -266,7 +271,7 @@ func (s *Server) handleUserDockerInterfaceContract(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleUserDockerImages(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_images")
+	tool := s.Registry.FirstReadyByCapability("userdocker_images")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -275,7 +280,7 @@ func (s *Server) handleUserDockerImages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_list")
+	tool := s.Registry.FirstReadyByCapability("userdocker_list")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -284,7 +289,7 @@ func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerCreate(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_create")
+	tool := s.Registry.FirstReadyByCapability("userdocker_create")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -293,7 +298,7 @@ func (s *Server) handleUserDockerCreate(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUserDockerInterface(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_interface_discovery")
+	tool := s.Registry.FirstReadyByCapability("userdocker_interface_discovery")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -307,7 +312,7 @@ func (s *Server) handleUserDockerInterface(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleUserDockerRemove(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_remove")
+	tool := s.Registry.FirstReadyByCapability("userdocker_remove")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -321,7 +326,7 @@ func (s *Server) handleUserDockerRemove(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUserDockerRestart(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_restart")
+	tool := s.Registry.FirstReadyByCapability("userdocker_restart")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -335,7 +340,7 @@ func (s *Server) handleUserDockerRestart(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleUserDockerStart(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_start")
+	tool := s.Registry.FirstReadyByCapability("userdocker_start")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -346,7 +351,7 @@ func (s *Server) handleUserDockerStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerStop(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_stop")
+	tool := s.Registry.FirstReadyByCapability("userdocker_stop")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -360,7 +365,7 @@ func (s *Server) handleUserDockerStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerTouch(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_touch")
+	tool := s.Registry.FirstReadyByCapability("userdocker_touch")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -371,7 +376,7 @@ func (s *Server) handleUserDockerTouch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerTouchCreatorSession(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_touch_creator")
+	tool := s.Registry.FirstReadyByCapability("userdocker_touch_creator")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -380,7 +385,7 @@ func (s *Server) handleUserDockerTouchCreatorSession(w http.ResponseWriter, r *h
 }
 
 func (s *Server) handleUserDockerSwitchScope(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_switch_scope")
+	tool := s.Registry.FirstReadyByCapability("userdocker_switch_scope")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -391,7 +396,7 @@ func (s *Server) handleUserDockerSwitchScope(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleUserDockerExec(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_exec")
+	tool := s.Registry.FirstReadyByCapability("userdocker_exec")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -402,7 +407,7 @@ func (s *Server) handleUserDockerExec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserDockerFilesList(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -416,7 +421,7 @@ func (s *Server) handleUserDockerFilesList(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleUserDockerFileRead(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -430,7 +435,7 @@ func (s *Server) handleUserDockerFileRead(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleUserDockerFileWrite(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -441,7 +446,7 @@ func (s *Server) handleUserDockerFileWrite(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleUserDockerFileDelete(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -455,7 +460,7 @@ func (s *Server) handleUserDockerFileDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleUserDockerFilesMkdir(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -466,7 +471,7 @@ func (s *Server) handleUserDockerFilesMkdir(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleUserDockerFilesMove(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_files")
+	tool := s.Registry.FirstReadyByCapability("userdocker_files")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -477,7 +482,7 @@ func (s *Server) handleUserDockerFilesMove(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.Request) {
-	tool := s.Registry.FirstHealthyByCapability("userdocker_artifact_export")
+	tool := s.Registry.FirstReadyByCapability("userdocker_artifact_export")
 	if tool == nil {
 		writeError(w, 503, "no healthy user-docker-manager service")
 		return
@@ -491,7 +496,7 @@ func (s *Server) handleUserDockerArtifactExport(w http.ResponseWriter, r *http.R
 }
 
 func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
-	st := s.Registry.FirstHealthyByType("stats")
+	st := s.Registry.FirstReadyByType("stats")
 	if st == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"success": false,
@@ -508,7 +513,7 @@ func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) skillsUpstream() *registry.Component {
-	return s.Registry.FirstHealthyByType("skills")
+	return s.Registry.FirstReadyByType("skills")
 }
 
 func (s *Server) handleSkillsSearch(w http.ResponseWriter, r *http.Request) {

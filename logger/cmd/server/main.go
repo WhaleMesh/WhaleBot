@@ -16,7 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	_ "modernc.org/sqlite"
 
-	"github.com/whalesbot/logger/internal/registerclient"
+	"github.com/whalebot/logger/internal/registerclient"
 )
 
 type entry struct {

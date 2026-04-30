@@ -20,7 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/runtime/internal/registerclient"
+	"github.com/whalebot/runtime/internal/registerclient"
 )
 
 func getenv(k, def string) string {
@@ -553,7 +553,7 @@ func userDockerManagerToolDefinition() map[string]any {
 					},
 					"image": map[string]any{
 						"type":        "string",
-						"description": "Docker image reference. Prefer framework images. For Go build tasks, prefer whalesbot/userdocker-golang:latest. External images require explicit user approval and must implement /api/v1/userdocker/interface.",
+						"description": "Docker image reference. Prefer framework images. For Go build tasks, prefer whalebot/userdocker-golang:latest. External images require explicit user approval and must implement /api/v1/userdocker/interface.",
 					},
 					"cmd": map[string]any{
 						"type": "array", "items": map[string]any{"type": "string"},
@@ -561,7 +561,7 @@ func userDockerManagerToolDefinition() map[string]any {
 					},
 					"env":     map[string]any{"type": "object", "description": "Optional env key/value map."},
 					"labels":  map[string]any{"type": "object", "description": "Optional Docker labels map."},
-					"network": map[string]any{"type": "string", "description": "Docker network name; omit for default MVP network."},
+					"network": map[string]any{"type": "string", "description": "Docker network name; omit for default compose network (whalebot_net)."},
 					"auto_register": map[string]any{
 						"type":        "boolean",
 						"description": "If true, container self-registers with the orchestrator (default true).",
@@ -2204,12 +2204,12 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 
 func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
-		"你是 WhalesBot MVP 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
+		"你是 WhaleBot 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
 		"当前可用能力由运行时实时发现：",
 		"涉及工程创建、编译、产物导出时，默认使用 manage_user_docker：先 create，再写文件/exec，最后 export_artifact。",
-		"创建容器优先使用框架镜像（例如 whalesbot/*）；如需外部镜像，必须先明确征得用户同意后再继续。",
+		"创建容器优先使用框架镜像（例如 whalebot/*）；如需外部镜像，必须先明确征得用户同意后再继续。",
 		"在选择镜像前，先使用 manage_user_docker(action=list_images) 获取框架可用镜像列表。",
-		"Go 编译任务优先使用 whalesbot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
+		"Go 编译任务优先使用 whalebot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
 		"当关键结果（例如编译日志、访问结果、产物导出结果）已拿到时，立即停止继续调用工具并输出最终回复。",
 		"当 export_artifact 已返回成功时，不要再次调用 export_artifact；应直接总结并回复用户。",
 		"你绝对不能虚构任何工具名。只能使用和描述当前 runtime 显示的工具清单；禁止提及未注册工具。",

@@ -5,7 +5,7 @@
 service: env-golang
 role: go_code_execution_environment
 compose_service: env-golang
-image: whalesbot/env-golang:latest
+image: whalebot/env-golang:latest
 build_context: ./env-golang
 owner: tbd
 runtime: go_http_service
@@ -94,7 +94,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${ENV_GOLANG_PORT}/health`.
 - volumes: none.

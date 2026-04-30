@@ -1,4 +1,4 @@
-module github.com/whalesbot/userdockermanager
+module github.com/whalebot/userdockermanager
 
 go 1.22
 

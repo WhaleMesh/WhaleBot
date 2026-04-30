@@ -1,4 +1,4 @@
-module github.com/whalesbot/envgolang
+module github.com/whalebot/envgolang
 
 go 1.22
 

@@ -5,12 +5,13 @@
 service: llm-openai
 role: openai_compatible_chat_completion_adapter
 compose_service: llm-openai
-image: whalesbot/llm-openai:latest
+image: whalebot/llm-openai:latest
 build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
 default_port: 8081
 health_endpoint: GET /health
+status_endpoint: GET /status
 component_registration:
   enabled: true
   name: llm-openai
@@ -37,13 +38,25 @@ last_verified_from:
 method: GET
 path: /health
 request: none
-response_when_ready:
-  status: ok
-  service: llm-openai
-response_when_no_active_model:
-  http_status: 503
-  body: status no_active_model (orchestrator chat stack treats component as not ready)
-error_behavior: standard_http_status
+response:
+  http_status: 200
+  body:
+    status: ok
+    service: llm-openai
+notes: Liveness only; does not reflect model configuration.
+```
+
+### Endpoint: GET /status
+```yaml
+method: GET
+path: /status
+request: none
+response:
+  http_status: 200
+  body:
+    service: llm-openai
+    operational_state: normal | no_valid_configuration
+notes: English snake_case operational_state for orchestrator + WebUI i18n. Used for chat readiness when registered with orchestrator.
 ```
 
 ### Endpoint: POST /invoke
@@ -122,7 +135,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${LLM_OPENAI_PORT}/health`.
 - volumes: named volume `llm_openai_data` → `/data` (see compose).

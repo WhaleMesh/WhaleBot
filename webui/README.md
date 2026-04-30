@@ -5,7 +5,7 @@
 service: webui
 role: browser_dashboard_frontend
 compose_service: webui
-image: whalesbot/webui:latest
+image: whalebot/webui:latest
 build_context: ./webui
 owner: tbd
 runtime: caddy_static_spa_plus_loopback_go_auth
@@ -38,7 +38,7 @@ last_verified_from:
 ## Dashboard authentication
 - **Process**: `webui-auth` (Go, `webui/authsrv`) listens on **`127.0.0.1:8089`** inside the container. **Caddy** reverse-proxies **`/api/webui/*`** to that address; browsers never talk to 8089 directly.
 - **Persistence** (Docker volume **`webui_data` → `/data`**):
-  - `credentials.json` — `username` and `password_hash` (bcrypt). Created on first start with defaults **`admin` / `whalesbot`**.
+  - `credentials.json` — `username` and `password_hash` (bcrypt). Created on first start with defaults **`admin` / `whalebot`**.
   - `jwt-secret.bin` — random signing material for session JWTs (created on first start).
 - **Cookie**: HttpOnly **`webui_token`**, `SameSite=Lax`, `Path=/` (no `Secure` so local HTTP works).
 - **REST API** (all under `/api/webui/auth`, JSON bodies, `Set-Cookie` on login/credential update):
@@ -51,23 +51,23 @@ last_verified_from:
 
 ## Frontend stack
 - **Svelte 4** + **Vite 5**.
-- **Tailwind CSS v4** via `@tailwindcss/vite` and **DaisyUI v5**; theme tokens and plugin config live in [`src/styles/global.css`](src/styles/global.css) (custom theme name `whalesbot`, `data-theme="whalesbot"` on `<html>`).
+- **Tailwind CSS v4** via `@tailwindcss/vite` and **DaisyUI v5**; theme tokens and plugin config live in [`src/styles/global.css`](src/styles/global.css) (custom theme name `whalebot`, `data-theme="whalebot"` on `<html>`).
 - Build: `npm run build` produces static assets consumed by the container Caddy image.
 
 ## Local development (`npm run dev`)
 - Vite dev server proxies **`/api/webui`** → **`http://127.0.0.1:8099`** (see [`vite.config.js`](vite.config.js)).
 - In a second terminal, from `webui/authsrv`:
   ```bash
-  mkdir -p /tmp/whalesbot-webui-auth-data
-  go run . -listen 127.0.0.1:8099 -data-dir /tmp/whalesbot-webui-auth-data
+  mkdir -p /tmp/whalebot-webui-auth-data
+  go run . -listen 127.0.0.1:8099 -data-dir /tmp/whalebot-webui-auth-data
   ```
-- Then open the Vite URL (default `http://localhost:5173`). Sign in with `admin` / `whalesbot` after the auth process is running.
+- Then open the Vite URL (default `http://localhost:5173`). Sign in with `admin` / `whalebot` after the auth process is running.
 
 ## Internationalization (i18n)
 - Copy defaults to **English**; **Chinese (zh)** and **Japanese (ja)** are provided as overlays merged onto English keys in [`src/lib/i18n/messages.js`](src/lib/i18n/messages.js).
 - Runtime: [`src/lib/i18n.js`](src/lib/i18n.js) exposes `locale` store, `setLocale`, `translate`, reactive `$_` for templates, and `t()` for non-reactive script use.
 - **Auto-detect**: on first visit (no saved preference), `navigator.language` maps `zh*` → `zh`, `ja*` → `ja`, else `en`.
-- **Manual**: sidebar language menu (flyout next to the sidebar); choice persists under `localStorage` key **`whalesbot_lang`** (`en` | `zh` | `ja`).
+- **Manual**: sidebar language menu (flyout next to the sidebar); choice persists under `localStorage` key **`whalebot_lang`** (`en` | `zh` | `ja`).
 - `document.documentElement.lang` is updated (`en`, `zh-Hans`, `ja`) when the locale changes.
 
 ## External API
@@ -135,7 +135,7 @@ effect: host_port_mapping_to_container_port_80_in_compose
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost/`.
 - volumes: **`webui_data:/data`** (auth state; see above).
@@ -150,7 +150,7 @@ effect: host_port_mapping_to_container_port_80_in_compose
   - outer gateway: TLS, domain routing, auth, rate limit, access logs, WAF-like policies.
 - Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:8080` in public deployments).
 - Keep `/env.js` non-cached (`Cache-Control: no-store`) so runtime endpoint changes can take effect without rebuilding.
-- If deploying under a path prefix (for example `/whalesbot/`), align:
+- If deploying under a path prefix (for example `/whalebot/`), align:
   - frontend base path build/runtime config
   - outer gateway path rewrite rules
   - API base URL exposed to browsers

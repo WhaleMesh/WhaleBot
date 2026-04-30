@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/envgolang/internal/registerclient"
-	"github.com/whalesbot/envgolang/internal/runner"
+	"github.com/whalebot/envgolang/internal/registerclient"
+	"github.com/whalebot/envgolang/internal/runner"
 )
 
 func getenv(k, def string) string {

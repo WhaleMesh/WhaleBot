@@ -8,6 +8,7 @@
     parseUserDockerManagerMeta,
     tempRemovalCountdown,
   } from '../lib/userdockerPolicy.js';
+  import { componentBadgeTone } from '../lib/componentDisplay.js';
 
   let components = [];
   let containers = [];
@@ -38,6 +39,31 @@
       return 'badge badge-neutral badge-sm whitespace-nowrap';
     if (s.includes('warn') || s.includes('restarting')) return 'badge badge-warning badge-sm whitespace-nowrap';
     return 'badge badge-ghost badge-sm max-w-[12rem] truncate';
+  }
+
+  const badgeToneClass = {
+    success: 'badge badge-success badge-sm max-w-[14rem] truncate whitespace-nowrap',
+    warning: 'badge badge-warning badge-sm max-w-[14rem] truncate whitespace-nowrap',
+    error: 'badge badge-error badge-sm max-w-[14rem] truncate whitespace-nowrap',
+    neutral: 'badge badge-neutral badge-sm max-w-[14rem] truncate whitespace-nowrap',
+    ghost: 'badge badge-ghost badge-sm max-w-[14rem] truncate whitespace-nowrap',
+  };
+
+  /** @param {Record<string, unknown>} c */
+  function rowComponentBadgeClass(c) {
+    return badgeToneClass[componentBadgeTone(c)] || badgeToneClass.ghost;
+  }
+
+  /** @param {Record<string, unknown>} c @param {string} loc */
+  function rowComponentStatusMain(c, loc) {
+    const op = String(c?.operational_state ?? '').trim();
+    if (op) return translate(loc, `components.operationalState.${op}`);
+    return String(c?.status ?? '');
+  }
+
+  /** @param {Record<string, unknown>} c @param {string} loc */
+  function rowComponentStatusTitle(c, loc) {
+    return translate(loc, 'components.registryStatusHint', { status: String(c?.status ?? '') });
   }
 
   /** @param {string} loc */
@@ -137,7 +163,11 @@
             <td class="wb-mono text-sm text-base-content/80">{scopeCell(c, loc)}</td>
             <td class="wb-mono text-sm text-warning">{idleRemovalCell(c, loc)}</td>
             <td class="wb-mono max-w-xs break-all text-sm">{c.endpoint}</td>
-            <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
+            <td>
+              <span class={rowComponentBadgeClass(c)} title={rowComponentStatusTitle(c, loc)}
+                >{rowComponentStatusMain(c, loc)}</span
+              >
+            </td>
             <td>{c.version}</td>
             <td>{c.failure_count}</td>
             <td class="wb-mono whitespace-nowrap text-sm">
@@ -186,7 +216,11 @@
               >
             </td>
             <td class="wb-mono max-w-md break-all text-sm">{c.endpoint}</td>
-            <td><span class={rowStatusBadgeClass(c.status)}>{c.status}</span></td>
+            <td>
+              <span class={rowComponentBadgeClass(c)} title={rowComponentStatusTitle(c, loc)}
+                >{rowComponentStatusMain(c, loc)}</span
+              >
+            </td>
             <td>{c.version}</td>
             <td>{c.failure_count}</td>
             <td class="wb-mono whitespace-nowrap text-sm">

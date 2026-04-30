@@ -9,6 +9,7 @@
     tempRemovalCountdown,
     typeBadgeStyle,
   } from '../lib/userdockerPolicy.js';
+  import { overviewToneFromOperational } from '../lib/componentDisplay.js';
 
   let components = [];
   let userdockers = [];
@@ -54,6 +55,13 @@
       return raw || 'unknown';
     }
     return normalized;
+  }
+
+  /** @param {Record<string, unknown>} c @param {string} loc */
+  function systemComponentStatusLine(c, loc) {
+    const op = String(c?.operational_state ?? '').trim();
+    if (op) return translate(loc, `components.operationalState.${op}`);
+    return String(c?.status || '') || translate(loc, 'common.unknown');
   }
 
   function isUserDockerType(v) {
@@ -307,7 +315,8 @@
     {/each}
   {:else}
     {#each systemComponents as c}
-      {@const ns = normalizeStatus(c.status)}
+      {@const opTone = overviewToneFromOperational(c)}
+      {@const ns = opTone != null ? opTone : normalizeStatus(c.status)}
       <div class="wb-surface flex flex-col gap-3">
         <div class="flex min-w-0 items-center justify-between gap-2">
           <h3 class="min-w-0 flex-1 text-xl font-bold leading-snug text-base-content">
@@ -321,7 +330,11 @@
         <dl class="grid gap-x-4 gap-y-2 text-base [grid-template-columns:max-content_minmax(0,1fr)]">
           <dt class="text-base-content/60">{$_('overview.rowStatus')}</dt>
           <dd class="min-w-0 flex justify-end">
-            <span class={statusTextClass(ns)}>{c.status || $_('common.unknown')}</span>
+            <span
+              class={statusTextClass(ns)}
+              title={translate(loc, 'components.registryStatusHint', { status: String(c?.status ?? '') })}
+              >{systemComponentStatusLine(c, loc)}</span
+            >
           </dd>
           <dt class="text-base-content/60">{$_('overview.rowEndpoint')}</dt>
           <dd class="min-w-0 text-right">

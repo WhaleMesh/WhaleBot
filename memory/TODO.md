@@ -1,4 +1,4 @@
-# Memory roadmap (WhalesBot MVP)
+# Memory roadmap (WhaleBot)
 
 ## TODO
 

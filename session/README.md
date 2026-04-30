@@ -5,7 +5,7 @@
 service: session
 role: conversation_context_store
 compose_service: session
-image: whalesbot/session:latest
+image: whalebot/session:latest
 build_context: ./session
 owner: tbd
 runtime: go_http_service
@@ -164,7 +164,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${SESSION_PORT}/health`.
 - volumes: none.

@@ -14,9 +14,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/llm-openai/internal/configstore"
-	"github.com/whalesbot/llm-openai/internal/openai"
-	"github.com/whalesbot/llm-openai/internal/registerclient"
+	"github.com/whalebot/llm-openai/internal/configstore"
+	"github.com/whalebot/llm-openai/internal/openai"
+	"github.com/whalebot/llm-openai/internal/registerclient"
 )
 
 func getenv(k, def string) string {
@@ -108,21 +108,24 @@ func main() {
 		Version:          "0.1.0",
 		Endpoint:         self,
 		HealthEndpoint:   self + "/health",
+		StatusEndpoint:   self + "/status",
 		Capabilities:     []string{"invoke", "llm_config"},
 		Meta:             metaFromStore(st),
 	})
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		if !st.HasActive() {
-			writeJSON(w, 503, map[string]any{
-				"status":  "no_active_model",
-				"service": "llm-openai",
-				"error":   "no active model configured",
-			})
-			return
-		}
 		writeJSON(w, 200, map[string]any{"status": "ok", "service": "llm-openai"})
+	})
+	r.Get("/status", func(w http.ResponseWriter, _ *http.Request) {
+		state := "normal"
+		if !st.HasActive() {
+			state = "no_valid_configuration"
+		}
+		writeJSON(w, 200, map[string]any{
+			"service":             "llm-openai",
+			"operational_state":   state,
+		})
 	})
 
 	r.Post("/invoke", func(w http.ResponseWriter, req *http.Request) {

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @plugin "daisyui";
 @plugin "daisyui/theme" {
-	name: "whalesbot";
+	name: "whalebot";
 	default: true;
 	color-scheme: dark;
 	--color-base-100: oklch(26% 0 0);

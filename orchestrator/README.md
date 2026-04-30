@@ -5,7 +5,7 @@
 service: orchestrator
 role: component_registry_and_api_gateway
 compose_service: orchestrator
-image: whalesbot/orchestrator:latest
+image: whalebot/orchestrator:latest
 build_context: ./orchestrator
 owner: tbd
 runtime: go_http_service
@@ -173,7 +173,7 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
-Implementation: resolves `FirstHealthyByType("stats")` and reverse-proxies the response body and status code.
+Implementation: resolves `FirstReadyByType("stats")` (liveness + optional `status_endpoint` / `operational_state`) and reverse-proxies the response body and status code.
 
 ### Skills API (reverse proxy)
 
@@ -318,7 +318,7 @@ effect: timeout_seconds_for_orchestrator_http_proxy_to_runtime_tool_and_other_up
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: none.
 - healthcheck: `wget http://localhost:8080/health`.
 - volumes: none.

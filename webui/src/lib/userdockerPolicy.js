@@ -69,7 +69,7 @@ export function tempRemovalCountdown(container, ttlSec) {
   if (!ttlSec || !container || typeof container !== 'object') return { kind: 'unknown' };
   const scope = String(
     container.scope ||
-      (container.labels && container.labels['mvp.userdocker.scope']) ||
+      (container.labels && container.labels['whalebot.userdocker.scope']) ||
       '',
   ).toLowerCase();
   if (scope === 'global_service') return { kind: 'persistent' };

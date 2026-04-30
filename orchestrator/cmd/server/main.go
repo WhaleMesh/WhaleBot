@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/whalesbot/orchestrator/internal/httpapi"
-	"github.com/whalesbot/orchestrator/internal/logs"
-	"github.com/whalesbot/orchestrator/internal/registry"
+	"github.com/whalebot/orchestrator/internal/httpapi"
+	"github.com/whalebot/orchestrator/internal/logs"
+	"github.com/whalebot/orchestrator/internal/registry"
 )
 
 func getenv(k, def string) string {

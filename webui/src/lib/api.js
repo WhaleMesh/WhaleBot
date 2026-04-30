@@ -1,5 +1,5 @@
 function base() {
-  const env = window.__WHALESBOT_ENV__ || {};
+  const env = window.__WHALEBOT_ENV__ || {};
   return env.ORCHESTRATOR_URL || "http://localhost:8080";
 }
 

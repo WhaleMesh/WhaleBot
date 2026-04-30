@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/workspace/internal/registerclient"
+	"github.com/whalebot/workspace/internal/registerclient"
 )
 
 func getenv(k, def string) string {

@@ -1,4 +1,4 @@
-module github.com/whalesbot/skills
+module github.com/whalebot/skills
 
 go 1.22
 
