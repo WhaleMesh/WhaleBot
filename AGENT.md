@@ -1,12 +1,12 @@
-# AGENT Context (WhalesBot MVP)
+# AGENT Context (WhaleBot)
 
 This file is the lowest-token project brief for AI agents.
 Read this first, then read only the referenced source-of-truth files.
 
 ## 1) Project Snapshot
 
-- Goal: single-host, Docker Compose based AI orchestration MVP (`Go + Svelte`).
-- Network: fixed Docker network `mvp_net`.
+- Goal: single-host, Docker Compose based AI orchestration (`Go + Svelte`).
+- Network: fixed Docker network `whalebot_net`.
 - Entry runbook:
   - `cp .env.example .env`
   - optional: configure Telegram in WebUI → Adapters → `adapter-telegram`
@@ -103,7 +103,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: pulling non-framework images requires explicit user approval flag (`external_image_approved_by_user=true`)
   - note: supports `session_scoped` and `global_service` container scopes with `switch-scope`
   - note: session-scoped container names append a sanitized `session_id` suffix to reduce naming conflicts across runs
-  - note: `session_scoped` containers store `mvp.userdocker.creator_session_id` (same as create-time `session_id`); **any** request that supplies `session_id` may operate them (no per-container session ownership check); temporary removal TTL from `USERDOCKER_TEMP_TTL_SEC` (or `USERDOCKER_IDLE_HOURS*3600`); `POST /api/v1/user-dockers/touch-creator-session` touches all temp dockers for a creator `session_id`
+  - note: `session_scoped` containers store `whalebot.userdocker.creator_session_id` (same as create-time `session_id`); **any** request that supplies `session_id` may operate them (no per-container session ownership check); temporary removal TTL from `USERDOCKER_TEMP_TTL_SEC` (or `USERDOCKER_IDLE_HOURS*3600`); `POST /api/v1/user-dockers/touch-creator-session` touches all temp dockers for a creator `session_id`
   - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for `session_scoped` containers; `global_service` is not subject to this sweeper
 - `logger`
   - purpose: event logs (SQLite)
@@ -127,9 +127,11 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: Svelte dashboard via Caddy plus small loopback **auth** process (`webui-auth` from `webui/authsrv`)
   - entry: `webui/src/main.js` (UI); `webui/authsrv/main.go` (auth API on `127.0.0.1:8089`, proxied by Caddy as `/api/webui/*`)
   - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
-  - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalesbot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; sidebar account menu opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
-  - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalesbot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
-  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalesbot_lang` (`en` | `zh` | `ja`). Left **collapsible sidebar** (when signed in) includes primary routes, a language menu, and account menu; collapsed width shows **icons only** (including a compact brand placeholder icon); collapse state persists in `localStorage` key `whalesbot_sidebar_collapsed` (`0`/`1`).
+  - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalebot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; sidebar account menu opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
+  - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalebot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
+  - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalebot_lang` (`en` | `zh` | `ja`). Left **collapsible sidebar** (when signed in) includes primary routes, a language menu, and account menu; collapsed width shows **icons only** (including a compact brand placeholder icon); collapse state persists in `localStorage` key `whalebot_sidebar_collapsed` (`0`/`1`).
+  - note: **brand**: sidebar (and sign-in card) **brand icon** links to `https://github.com/WhaleMesh/WhaleBot` in a **new browser tab** (`webui/src/lib/brandUrls.js`, `WbBrandIcon.svelte`, `App.svelte`).
+  - note: sidebar **footer** (below language + account): **Powered by WhaleMesh** with **WhaleMesh** linking to `https://github.com/WhaleMesh` (new tab); copy is i18n-driven (`layout.poweredByBefore` / `whaleMesh` / `layout.poweredByAfter`).
   - note: router is hash-based so refresh keeps current page
   - note: sidebar lists primary routes with icons (`webui/src/lib/NavGlyph.svelte`); nested routes keep parent highlights (e.g. session detail highlights **Sessions**).
   - note: includes dedicated `Logger` page in addition to overview logs
@@ -205,7 +207,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
 - `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
-- for Go compile tasks, prefer `whalesbot/userdocker-golang:latest` when listed in `action=list_images`.
+- for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
 - runtime no longer relies on `environment`-type execution capability; build/run flows use `manage_user_docker`.
 - Degrade behavior:
   - If a capability is not discoverable, runtime should not rely on that tool.

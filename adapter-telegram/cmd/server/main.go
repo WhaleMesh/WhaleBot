@@ -25,9 +25,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"github.com/whalesbot/adaptertelegram/internal/configstore"
-	"github.com/whalesbot/adaptertelegram/internal/imfmt"
-	"github.com/whalesbot/adaptertelegram/internal/registerclient"
+	"github.com/whalebot/adaptertelegram/internal/configstore"
+	"github.com/whalebot/adaptertelegram/internal/imfmt"
+	"github.com/whalebot/adaptertelegram/internal/registerclient"
 )
 
 var (

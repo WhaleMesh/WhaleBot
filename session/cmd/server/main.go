@@ -14,8 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/session/internal/registerclient"
-	"github.com/whalesbot/session/internal/store"
+	"github.com/whalebot/session/internal/registerclient"
+	"github.com/whalebot/session/internal/store"
 )
 
 func getenv(k, def string) string {

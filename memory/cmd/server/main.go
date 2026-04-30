@@ -14,7 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	_ "modernc.org/sqlite"
 
-	"github.com/whalesbot/memory/internal/registerclient"
+	"github.com/whalebot/memory/internal/registerclient"
 )
 
 func getenv(k, def string) string {

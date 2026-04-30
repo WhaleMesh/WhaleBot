@@ -1,8 +1,8 @@
-# WhalesBot MVP
+# WhaleBot
 
 默认文档语言为中文。English version: [`README.en.md`](README.en.md)。
 
-WhalesBot MVP 是一个运行在单机 Docker Compose 上的多组件 AI 编排系统。  
+WhaleBot 是一个运行在单机 Docker Compose 上的多组件 AI 编排系统。  
 它的目标不是把所有能力塞进一个进程，而是让各能力作为独立服务协作，并由编排层统一对外提供入口。
 
 ## 面向使用者的核心理念
@@ -70,7 +70,7 @@ docker compose up --build
 - `memory/`：记忆服务（源码与路线图；默认 compose 不启动，见 `memory/TODO.md`）
 - `workspace/`：工作区服务
 - `userdocker-base/`：动态 userdocker 基础镜像
-- `whalesbot/userdocker-golang:latest`：动态 userdocker 的 Go 编译镜像（由 `userdocker-base` 构建变体生成）
+- `whalebot/userdocker-golang:latest`：动态 userdocker 的 Go 编译镜像（由 `userdocker-base` 构建变体生成）
 - `webui/`：前端界面
 
 ## 文档与信息优先级

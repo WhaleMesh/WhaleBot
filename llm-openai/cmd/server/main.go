@@ -14,9 +14,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/llm-openai/internal/configstore"
-	"github.com/whalesbot/llm-openai/internal/openai"
-	"github.com/whalesbot/llm-openai/internal/registerclient"
+	"github.com/whalebot/llm-openai/internal/configstore"
+	"github.com/whalebot/llm-openai/internal/openai"
+	"github.com/whalebot/llm-openai/internal/registerclient"
 )
 
 func getenv(k, def string) string {

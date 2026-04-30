@@ -5,7 +5,7 @@
 service: adapter-telegram
 role: telegram_user_io_adapter
 compose_service: adapter-telegram
-image: whalesbot/adapter-telegram:latest
+image: whalebot/adapter-telegram:latest
 build_context: ./adapter-telegram
 owner: tbd
 runtime: go_http_service_plus_telegram_long_poll
@@ -119,7 +119,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${ADAPTER_TELEGRAM_PORT}/health`.
 - volumes: compose mounts a named volume at `/data` for `adapter-config.json` by default.

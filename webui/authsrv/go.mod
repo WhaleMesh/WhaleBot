@@ -1,4 +1,4 @@
-module whalesbot/webui/authsrv
+module github.com/whalebot/webui/authsrv
 
 go 1.22
 

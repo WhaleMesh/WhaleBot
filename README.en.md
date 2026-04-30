@@ -1,8 +1,8 @@
-# WhalesBot MVP
+# WhaleBot
 
 Default root documentation is Chinese. Chinese version: [`README.md`](README.md).
 
-WhalesBot MVP is a single-host, Docker Compose based multi-service AI orchestration system.
+WhaleBot is a single-host, Docker Compose based multi-service AI orchestration system.
 The design goal is not to put every capability into one process, but to keep capabilities
 as independent services and expose a unified entry through the orchestrator.
 
@@ -71,7 +71,7 @@ Root README keeps framework-level info only; implementation details live in each
 - `memory/`: memory service (source + roadmap; not started by default compose — see `memory/TODO.md`)
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
-- `whalesbot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks
+- `whalebot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks
 - `webui/`: frontend
 
 ## Documentation Priority

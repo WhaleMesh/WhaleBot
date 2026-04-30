@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/whalesbot/orchestrator/internal/registry"
+	"github.com/whalebot/orchestrator/internal/registry"
 )
 
 // evalChatMinStack returns whether chat may be proxied to runtime (requires

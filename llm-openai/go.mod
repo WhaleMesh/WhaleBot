@@ -1,4 +1,4 @@
-module github.com/whalesbot/llm-openai
+module github.com/whalebot/llm-openai
 
 go 1.22
 

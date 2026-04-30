@@ -75,7 +75,7 @@ func main() {
 		InterfaceVersion: "userdocker.v1",
 		ServiceName:      name,
 		ServiceType:      ctype,
-		Description:      "Default userdocker implementation for WhalesBot MVP.",
+		Description:      "Default userdocker implementation for WhaleBot.",
 		Endpoints: []interfaceEndpoint{
 			{Method: "GET", Path: "/", Description: "Basic service info output."},
 			{Method: "GET", Path: "/health", Description: "Health probe endpoint."},

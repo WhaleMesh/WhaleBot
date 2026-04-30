@@ -7,8 +7,8 @@
   let image = '';
   let cmd = '';
   let envText = 'TASK_NAME=demo';
-  let labelsText = 'mvp.component=true\nmvp.type=userdocker';
-  let network = 'mvp_net';
+  let labelsText = 'whalebot.component=true\nwhalebot.type=userdocker';
+  let network = 'whalebot_net';
   let autoRegister = true;
   let port = 9000;
   let createResult = null;
@@ -44,7 +44,7 @@
         cmd: cmd ? cmd.split('\n').map((s) => s).filter(Boolean) : undefined,
         env: parseKV(envText),
         labels: parseKV(labelsText),
-        network: network || 'mvp_net',
+        network: network || 'whalebot_net',
         auto_register: autoRegister,
         port: Number(port) || 9000,
       };
@@ -151,7 +151,7 @@
         <input
           class="input input-bordered w-full font-mono text-sm"
           bind:value={image}
-          placeholder="whalesbot/userdocker-base:latest"
+          placeholder="whalebot/userdocker-base:latest"
         />
       </label>
       <label class="form-control w-full">

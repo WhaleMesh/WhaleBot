@@ -1,4 +1,4 @@
-module github.com/whalesbot/logger
+module github.com/whalebot/logger
 
 go 1.22
 

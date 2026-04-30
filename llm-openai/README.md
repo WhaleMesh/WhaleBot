@@ -5,7 +5,7 @@
 service: llm-openai
 role: openai_compatible_chat_completion_adapter
 compose_service: llm-openai
-image: whalesbot/llm-openai:latest
+image: whalebot/llm-openai:latest
 build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
@@ -122,7 +122,7 @@ effect: advertised_endpoint_host_for_registration
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: `orchestrator`.
 - healthcheck: `wget http://localhost:${LLM_OPENAI_PORT}/health`.
 - volumes: named volume `llm_openai_data` → `/data` (see compose).

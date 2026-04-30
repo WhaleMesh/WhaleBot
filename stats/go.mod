@@ -1,4 +1,4 @@
-module github.com/whalesbot/stats
+module github.com/whalebot/stats
 
 go 1.22
 

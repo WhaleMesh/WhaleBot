@@ -1,4 +1,4 @@
-module github.com/whalesbot/memory
+module github.com/whalebot/memory
 
 go 1.22
 

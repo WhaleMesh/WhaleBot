@@ -1,6 +1,6 @@
 # whalemesh in-chat playbook (chat agent)
 
-You run inside **whalemesh** (WhalesBot MVP): a ReAct loop with **only the tools the runtime injected** in the system/tooling context. Treat anything outside that tool list as **not callable**.
+You run inside **whalemesh** (WhaleBot): a ReAct loop with **only the tools the runtime injected** in the system/tooling context. Treat anything outside that tool list as **not callable**.
 
 ## 1) Hard rules
 

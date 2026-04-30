@@ -91,7 +91,7 @@ type ContainerMeta struct {
 var requiredInterface = InterfaceDescriptor{
 	InterfaceVersion: "userdocker.v1",
 	ServiceType:      "userdocker",
-	Description:      "Standardized User Docker runtime contract for WhalesBot MVP.",
+	Description:      "Standardized User Docker runtime contract for WhaleBot.",
 	Endpoints: []InterfaceEndpoint{
 		{Method: "GET", Path: "/health", Description: "Container health check endpoint."},
 		{Method: "GET", Path: "/api/v1/userdocker/interface", Description: "Returns full user docker interface descriptor."},
@@ -219,7 +219,7 @@ func RequiredInterfaceContract() InterfaceDescriptor {
 }
 
 // Create pulls the image if missing, then creates+starts a container attached
-// to the target network with the MVP labels and (when requested) the env vars
+// to the target network with WhaleBot labels and (when requested) the env vars
 // our userdocker-base image uses to self-register.
 func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, error) {
 	if req.Name == "" {
@@ -279,22 +279,22 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
-	labels["mvp.component"] = "true"
-	if _, ok := labels["mvp.type"]; !ok {
-		labels["mvp.type"] = "userdocker"
+	labels["whalebot.component"] = "true"
+	if _, ok := labels["whalebot.type"]; !ok {
+		labels["whalebot.type"] = "userdocker"
 	}
-	labels["mvp.managed_by"] = "user-docker-manager"
-	labels["mvp.userdocker.interface_version"] = requiredInterface.InterfaceVersion
-	labels["mvp.userdocker.port"] = strconv.Itoa(port)
-	labels["mvp.userdocker.scope"] = scope
-	labels["mvp.userdocker.workspace"] = workspace
-	labels["mvp.userdocker.last_active_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	labels["whalebot.managed_by"] = "user-docker-manager"
+	labels["whalebot.userdocker.interface_version"] = requiredInterface.InterfaceVersion
+	labels["whalebot.userdocker.port"] = strconv.Itoa(port)
+	labels["whalebot.userdocker.scope"] = scope
+	labels["whalebot.userdocker.workspace"] = workspace
+	labels["whalebot.userdocker.last_active_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	if scope == ScopeSessionScoped {
-		labels["mvp.userdocker.session_id"] = req.SessionID
-		labels["mvp.userdocker.creator_session_id"] = req.SessionID
+		labels["whalebot.userdocker.session_id"] = req.SessionID
+		labels["whalebot.userdocker.creator_session_id"] = req.SessionID
 	} else {
-		delete(labels, "mvp.userdocker.session_id")
-		delete(labels, "mvp.userdocker.creator_session_id")
+		delete(labels, "whalebot.userdocker.session_id")
+		delete(labels, "whalebot.userdocker.creator_session_id")
 	}
 
 	envList := make([]string, 0, len(req.Env)+4)
@@ -303,15 +303,15 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	}
 	envList = append(envList, "PORT="+strconv.Itoa(port))
 	envList = append(envList, "WORKSPACE_ROOT=/workspace")
-	envList = append(envList, "MVP_USERDOCKER_SCOPE="+scope)
+	envList = append(envList, "WHALEBOT_USERDOCKER_SCOPE="+scope)
 	if req.SessionID != "" {
-		envList = append(envList, "MVP_SESSION_ID="+req.SessionID)
+		envList = append(envList, "WHALEBOT_SESSION_ID="+req.SessionID)
 	}
 	if req.AutoRegister {
 		envList = append(envList,
 			"ORCHESTRATOR_URL="+c.OrchestratorURL,
 			"COMPONENT_NAME="+containerName,
-			"COMPONENT_TYPE="+labels["mvp.type"],
+			"COMPONENT_TYPE="+labels["whalebot.type"],
 		)
 	}
 
@@ -471,7 +471,7 @@ func isAlphaNumToken(s string) bool {
 
 func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSummary, error) {
 	filters, _ := json.Marshal(map[string][]string{
-		"label": {"mvp.type=userdocker", "mvp.component=true"},
+		"label": {"whalebot.type=userdocker", "whalebot.component=true"},
 	})
 	listURL := fmt.Sprintf("%s/containers/json?all=%d&filters=%s",
 		c.baseURL, boolAsInt(includeStopped), url.QueryEscape(string(filters)))
@@ -498,11 +498,11 @@ func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSum
 		if len(item.Names) > 0 {
 			name = strings.TrimPrefix(item.Names[0], "/")
 		}
-		scope := item.Labels["mvp.userdocker.scope"]
+		scope := item.Labels["whalebot.userdocker.scope"]
 		if scope == "" {
 			scope = ScopeSessionScoped
 		}
-		lastActive := item.Labels["mvp.userdocker.last_active_at"]
+		lastActive := item.Labels["whalebot.userdocker.last_active_at"]
 		if t, ok := c.getLastActive(name); ok {
 			lastActive = t.UTC().Format(time.RFC3339Nano)
 		}
@@ -515,8 +515,8 @@ func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSum
 			Created:      item.Created,
 			Labels:       item.Labels,
 			Scope:        scope,
-			SessionID:    item.Labels["mvp.userdocker.session_id"],
-			Workspace:    item.Labels["mvp.userdocker.workspace"],
+			SessionID:    item.Labels["whalebot.userdocker.session_id"],
+			Workspace:    item.Labels["whalebot.userdocker.workspace"],
 			LastActiveAt: lastActive,
 		})
 	}
@@ -658,9 +658,9 @@ func (c *Creator) TouchByCreatorSessionID(ctx context.Context, creatorSessionID 
 		}
 		cid := ""
 		if it.Labels != nil {
-			cid = it.Labels["mvp.userdocker.creator_session_id"]
+			cid = it.Labels["whalebot.userdocker.creator_session_id"]
 			if cid == "" {
-				cid = it.Labels["mvp.userdocker.session_id"]
+				cid = it.Labels["whalebot.userdocker.session_id"]
 			}
 		}
 		if cid != creatorSessionID {
@@ -688,25 +688,25 @@ func (c *Creator) SwitchScope(ctx context.Context, name, targetScope, sessionID 
 	if err != nil {
 		return CreateResult{}, err
 	}
-	port, _ := strconv.Atoi(meta.Config.Labels["mvp.userdocker.port"])
+	port, _ := strconv.Atoi(meta.Config.Labels["whalebot.userdocker.port"])
 	if port <= 0 {
 		port = 9000
 	}
-	workspace := meta.Config.Labels["mvp.userdocker.workspace"]
+	workspace := meta.Config.Labels["whalebot.userdocker.workspace"]
 	if targetScope == ScopeSessionScoped {
 		workspace = "workspace_" + sessionID
 	} else if workspace == "" {
 		workspace = "workspace_global_" + name
 	}
 	envMap := envListToMap(meta.Config.Env)
-	delete(envMap, "MVP_SESSION_ID")
-	envMap["MVP_USERDOCKER_SCOPE"] = targetScope
+	delete(envMap, "WHALEBOT_SESSION_ID")
+	envMap["WHALEBOT_USERDOCKER_SCOPE"] = targetScope
 	if sessionID != "" {
-		envMap["MVP_SESSION_ID"] = sessionID
+		envMap["WHALEBOT_SESSION_ID"] = sessionID
 	}
 	labels := map[string]string{}
 	for k, v := range meta.Config.Labels {
-		if !strings.HasPrefix(k, "mvp.") || k == "mvp.type" {
+		if !strings.HasPrefix(k, "whalebot.") || k == "whalebot.type" {
 			labels[k] = v
 		}
 	}
@@ -735,14 +735,14 @@ func (c *Creator) ContainerMeta(ctx context.Context, name string) (ContainerMeta
 		return ContainerMeta{}, err
 	}
 	port := 9000
-	if p, err := strconv.Atoi(item.Config.Labels["mvp.userdocker.port"]); err == nil && p > 0 {
+	if p, err := strconv.Atoi(item.Config.Labels["whalebot.userdocker.port"]); err == nil && p > 0 {
 		port = p
 	}
-	scope := item.Config.Labels["mvp.userdocker.scope"]
+	scope := item.Config.Labels["whalebot.userdocker.scope"]
 	if scope == "" {
 		scope = ScopeSessionScoped
 	}
-	lastActive := item.Config.Labels["mvp.userdocker.last_active_at"]
+	lastActive := item.Config.Labels["whalebot.userdocker.last_active_at"]
 	if t, ok := c.getLastActive(name); ok {
 		lastActive = t.UTC().Format(time.RFC3339Nano)
 	}
@@ -750,8 +750,8 @@ func (c *Creator) ContainerMeta(ctx context.Context, name string) (ContainerMeta
 		Name:         name,
 		Port:         port,
 		Scope:        scope,
-		SessionID:    item.Config.Labels["mvp.userdocker.session_id"],
-		Workspace:    item.Config.Labels["mvp.userdocker.workspace"],
+		SessionID:    item.Config.Labels["whalebot.userdocker.session_id"],
+		Workspace:    item.Config.Labels["whalebot.userdocker.workspace"],
 		LastActiveAt: lastActive,
 		Labels:       item.Config.Labels,
 	}, nil
@@ -868,7 +868,7 @@ func (c *Creator) inspectManaged(ctx context.Context, name string) (inspectConta
 	if labels == nil {
 		return inspectContainerResponse{}, errors.New("container labels missing")
 	}
-	if labels["mvp.type"] != "userdocker" || labels["mvp.managed_by"] != "user-docker-manager" {
+	if labels["whalebot.type"] != "userdocker" || labels["whalebot.managed_by"] != "user-docker-manager" {
 		return inspectContainerResponse{}, errors.New("target container is not a managed userdocker")
 	}
 	return item, nil
@@ -917,7 +917,7 @@ func (c *Creator) userDockerPort(ctx context.Context, name string) (int, error) 
 		return 0, err
 	}
 	if item.Config.Labels != nil {
-		if portText := item.Config.Labels["mvp.userdocker.port"]; portText != "" {
+		if portText := item.Config.Labels["whalebot.userdocker.port"]; portText != "" {
 			if port, err := strconv.Atoi(portText); err == nil && port > 0 {
 				return port, nil
 			}
@@ -999,13 +999,7 @@ func isLocalImage(ref string) bool {
 }
 
 func isFrameworkImage(ref string) bool {
-	if strings.HasPrefix(ref, "whalesbot/") {
-		return true
-	}
-	if strings.HasPrefix(ref, "mvp/") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(ref, "whalebot/")
 }
 
 func (c *Creator) AllowedImageList() []string {

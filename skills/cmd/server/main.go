@@ -18,8 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	_ "modernc.org/sqlite"
 
-	"github.com/whalesbot/skills/internal/defaults"
-	"github.com/whalesbot/skills/internal/registerclient"
+	"github.com/whalebot/skills/internal/defaults"
+	"github.com/whalebot/skills/internal/registerclient"
 )
 
 type skill struct {

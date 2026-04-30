@@ -19,8 +19,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/whalesbot/userdockermanager/internal/creator"
-	"github.com/whalesbot/userdockermanager/internal/registerclient"
+	"github.com/whalebot/userdockermanager/internal/creator"
+	"github.com/whalebot/userdockermanager/internal/registerclient"
 )
 
 func getenv(k, def string) string {
@@ -59,8 +59,8 @@ func main() {
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
 	selfHost := getenv("SERVICE_HOST", "user-docker-manager")
 	self := "http://" + selfHost + ":" + port
-	defaultImage := getenv("USERDOCKER_DEFAULT_IMAGE", "whalesbot/userdocker-base:latest")
-	defaultNet := getenv("DOCKER_NETWORK", "mvp_net")
+	defaultImage := getenv("USERDOCKER_DEFAULT_IMAGE", "whalebot/userdocker-base:latest")
+	defaultNet := getenv("DOCKER_NETWORK", "whalebot_net")
 	allowedImages := parseCSV(getenv("USERDOCKER_ALLOWED_IMAGES", defaultImage))
 	idleHours := getenv("USERDOCKER_IDLE_HOURS", "24")
 	idleCheckSec := getenv("USERDOCKER_IDLE_CHECK_SEC", "300")
@@ -105,7 +105,7 @@ func main() {
 			"allowed_images": cr.AllowedImageList(),
 			"profiles": map[string]any{
 				"go_build": map[string]any{
-					"recommended_image": "whalesbot/userdocker-golang:latest",
+					"recommended_image": "whalebot/userdocker-golang:latest",
 					"description":       "userdocker runtime with Go toolchain for compile/build tasks",
 				},
 				"generic": map[string]any{

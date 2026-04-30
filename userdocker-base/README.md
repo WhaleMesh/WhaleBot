@@ -5,7 +5,7 @@
 service: userdocker-base
 role: minimal_spawnable_user_container_image
 compose_service: userdocker-base
-image: whalesbot/userdocker-base:latest
+image: whalebot/userdocker-base:latest
 build_context: ./userdocker-base
 owner: tbd
 runtime: go_http_binary_used_as_base_image
@@ -135,7 +135,7 @@ effect: root_dir_for_exec_and_file_operations
 ```
 
 ## Runtime Contract
-- network: `mvp_net`.
+- network: `whalebot_net`.
 - depends_on: none.
 - healthcheck: none in compose helper mode.
 - volumes: none.

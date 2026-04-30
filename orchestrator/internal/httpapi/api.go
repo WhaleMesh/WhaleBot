@@ -15,8 +15,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/whalesbot/orchestrator/internal/logs"
-	"github.com/whalesbot/orchestrator/internal/registry"
+	"github.com/whalebot/orchestrator/internal/logs"
+	"github.com/whalebot/orchestrator/internal/registry"
 )
 
 type Server struct {
