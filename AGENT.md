@@ -9,8 +9,8 @@ Read this first, then read only the referenced source-of-truth files.
 - Network: fixed Docker network `whalebot_net`.
 - Entry runbook:
   - `cp .env.example .env`
-  - optional: configure Telegram in WebUI → Adapters → `adapter-telegram`
   - `docker compose up --build`
+  - WebUI: sign in → LLM page + Adapters → `adapter-telegram` (bot token from @BotFather) for Telegram bot chat
 - Host URLs:
   - WebUI: `http://localhost:3000`
   - Orchestrator API: `http://localhost:8080`

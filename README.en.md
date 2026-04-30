@@ -6,12 +6,21 @@ WhaleBot is a single-host, Docker Compose based multi-service AI orchestration s
 The design goal is not to put every capability into one process, but to keep capabilities
 as independent services and expose a unified entry through the orchestrator.
 
-## User-Facing Philosophy
+This project is **developer-first**: it aims to maximize composability and swap freedom when you build agents. Treat the bundled services as a starting point—replace any layer with your own images or add parallel components without rewriting a monolith.
 
-- Unified entry: users mainly interact with `orchestrator` and `webui`.
-- Service autonomy: each component runs, registers, and health-checks independently.
-- Swap-friendly: model gateway, user I/O adapters (e.g. Telegram), and tools can evolve per service.
-- Usable first: even without full external credentials, the stack still boots for integration tests.
+## Design Philosophy and Architecture
+
+- **Containers as components**: each capability runs in its own container, registers with the orchestrator, and joins the stack; components run and health-check independently.
+- **Hot-swap and replaceability**: the default Compose file ships a runnable baseline; you can plug in custom tool containers, adapters, or model gateways to extend agent behavior without rewriting core orchestration.
+- **How capabilities grow**: implement a tool (or environment) container with the right surface area, register it as prescribed, and `runtime` can discover and call it. See `orchestrator/`, `runtime/`, and each module README for mechanics.
+- **Working with Docker**: agents can already create and manage dynamic containers via paths such as `user-docker-manager`; architecture naturally extends toward agents authoring new tools or containers, while **interface and lifecycle contracts are still being formalized** (schemas and docs will follow).
+- **Unified entry**: day-to-day use centers on `orchestrator` and `webui`.
+- **Usable first**: the stack still boots for local integration even when some external credentials (model keys, Telegram tokens) are missing.
+
+## What This Repository Represents
+
+The repo ships a **working reference paradigm**: it shows how components collaborate and how to close a minimal conversational loop.
+That paradigm is **not** the ceiling of what your agents can do—the ceiling is the ecosystem of components and contracts you plug in, not how much logic lives in one process.
 
 ## Architecture (High Level)
 
@@ -28,50 +37,77 @@ flowchart LR
   orchestrator --> logger["logger"]
   orchestrator --> skills["skills"]
   orchestrator --> workspace["workspace"]
-  orchestrator --> stats["stats (optional)"]
+  orchestrator --> stats_optional["stats (optional)"]
 ```
 
-## Quick Start (User Path)
+## Quick Start
 
-1. Initialize env file
+After the stack is up, configure **LLM** and a **Telegram bot token** in WebUI; you can then chat with your bot directly in the Telegram client (traffic flows through `adapter-telegram` into orchestration and `runtime`).
+
+1. **Environment file**
+
+Root `.env` holds Compose-wide values; **do not** put model API secrets there (LLM settings live on the `llm-openai` side / WebUI—see `AGENT.md`).
 
 ```bash
 cp .env.example .env
 ```
 
-2. Fill `.env` values as needed
+Edit `.env` as needed; defaults are often enough at first.
 
-- Telegram: configure `adapter-telegram` in WebUI **Adapters** (bot token and optional user ID whitelist). Without a token, the service still registers but skips long polling.
-- LLM upstream URL, keys, and model ids are not set in root `.env`; configure on the `llm-openai` service (defaults use echo mode without a key).
-
-3. Start all services
+2. **Start the stack**
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-4. Access
+3. **Open WebUI and sign in**
 
-- WebUI: `http://localhost:3000`
-- Orchestrator API: `http://localhost:8080`
+Browse to `http://localhost:3000` and complete **initial dashboard sign-up** (credentials persist in the `webui` volume).
 
-## Repository Layout (Framework Only)
+4. **Create a Telegram bot (if you do not have one)**
 
-Root README keeps framework-level info only; implementation details live in each module README.
+In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and follow the prompts for display name and username. BotFather returns an **HTTP API token**—save it for the next step. See also [Telegram’s bot overview](https://core.telegram.org/bots#6-botfather).
+
+5. **Configure LLM and Telegram in WebUI**
+
+- **LLM**: on the **LLM** page, set upstream URL, API key, and model id (persisted on the `llm-openai` side, e.g. the default `LLM_CONFIG_PATH` JSON). A missing/invalid key is only useful for placeholder / echo wiring, not real conversations.
+- **Telegram**: on **Adapters**, paste the token into `adapter-telegram`; optionally restrict by user ID whitelist. **Without a token**, the service still registers but does not long-poll, so Telegram will not deliver traffic.
+
+With both configured, `adapter-telegram` starts polling—open your bot in Telegram and send a message.
+
+6. **Orchestrator API (optional)**
+
+HTTP gateway: `http://localhost:8080`
+
+**About the bundled example**: the repo ships **one** user-facing adapter (Telegram) and **one** LLM path (`llm-openai`) as a minimal runnable loop. More adapters and backends will get easier as component **schemas** and **AGENT** docs mature.
+
+## Roadmap / Near-Term Direction
+
+- Formalize interface **schemas** for components and ship matching **AGENT** documentation so new components are cheap to author or generate.
+- Improve Docker **lifecycle** management and orchestration ergonomics so agents interact with containers more smoothly.
+- Refine prompts and the ReAct workflow.
+- Land the `memory` component (status in [`memory/TODO.md`](memory/TODO.md)).
+- Add more common **adapters**.
+- Finer-grained work lives in per-module TODOs and Issues.
+
+## Repository Layout
+
+High-level map only; each directory has its own README for implementation detail.
 
 - `orchestrator/`: orchestration and API gateway
 - `runtime/`: ReAct execution loop
 - `session/`: conversation persistence
-- `skills/`: skill library (SQLite + FTS5) behind orchestrator `/api/v1/skills*`
+- `skills/`: skill library (SQLite + FTS5); exposed via orchestrator routes such as `/api/v1/skills*`
 - `llm-openai/`: model adapter/client
 - `adapter-telegram/`: Telegram user I/O adapter
 - `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
 - `logger/`: logging service
 - `stats/`: optional Overview metrics service
-- `memory/`: memory service (source + roadmap; not started by default compose — see `memory/TODO.md`)
+- `memory/`: memory service
+  - Source and roadmap live in-repo; default Compose does not start it. See [`memory/TODO.md`](memory/TODO.md).
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
-- `whalebot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks
+- `whalebot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks (produced from the `userdocker-base` build flow)
 - `webui/`: frontend
 
 ## Documentation Priority
