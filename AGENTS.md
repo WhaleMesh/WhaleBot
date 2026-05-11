@@ -193,7 +193,7 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 6) Rules For Future Agents (must follow)
 
-- Always read `AGENT.md` first, then only open files needed for the task.
+- Always read `AGENTS.md` first, then only open files needed for the task.
 - Treat `docker-compose.yml` + `.env.example` as runtime truth.
 - Do not infer service wiring from stale docs without compose confirmation.
 - Keep changes minimal and consistent with current compose/network model.
@@ -226,7 +226,7 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 8) Mandatory Update Policy
 
-`AGENT.md` must be updated every time the project is updated.
+`AGENTS.md` must be updated every time the project is updated.
 
 Update triggers (any one requires update):
 - add/remove/rename service or module
