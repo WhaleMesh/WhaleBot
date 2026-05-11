@@ -8,6 +8,8 @@ as independent services and expose a unified entry through the orchestrator.
 
 This project is **developer-first**: it aims to maximize composability and swap freedom when you build agents. Treat the bundled services as a starting point—replace any layer with your own images or add parallel components without rewriting a monolith.
 
+![](assets/overview.png)
+
 ## Design Philosophy and Architecture
 
 - **Containers as components**: each capability runs in its own container, registers with the orchestrator, and joins the stack; components run and health-check independently.
