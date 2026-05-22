@@ -30,7 +30,7 @@ last_verified_from:
 ```
 
 ## Purpose
-- Provides the human-facing dashboard for component status, logs, sessions, tool operations, LLM profiles, and **adapter** configuration (e.g. Telegram bot token + user ID whitelist via orchestrator `adapter-components` proxy).
+- Provides the human-facing dashboard for component status, logs, sessions, tool operations, LLM profiles, and **adapter** configuration (adapter-specific via orchestrator `adapter-components` proxy, e.g. Telegram token/whitelist and adapter-webui username/password).
 - Calls orchestrator REST API from the browser (same origin as the UI for auth only; orchestrator base URL remains `ORCHESTRATOR_URL` in `env.js`).
 - Is not a backend component in the orchestrator registry.
 - Renders session content as standard Markdown (no IM-specific formatting conversion).
@@ -100,6 +100,7 @@ error_behavior: standard_http_status_from_caddy
   - `GET /api/v1/tools/user-dockers/interface-contract`
   - `GET /api/v1/tools/user-dockers/{name}/interface`
   - `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` (Skills page)
+  - `GET|PUT /api/v1/adapter-components/{name}/config` (Adapters page; proxied to each adapter service `/api/v1/adapter/config`)
 
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.

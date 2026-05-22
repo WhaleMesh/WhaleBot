@@ -241,6 +241,32 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  adapter-webui:
+    build: ./adapter-webui
+    image: whalebot/adapter-webui:latest
+    container_name: adapter-webui
+    environment:
+      ADAPTER_WEBUI_PORT: ${ADAPTER_WEBUI_PORT:-8083}
+      ADAPTER_DATA_DIR: /data
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SESSION_URL: http://session:8090
+      ADAPTER_WEBUI_CHAT_TIMEOUT_SEC: ${ADAPTER_WEBUI_CHAT_TIMEOUT_SEC:-240}
+      SERVICE_HOST: adapter-webui
+    volumes:
+      - adapter_webui_data:/data
+    ports:
+      - "${ADAPTER_WEBUI_PORT:-3001}:8083"
+    networks: [whalebot_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   webui:
     build: ./webui
     image: whalebot/webui:latest
@@ -304,4 +330,5 @@ volumes:
   workspace_data:
   llm_openai_data:
   adapter_telegram_data:
+  adapter_webui_data:
   webui_data:

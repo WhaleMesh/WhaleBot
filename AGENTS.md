@@ -14,6 +14,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Host URLs:
   - WebUI: `http://localhost:3000`
   - Orchestrator API: `http://localhost:8080`
+  - Adapter WebUI (chat): `http://localhost:3001`
 - Source of truth priority:
   1. `docker-compose.yml`
   2. `.env.example`
@@ -24,6 +25,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Ingress:
   - `webui` (browser) -> `orchestrator`
   - `adapter-telegram` (long poll) -> `orchestrator`
+  - `adapter-webui` (browser chat) -> `orchestrator`
 - Core flow:
   - `orchestrator` coordinates `session`, `llm-openai`, `runtime`, `skills`, and tool components.
 - Runtime/tooling:
@@ -31,7 +33,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `skills`, `logger`, `stats`, `workspace`, `webui` use named volumes (`memory` is deferred; see `memory/TODO.md`); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`).
+  - `session`, `skills`, `logger`, `stats`, `workspace`, `webui` use named volumes (`memory` is deferred; see `memory/TODO.md`); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`); `adapter-webui` stores the same auth pattern in its own volume.
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -94,6 +96,20 @@ Read this first, then read only the referenced source-of-truth files.
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: first contact uses an auto-generated session id (same key shape as `/new`, not a bare `chat_id` string); when a local chat is `/end`ed, the next plain message auto-starts a new session; background poll notifies IM when the **server** marks a session idle-expired and rotates to a new id
   - note: `/new` still generates a fresh `chatID-…` key for manual resets
+- `adapter-webui`
+  - purpose: ChatGPT-like web chat interface (`type=adapter` at orchestrator registration)
+  - entry: `adapter-webui/cmd/server/main.go` (Go backend); `adapter-webui/web/src/main.js` (Svelte SPA)
+  - host exposed: yes (`${ADAPTER_WEBUI_PORT:-3001}:8083`)
+  - note: Go backend serves static SPA files + API + dynamic `env.js` directly; designed for external reverse proxy (nginx/Traefik/etc.)
+  - note: Go backend listens on `:8083` inside container
+  - note: JWT auth with HttpOnly cookie `adapter_webui_token`; default credentials `admin` / `whalebot` (same as webui); data in `/data/` volume (`credentials.json` + `jwt-secret.bin`)
+  - note: registers with orchestrator as `type=adapter`, name `adapter-webui`, capabilities `webui_chat`
+  - note: chat proxy: `POST /api/adapter-webui/chat` -> orchestrator `POST /api/v1/chat` with `channel=webui`; session ID format `webui_<key>`
+  - note: session list filtered to `webui_*` prefix only
+  - note: progress polling via `GET /api/adapter-webui/logger/events` -> orchestrator logger events; frontend polls every 2s during active chat
+  - note: i18n (en/zh/ja) with `localStorage` key `adapter_webui_lang`; same whalebot dark theme as webui
+ - note: config endpoint `GET|PUT /api/v1/adapter/config` exposed for orchestrator WebUI Adapters page proxy; returns/updates `username` + `has_password` for admin credential management (password is write-only)
+  - note: `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC` controls the HTTP client timeout for orchestrator chat calls (default 240s)
 - `user-docker-manager`
   - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations)
   - entry: `user-docker-manager/cmd/server/main.go`
@@ -146,7 +162,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
   - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
-  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits Telegram token + whitelist via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to `/api/v1/adapter/config`)
+ - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits adapter-specific config via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to adapter `/api/v1/adapter/config`) — `adapter-telegram`: bot token + whitelist; `adapter-webui`: username/password
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
@@ -163,7 +179,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Telegram adapter:
   - `ADAPTER_CONFIG_PATH` (default `/data/adapter-config.json` in compose; no token -> register only, no long poll)
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `ADAPTER_WEBUI_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Runtime tuning:
   - `REACT_MAX_STEPS`
   - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `5`)
@@ -173,6 +189,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
 - Telegram adapter chat timeout:
   - `ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC`
+- WebUI adapter chat timeout:
+  - `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC`
 - Telegram in-chat progress:
   - single placeholder message edited from logger polling every 2s during chat execution (no extra env required); other adapters should follow `docs/adapter-progress-pattern.md`
 - Userdocker manager lifecycle:
@@ -185,10 +203,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 13 services including `runtime`, `skills`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
+- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `adapter-webui` (no `memory` service until roadmap is implemented).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
-- Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `webui_data`.
+- Compose currently exposes `orchestrator`, `webui`, and `adapter-webui` ports to host.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
