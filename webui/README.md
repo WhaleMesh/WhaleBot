@@ -122,7 +122,7 @@ error_behavior: standard_http_status_from_caddy
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://localhost:8080
+default: http://localhost:18080
 required: false
 effect: browser_reachable_base_url_for_api_requests_injected_as_runtime_env
 ```
@@ -130,7 +130,7 @@ effect: browser_reachable_base_url_for_api_requests_injected_as_runtime_env
 ### WEBUI_PORT
 ```yaml
 name: WEBUI_PORT
-default: "3000"
+default: "18000"
 required: false
 effect: host_port_mapping_to_container_port_80_in_compose
 ```
@@ -149,7 +149,7 @@ effect: host_port_mapping_to_container_port_80_in_compose
 - Recommended responsibility split:
   - inner Caddy: static files + SPA fallback + runtime `env.js` serving + `/api/webui` reverse proxy to loopback auth.
   - outer gateway: TLS, domain routing, auth, rate limit, access logs, WAF-like policies.
-- Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:8080` in public deployments).
+- Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:18080` in public deployments).
 - Keep `/env.js` non-cached (`Cache-Control: no-store`) so runtime endpoint changes can take effect without rebuilding.
 - If deploying under a path prefix (for example `/whalebot/`), align:
   - frontend base path build/runtime config

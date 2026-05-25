@@ -116,7 +116,7 @@ effect: max_iterations_before_runtime_forces_text_finalization
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: tool_execution_target_and_component_registration_target
 ```

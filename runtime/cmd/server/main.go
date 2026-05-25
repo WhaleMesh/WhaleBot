@@ -192,8 +192,8 @@ type availableRoutes struct {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("RUNTIME_PORT", "8085")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("RUNTIME_PORT", "18085")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	sessionURL := getenv("SESSION_URL", "http://session:8090")
 	llmOpenAIURL := getenv("LLM_OPENAI_URL", "http://llm-openai:8081")
 	selfHost := getenv("SERVICE_HOST", "runtime")

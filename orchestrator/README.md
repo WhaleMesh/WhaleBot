@@ -9,7 +9,7 @@ image: whalebot/orchestrator:latest
 build_context: ./orchestrator
 owner: tbd
 runtime: go_http_service
-default_port: 8080
+default_port: 18080
 health_endpoint: GET /health
 component_registration:
   enabled: false
@@ -288,7 +288,7 @@ error_behavior:
 ### ORCHESTRATOR_PORT
 ```yaml
 name: ORCHESTRATOR_PORT
-default: "8080"
+default: "18080"
 required: false
 effect: bind_port_for_http_server
 ```
@@ -320,7 +320,7 @@ effect: timeout_seconds_for_orchestrator_http_proxy_to_runtime_tool_and_other_up
 ## Runtime Contract
 - network: `whalebot_net`.
 - depends_on: none.
-- healthcheck: `wget http://localhost:8080/health`.
+- healthcheck: `wget http://localhost:18080/health`.
 - volumes: none.
 - security_notes: registry is the trust boundary for service discovery.
 

@@ -5,7 +5,7 @@ ChatGPT-like web chat interface for WhaleBot. Registers with orchestrator as `ty
 ## Architecture
 
 ```
-Browser → External reverse proxy (nginx/Traefik/etc.) → Go backend (:8083)
+Browser → External reverse proxy (nginx/Traefik/etc.) → Go backend (:18083)
                                                         ├─ Static SPA files (/srv)
                                                         ├─ API endpoints (/api/adapter-webui/*)
                                                         ├─ Config endpoints (/api/v1/adapter/*)
@@ -66,10 +66,10 @@ No Caddy in container — the Go binary serves everything directly. Use an exter
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ADAPTER_WEBUI_PORT` | `8083` | Go backend listen port |
+| `ADAPTER_WEBUI_PORT` | `18083` | Go backend listen port |
 | `ADAPTER_DATA_DIR` | `/data` | Data directory for credentials/config |
 | `STATIC_DIR` | `/srv` | Static files directory |
-| `ORCHESTRATOR_URL` | `http://orchestrator:8080` | Orchestrator URL |
+| `ORCHESTRATOR_URL` | `http://orchestrator:18080` | Orchestrator URL |
 | `SESSION_URL` | `http://session:8090` | Session service URL |
 | `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC` | `240` | Chat proxy timeout (seconds) |
 | `SERVICE_HOST` | `adapter-webui` | Service hostname for registration |
@@ -88,5 +88,5 @@ go run ./cmd/server
 
 ```bash
 docker build -t whalebot/adapter-webui .
-docker run -p 3001:8083 -e ORCHESTRATOR_URL=http://host.docker.internal:8080 whalebot/adapter-webui
+docker run -p 18083:18083 -e ORCHESTRATOR_URL=http://host.docker.internal:18080 whalebot/adapter-webui
 ```

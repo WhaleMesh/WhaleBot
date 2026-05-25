@@ -40,7 +40,7 @@ type runResponse struct {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	port := getenv("ENV_GOLANG_PORT", "8083")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "env-golang")
 	self := "http://" + selfHost + ":" + port
 

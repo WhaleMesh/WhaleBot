@@ -23,9 +23,9 @@ func getenv(k, def string) string {
 }
 
 func main() {
-	port := getenv("WORKSPACE_PORT", "8088")
+	port := getenv("WORKSPACE_PORT", "18088")
 	root := getenv("WORKSPACE_ROOT", "/data/workspaces")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "workspace")
 	self := "http://" + selfHost + ":" + port
 	_ = os.MkdirAll(root, 0o755)

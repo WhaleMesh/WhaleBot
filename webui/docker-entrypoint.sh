@@ -22,7 +22,7 @@ while [ "$i" -lt 50 ]; do
 	sleep 0.1
 done
 
-: "${ORCHESTRATOR_URL:=http://localhost:8080}"
+: "${ORCHESTRATOR_URL:=http://localhost:18080}"
 cat > /srv/env.js <<EOF
 window.__WHALEBOT_ENV__ = {
   ORCHESTRATOR_URL: "${ORCHESTRATOR_URL}"

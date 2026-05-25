@@ -12,9 +12,9 @@ Read this first, then read only the referenced source-of-truth files.
   - `docker compose up --build`
   - WebUI: sign in → LLM page + Adapters → `adapter-telegram` (bot token from @BotFather) for Telegram bot chat
 - Host URLs:
-  - WebUI: `http://localhost:3000`
-  - Orchestrator API: `http://localhost:8080`
-  - Adapter WebUI (chat): `http://localhost:3001`
+  - WebUI: `http://localhost:18000`
+  - Orchestrator API: `http://localhost:18080`
+  - Adapter WebUI (chat): `http://localhost:18083`
 - Source of truth priority:
   1. `docker-compose.yml`
   2. `.env.example`
@@ -42,7 +42,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `orchestrator`
   - purpose: registry + health loop + API gateway + chat orchestration
   - entry: `orchestrator/cmd/server/main.go`
-  - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
+ - host exposed: yes (`${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
   - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
   - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (`status=healthy` from `health_endpoint` probes) **and** operationally ready when they register an optional `status_endpoint` (`operational_state` from `GET status_endpoint` must be `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
@@ -99,9 +99,9 @@ Read this first, then read only the referenced source-of-truth files.
 - `adapter-webui`
   - purpose: ChatGPT-like web chat interface (`type=adapter` at orchestrator registration)
   - entry: `adapter-webui/cmd/server/main.go` (Go backend); `adapter-webui/web/src/main.js` (Svelte SPA)
-  - host exposed: yes (`${ADAPTER_WEBUI_PORT:-3001}:8083`)
+  - host exposed: yes (`${ADAPTER_WEBUI_PORT:-18083}:${ADAPTER_WEBUI_PORT:-18083}`)
   - note: Go backend serves static SPA files + API + dynamic `env.js` directly; designed for external reverse proxy (nginx/Traefik/etc.)
-  - note: Go backend listens on `:8083` inside container
+  - note: Go backend listens on `:18083` inside container
   - note: JWT auth with HttpOnly cookie `adapter_webui_token`; default credentials `admin` / `whalebot` (same as webui); data in `/data/` volume (`credentials.json` + `jwt-secret.bin`)
   - note: registers with orchestrator as `type=adapter`, name `adapter-webui`, capabilities `webui_chat`
   - note: chat proxy: `POST /api/adapter-webui/chat` -> orchestrator `POST /api/v1/chat` with `channel=webui`; session ID format `webui_<key>`
@@ -143,7 +143,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `webui`
   - purpose: Svelte dashboard via Caddy plus small loopback **auth** process (`webui-auth` from `webui/authsrv`)
   - entry: `webui/src/main.js` (UI); `webui/authsrv/main.go` (auth API on `127.0.0.1:8089`, proxied by Caddy as `/api/webui/*`)
-  - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - host exposed: yes (`${WEBUI_PORT:-18000}:80`)
   - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalebot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; sidebar account menu opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
   - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalebot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
   - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalebot_lang` (`en` | `zh` | `ja`). Left **collapsible sidebar** (when signed in) includes primary routes, a language menu, and account menu; collapsed width shows **icons only** (including a compact brand placeholder icon); collapse state persists in `localStorage` key `whalebot_sidebar_collapsed` (`0`/`1`).
@@ -232,14 +232,14 @@ Read this first, then read only the referenced source-of-truth files.
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
 - Quick diagnostics:
-  - check chat min stack: `curl -s http://localhost:8080/health` (`chat_ready`, `chat_error`)
-  - check components: `curl -s http://localhost:8080/api/v1/components`
-  - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
-  - check stats overview (when stats service running): `curl -s http://localhost:8080/api/v1/stats/overview`
-  - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
-  - check userdocker allowed images: `curl -s http://localhost:8080/api/v1/tools/user-dockers/images`
-  - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
-  - check skills list (when skills service running): `curl -s http://localhost:8080/api/v1/skills`
+  - check chat min stack: `curl -s http://localhost:18080/health` (`chat_ready`, `chat_error`)
+  - check components: `curl -s http://localhost:18080/api/v1/components`
+  - check persistent logger events: `curl -s http://localhost:18080/api/v1/logger/events/recent?limit=20`
+  - check stats overview (when stats service running): `curl -s http://localhost:18080/api/v1/stats/overview`
+  - check userdocker manager contract: `curl -s http://localhost:18080/api/v1/tools/user-dockers/interface-contract`
+  - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
+  - check userdocker list: `curl -s http://localhost:18080/api/v1/tools/user-dockers`
+  - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
   - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
 
 ## 8) Mandatory Update Policy

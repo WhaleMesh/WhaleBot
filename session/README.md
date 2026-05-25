@@ -150,7 +150,7 @@ effect: max_messages_kept_per_session_after_append
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: target_for_component_registration
 ```

@@ -523,8 +523,8 @@ func jsonResponse(w http.ResponseWriter, code int, data any) {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	port := getenv("ADAPTER_WEBUI_PORT", "8083")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("ADAPTER_WEBUI_PORT", "18083")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "adapter-webui")
 	self := "http://" + selfHost + ":" + port
 	dataDir := getenv("ADAPTER_DATA_DIR", "/data")
