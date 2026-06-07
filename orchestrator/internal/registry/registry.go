@@ -106,6 +106,36 @@ func (r *Registry) ListActive() []*Component {
 	return out
 }
 
+// GetByName returns a component by name (any status). O(1) map lookup.
+func (r *Registry) GetByName(name string) *Component {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	c, ok := r.components[name]
+	if !ok {
+		return nil
+	}
+	cp := *c
+	return &cp
+}
+
+// PurgeRemovedOlderThan removes StatusRemoved components whose LastCheckedAt is older than d seconds ago.
+func (r *Registry) PurgeRemovedOlderThan(d int) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	purged := 0
+	for name, c := range r.components {
+		if c.Status != StatusRemoved {
+			continue
+		}
+		if now.Sub(c.LastCheckedAt) > time.Duration(d)*time.Second {
+			delete(r.components, name)
+			purged++
+		}
+	}
+	return purged
+}
+
 // GetLLMByName returns a registered llm component by name (any status except removed).
 // Used for WebUI admin proxies so configuration can recover when health is degraded.
 func (r *Registry) GetLLMByName(name string) *Component {

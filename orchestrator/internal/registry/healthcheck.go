@@ -49,6 +49,7 @@ func (h *HealthChecker) runOnce(ctx context.Context) {
 		c := c
 		go h.checkOne(ctx, c)
 	}
+	h.Registry.PurgeRemovedOlderThan(300)
 }
 
 func (h *HealthChecker) checkOne(ctx context.Context, c *Component) {
@@ -106,22 +107,19 @@ func (h *HealthChecker) pollStatus(ctx context.Context, name, statusURL string) 
 func (h *HealthChecker) report(c *Component, ok bool) {
 	prevStatus := c.Status
 	h.Registry.applyHealthResult(c.Name, ok, h.Threshold)
-	updated := h.Registry.List()
-	for _, u := range updated {
-		if u.Name != c.Name {
-			continue
-		}
-		if u.Status != prevStatus {
-			slog.Info("component status changed",
-				"name", u.Name,
-				"from", string(prevStatus),
-				"to", string(u.Status),
-				"failure_count", u.FailureCount,
-			)
-			if h.OnEvent != nil {
-				h.OnEvent("component_status_changed", u)
-			}
-		}
+	updated := h.Registry.GetByName(c.Name)
+	if updated == nil {
 		return
+	}
+	if updated.Status != prevStatus {
+		slog.Info("component status changed",
+			"name", updated.Name,
+			"from", string(prevStatus),
+			"to", string(updated.Status),
+			"failure_count", updated.FailureCount,
+		)
+		if h.OnEvent != nil {
+			h.OnEvent("component_status_changed", updated)
+		}
 	}
 }
