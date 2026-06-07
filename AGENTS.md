@@ -33,7 +33,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `skills`, `logger`, `stats`, `workspace`, `webui` use named volumes (`memory` is deferred; see `memory/TODO.md`); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`); `adapter-webui` stores the same auth pattern in its own volume.
+  - `session`, `skills`, `logger`, `stats`, `workspace`, `memory`, `webui` use named volumes (`memory` secrets are AES-256-GCM encrypted at rest); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`); `adapter-webui` stores the same auth pattern in its own volume.
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -132,10 +132,15 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `stats/cmd/server/main.go`
   - host exposed: no
   - note: registers `type=stats` with capabilities `stats_overview`, `stats_ingest`; compose includes the service; omit or stop the container if you do not want metrics
-- `memory` (code only; not in default `docker-compose.yml`)
-  - purpose: lightweight memory KV/notes (SQLite) — roadmap in `memory/TODO.md`
+- `memory`
+  - purpose: persistent memory notes (KV) + encrypted secrets store (SQLite)
   - entry: `memory/cmd/server/main.go`
-  - host exposed: no (re-add service to compose or run container manually to enable)
+  - host exposed: no
+  - note: registers `type=memory`, name `memory`, capabilities `notes_get`, `notes_put`, `secrets_get`, `secrets_put`, `secrets_list`, `secrets_delete`; persistence `MEMORY_DB_PATH` (default `/data/memory.db` on volume `memory_data`)
+  - note: secrets are AES-256-GCM encrypted at rest; key from `MEMORY_SECRET_KEY` (hex 64 chars) or auto-generated to `/data/.secret-key`
+  - note: `GET /secrets` returns masked values (`ghp_****xyz9`); `GET /secrets/{key}` returns full decrypted value (used internally by runtime); orchestrator proxy strips `value` field from the detail response — only runtime accesses memory directly for full values
+  - note: runtime discovers `secrets_get` capability and exposes `list_secrets` tool to agent; agent references secrets via `{{secret:key_name}}` placeholders in exec env/command_sh and write_file content; runtime resolves placeholders transparently before forwarding to userdocker-manager, so raw secret values never enter the LLM context
+  - note: runtime redacts known secret values from tool results, logger events, and final replies (defense in depth)
 - `workspace`
   - purpose: workspace directory manager
   - entry: `workspace/cmd/server/main.go`
@@ -161,6 +166,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
   - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
+  - note: sidebar **Secrets** opens `#/secrets` (CRUD via orchestrator `/api/v1/secrets*`), `#/secrets/{id}` edits one entry; values are masked in the UI, full values only accessible by runtime internally
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits adapter-specific config via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to adapter `/api/v1/adapter/config`) — `adapter-telegram`: bot token + whitelist; `adapter-webui`: username/password
 - `userdocker-base`
@@ -180,6 +186,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `ADAPTER_CONFIG_PATH` (default `/data/adapter-config.json` in compose; no token -> register only, no long poll)
 - Ports:
   - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `ADAPTER_WEBUI_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+- Memory secrets:
+  - `MEMORY_SECRET_KEY` (optional; hex 64 chars; auto-generated to `/data/.secret-key` if empty)
 - Runtime tuning:
   - `REACT_MAX_STEPS`
   - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `5`)
@@ -203,10 +211,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `adapter-webui` (no `memory` service until roadmap is implemented).
+- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `memory`, `adapter-webui`.
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes `orchestrator`, `webui`, and `adapter-webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`, `memory_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
@@ -224,6 +232,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
+- Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
 - `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
 - `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
@@ -240,6 +249,7 @@ Read this first, then read only the referenced source-of-truth files.
   - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
   - check userdocker list: `curl -s http://localhost:18080/api/v1/tools/user-dockers`
   - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
+  - check secrets list (when memory service running): `curl -s http://localhost:18080/api/v1/secrets`
   - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
 
 ## 8) Mandatory Update Policy

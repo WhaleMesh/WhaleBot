@@ -122,4 +122,15 @@ export const api = {
     }),
   skillsDelete: (id) =>
     req("/api/v1/skills/" + encodeURIComponent(id), { method: "DELETE" }),
+  secretsList: () => req("/api/v1/secrets"),
+  secretsCreate: (body) =>
+    req("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),
+  secretsGet: (key) => req("/api/v1/secrets/" + encodeURIComponent(key)),
+  secretsUpdate: (key, body) =>
+    req("/api/v1/secrets/" + encodeURIComponent(key), {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  secretsDelete: (key) =>
+    req("/api/v1/secrets/" + encodeURIComponent(key), { method: "DELETE" }),
 };

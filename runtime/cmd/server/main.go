@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -186,6 +187,8 @@ type availableRoutes struct {
 	CanUserDockerExec    bool
 	CanUserDockerFiles   bool
 	CanUserDockerExport  bool
+	CanSecretsGet        bool
+	MemoryEndpoint       string
 	LoggerWriteEndpoint  string
 	StatsWriteEndpoint   string
 	SkillsSearchBase     string
@@ -649,10 +652,27 @@ func userDockerManagerToolDefinition() map[string]any {
 	}
 }
 
+func listSecretsToolDefinition() map[string]any {
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "list_secrets",
+			"description": "List available secret keys and their notes. Secret values are NOT returned — use {{secret:key_name}} placeholders in exec env/command_sh to reference them. The runtime resolves these placeholders transparently before execution, so the raw value never enters your context.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}
+}
+
 func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string, forcePlanOnly bool, restrictMutatingTools bool, userMessage string, gateHistory []sessionMessage) (string, *usage, []chatAttachment, error) {
-	tools := make([]map[string]any, 0, 1)
+	tools := make([]map[string]any, 0, 2)
 	if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 		tools = append(tools, userDockerManagerToolDefinition())
+	}
+	if routes.CanSecretsGet {
+		tools = append(tools, listSecretsToolDefinition())
 	}
 	params := map[string]any{
 		"temperature": 0.4,
@@ -665,6 +685,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 	attachments := make([]chatAttachment, 0, 1)
 	um := strings.TrimSpace(strings.ToLower(userMessage))
 	allowMutatingTools := !restrictMutatingTools || isPlanConfirmationMessage(um, gateHistory)
+	var secretCache = make(map[string]string)
 
 	for step := 0; step < s.maxSteps; step++ {
 		stepTools := tools
@@ -716,18 +737,22 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			if assistant.Content == "" {
 				return "", nil, nil, errors.New("empty assistant message")
 			}
+			finalReply := assistant.Content
+			if len(secretCache) > 0 {
+				finalReply = redactSecretValues(finalReply, secretCache)
+			}
 			s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "info", "react_final_reply_ready", map[string]string{
 				"trace_id":      traceID,
 				"session_id":    sessionID,
 				"module":        "react",
 				"phase":         "end",
 				"step":          strconv.Itoa(step + 1),
-				"content_chars": strconv.Itoa(len(assistant.Content)),
+				"content_chars": strconv.Itoa(len(finalReply)),
 			})
 			if hasUsage {
-				return assistant.Content, totalUsage, attachments, nil
+				return finalReply, totalUsage, attachments, nil
 			}
-			return assistant.Content, nil, attachments, nil
+			return finalReply, nil, attachments, nil
 		}
 
 		msgs = append(msgs, assistant)
@@ -775,8 +800,19 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 					})
 				}
 			}
+			resolvedArgs := tc.Function.Arguments
+			if resText == "" && tc.Function.Name == "manage_user_docker" && routes.CanSecretsGet && routes.MemoryEndpoint != "" {
+				var rErr error
+				resolvedArgs, rErr = s.resolveSecretPlaceholders(ctx, routes.MemoryEndpoint, tc.Function.Arguments, secretCache)
+				if rErr != nil {
+					resText = toolJSON(false, nil, "secret resolution failed: "+rErr.Error())
+				}
+			}
 			if resText == "" {
-				resText, err = s.dispatchTool(ctx, routes, tc.Function.Name, tc.Function.Arguments, sessionID)
+				resText, err = s.dispatchTool(ctx, routes, tc.Function.Name, resolvedArgs, sessionID)
+			}
+			if len(secretCache) > 0 {
+				resText = redactSecretValues(resText, secretCache)
 			}
 			resForModel := sanitizeToolResultTextForModel(resText)
 			durationMS := time.Since(callStart).Milliseconds()
@@ -838,6 +874,9 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 		fallback += "\n\n最近一次工具结果：\n" + lastToolSummary
 	}
 	fallback += "\n\n如需继续自动执行，请提高 REACT_MAX_STEPS 后重试。"
+	if len(secretCache) > 0 {
+		fallback = redactSecretValues(fallback, secretCache)
+	}
 	s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "warn", "react_step_limit_fallback", map[string]string{
 		"trace_id":       traceID,
 		"session_id":     sessionID,
@@ -871,9 +910,136 @@ func (s *reactService) dispatchTool(ctx context.Context, routes availableRoutes,
 			return toolJSON(false, nil, "manage_user_docker unavailable: no healthy user-docker-manager component"), nil
 		}
 		return s.manageUserDocker(ctx, routes, argsJSON, sessionID)
+	case "list_secrets":
+		if !routes.CanSecretsGet {
+			return toolJSON(false, nil, "list_secrets unavailable: memory secrets capability missing"), nil
+		}
+		return s.listSecrets(ctx, routes.MemoryEndpoint)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Secrets helpers
+// ---------------------------------------------------------------------------
+
+func (s *reactService) listSecrets(ctx context.Context, memEndpoint string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, memEndpoint+"/secrets", nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return toolJSON(false, nil, fmt.Sprintf("memory returned %d: %s", resp.StatusCode, truncate(string(b), 500))), nil
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Secrets []struct {
+			Key  string `json:"key"`
+			Note string `json:"note"`
+		} `json:"secrets"`
+	}
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return toolJSON(false, nil, "decode secrets list: "+truncate(string(b), 300)), nil
+	}
+	if !payload.Success {
+		return toolJSON(false, nil, "list_secrets failed"), nil
+	}
+	type secretInfo struct {
+		Key  string `json:"key"`
+		Note string `json:"note"`
+	}
+	out := make([]secretInfo, len(payload.Secrets))
+	for i, s := range payload.Secrets {
+		out[i] = secretInfo{Key: s.Key, Note: s.Note}
+	}
+	return toolJSON(true, map[string]any{"secrets": out, "usage": "Reference secrets with {{secret:key_name}} in exec command_sh, env, or write_file content_base64. The runtime resolves these transparently."}, ""), nil
+}
+
+func (s *reactService) fetchSecretValue(ctx context.Context, memEndpoint, key string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, memEndpoint+"/secrets/"+url.PathEscape(key), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("memory returned %d", resp.StatusCode)
+	}
+	var payload struct {
+		Success bool   `json:"success"`
+		Found   bool   `json:"found"`
+		Value   string `json:"value"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(b, &payload); err != nil {
+		return "", err
+	}
+	if !payload.Success {
+		if payload.Error != "" {
+			return "", errors.New(payload.Error)
+		}
+		return "", fmt.Errorf("secret %q not found", key)
+	}
+	if !payload.Found {
+		return "", fmt.Errorf("secret %q not found", key)
+	}
+	return payload.Value, nil
+}
+
+var secretPlaceholderRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_\-]+)\}\}`)
+
+func (s *reactService) resolveSecretPlaceholders(ctx context.Context, memEndpoint, raw string, cache map[string]string) (string, error) {
+	matches := secretPlaceholderRe.FindAllStringSubmatch(raw, -1)
+	if len(matches) == 0 {
+		return raw, nil
+	}
+	resolved := raw
+	for _, m := range matches {
+		placeholder := m[0]
+		key := m[1]
+		if !strings.Contains(resolved, placeholder) {
+			continue
+		}
+		val, ok := cache[key]
+		if !ok {
+			var err error
+			val, err = s.fetchSecretValue(ctx, memEndpoint, key)
+			if err != nil {
+				return "", fmt.Errorf("secret %q: %w", key, err)
+			}
+			cache[key] = val
+		}
+		escaped, _ := json.Marshal(val)
+		escapedStr := string(escaped)
+		escapedStr = escapedStr[1 : len(escapedStr)-1]
+		resolved = strings.ReplaceAll(resolved, placeholder, escapedStr)
+	}
+	return resolved, nil
+}
+
+func redactSecretValues(text string, cache map[string]string) string {
+	for _, v := range cache {
+		if len(v) == 0 {
+			continue
+		}
+		text = strings.ReplaceAll(text, v, "[SECRET_REDACTED]")
+	}
+	return text
 }
 
 func (s *reactService) manageUserDocker(ctx context.Context, routes availableRoutes, argsJSON, runtimeSessionID string) (string, error) {
@@ -1730,6 +1896,11 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 			if hasCapability(c.Capabilities, "skills_search") {
 				routes.SkillsSearchBase = c.Endpoint
 			}
+		case "memory":
+			if hasCapability(c.Capabilities, "secrets_get") {
+				routes.CanSecretsGet = true
+				routes.MemoryEndpoint = c.Endpoint
+			}
 		}
 	}
 	return catalog, routes, nil
@@ -2244,7 +2415,8 @@ func buildSystemPrompt(c runtimeCatalog) string {
 		"你绝对不能虚构任何工具名。只能使用和描述当前 runtime 显示的工具清单；禁止提及未注册工具。",
 		"Language: match the user's primary language in the latest user message for the user-visible reply (Chinese if they wrote Chinese, English if English; mixed → follow the dominant language).",
 		"When the request is underspecified: in a single reply, briefly state your best guess at intent, ask any needed follow-up in one combined sentence (avoid multi-step questionnaires), and if a guessed action is very low-cost and side-effect free (e.g. stating readiness or read-only capability), you may include it alongside the question. Do not start high-impact work (containers, exec, writes, deploy) without clarity or without plan-first when the runtime requires it.",
-		"When the user message is very short or lacks a clear object, do NOT use a numbered “execution plan” plus “是否按此计划执行？” unless the user explicitly asked for a written plan or the runtime has injected plan-first instructions in this turn.",
+		"When the user message is very short or lacks a clear object, do NOT use a numbered \"execution plan\" plus \"是否按此计划执行？\" unless the user explicitly asked for a written plan or the runtime has injected plan-first instructions in this turn.",
+		"Secrets: use list_secrets to discover available secret keys. Reference secrets with {{secret:key_name}} in exec command_sh/env or write_file content_base64. The runtime resolves these placeholders transparently — the raw value never enters your context. Do NOT attempt to read or echo secret values in your reply.",
 	}
 	if len(c.Tools) == 0 {
 		lines = append(lines, "- 暂无可用 tool，只能直接回答。")
