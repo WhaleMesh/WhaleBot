@@ -64,7 +64,7 @@ docker compose up -d --build
 
 3. **Open WebUI and sign in**
 
-Browse to `http://localhost:3000` and complete **initial dashboard sign-up** (credentials persist in the `webui` volume).
+Browse to `http://localhost:18000` and complete **initial dashboard sign-up** (credentials persist in the `webui` volume).
 
 4. **Create a Telegram bot (if you do not have one)**
 
@@ -79,7 +79,7 @@ With both configured, `adapter-telegram` starts polling—open your bot in Teleg
 
 6. **Orchestrator API (optional)**
 
-HTTP gateway: `http://localhost:8080`
+HTTP gateway: `http://localhost:18080`
 
 **About the bundled example**: the repo ships **one** user-facing adapter (Telegram) and **one** LLM path (`llm-openai`) as a minimal runnable loop. More adapters and backends will get easier as component **schemas** and **AGENT** docs mature.
 

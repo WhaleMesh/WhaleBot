@@ -341,8 +341,8 @@ func sessionExpiryLoop(ctx context.Context, bot *tgbotapi.BotAPI, conv *conversa
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("ADAPTER_TELEGRAM_PORT", "8084")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("ADAPTER_TELEGRAM_PORT", "18084")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "adapter-telegram")
 	self := "http://" + selfHost + ":" + port
 	cfgPath := getenv("ADAPTER_CONFIG_PATH", "/data/adapter-config.json")

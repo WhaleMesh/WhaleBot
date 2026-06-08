@@ -89,7 +89,7 @@ effect: JSON_file_for_bot_token_and_allowed_user_ids_parent_dir_created_on_start
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: target_for_chat_forwarding_and_registration
 ```

@@ -132,9 +132,9 @@ func ftsMatchQuery(raw string) string {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("SKILLS_PORT", "8093")
+	port := getenv("SKILLS_PORT", "18093")
 	dbPath := getenv("SKILLS_DB_PATH", "/data/skills.db")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "skills")
 	self := "http://" + selfHost + ":" + port
 

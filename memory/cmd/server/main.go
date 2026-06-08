@@ -25,9 +25,9 @@ func getenv(k, def string) string {
 }
 
 func main() {
-	port := getenv("MEMORY_PORT", "8087")
+	port := getenv("MEMORY_PORT", "18087")
 	dbPath := getenv("MEMORY_DB_PATH", "/data/memory.db")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "memory")
 	self := "http://" + selfHost + ":" + port
 	_ = os.MkdirAll(filepath.Dir(dbPath), 0o755)

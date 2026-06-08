@@ -36,11 +36,11 @@ func getenvInt(k string, def int) int {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("SESSION_PORT", "8090")
+	port := getenv("SESSION_PORT", "18090")
 	maxMsgs := getenvInt("SESSION_MAX_MESSAGES", 40)
 	idleSec := getenvInt("SESSION_IDLE_SEC", 86400)
 	dbPath := getenv("SESSION_DB_PATH", "")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "session")
 	self := "http://" + selfHost + ":" + port
 

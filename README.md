@@ -63,7 +63,7 @@ docker compose up -d --build
 
 3. **打开 WebUI 并登录**
 
-浏览器访问 `http://localhost:3000`，按界面完成**初始账号**（凭据在 `webui` 数据卷中持久化）。
+浏览器访问 `http://localhost:18000`，按界面完成**初始账号**（凭据在 `webui` 数据卷中持久化）。
 
 4. **创建 Telegram Bot（若还没有）**
 
@@ -78,7 +78,7 @@ docker compose up -d --build
 
 6. **API 入口（可选）**
 
-编排层 HTTP：`http://localhost:8080`
+编排层 HTTP：`http://localhost:18080`
 
 **关于当前内置示例**：仓库目前只内置**一个**用户侧适配器（Telegram）与**一条** LLM 路径（`llm-openai`），用于构成最小可运行闭环。更多适配器与模型后端将随组件 **schema** 与 **AGENT** 文档完善后更易扩展。
 

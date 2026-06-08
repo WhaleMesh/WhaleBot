@@ -1,6 +1,6 @@
 function base() {
   const env = window.__WHALEBOT_ENV__ || {};
-  return env.ORCHESTRATOR_URL || "http://localhost:8080";
+  return env.ORCHESTRATOR_URL || "http://localhost:18080";
 }
 
 /** Same URL as internal `base()` — for custom fetch (e.g. LLM test 409 body). */

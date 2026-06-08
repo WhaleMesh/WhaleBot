@@ -80,7 +80,7 @@ effect: bind_port_for_http_server
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: target_for_component_registration
 ```

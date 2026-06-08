@@ -44,9 +44,9 @@ func getenvInt(k string, def int) int {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("LOGGER_PORT", "8086")
+	port := getenv("LOGGER_PORT", "18086")
 	dbPath := getenv("LOGGER_DB_PATH", "/data/logger.db")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "logger")
 	self := "http://" + selfHost + ":" + port
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {

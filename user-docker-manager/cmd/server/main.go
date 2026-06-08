@@ -55,8 +55,8 @@ type switchScopeRequest struct {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("USER_DOCKER_MANAGER_PORT", "8082")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("USER_DOCKER_MANAGER_PORT", "18082")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "user-docker-manager")
 	self := "http://" + selfHost + ":" + port
 	defaultImage := getenv("USERDOCKER_DEFAULT_IMAGE", "whalebot/userdocker-base:latest")
