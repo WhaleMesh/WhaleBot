@@ -14,10 +14,11 @@
   import Logger from './views/Logger.svelte';
   import Llm from './views/Llm.svelte';
   import Adapters from './views/Adapters.svelte';
+  import Secrets from './views/Secrets.svelte';
   import WbBrandIcon from './lib/WbBrandIcon.svelte';
   import { BRAND_REPO_URL, WHALEMESH_ORG_URL } from './lib/brandUrls.js';
 
-  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'llm', 'adapter'];
+  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'secrets', 'llm', 'adapter'];
   const SIDEBAR_LS_KEY = 'whalebot_sidebar_collapsed';
 
   /** @type {'loading' | 'anon' | 'user'} */
@@ -97,6 +98,7 @@
   function isNavActive(id, routeName) {
     if (id === 'sessions' && (routeName === 'sessions' || routeName === 'session')) return true;
     if (id === 'skills' && routeName === 'skills') return true;
+    if (id === 'secrets' && routeName === 'secrets') return true;
     if (id === 'llm' && routeName === 'llm') return true;
     if (id === 'adapter' && routeName === 'adapter') return true;
     if (id === 'tools' && (routeName === 'tools' || routeName === 'tool')) return true;
@@ -452,6 +454,8 @@
         <Tools />
       {:else if $route.name === 'skills'}
         <Skills />
+      {:else if $route.name === 'secrets'}
+        <Secrets />
       {:else if $route.name === 'llm'}
         <Llm llmName={$route.params.id || ''} />
       {:else if $route.name === 'adapter'}

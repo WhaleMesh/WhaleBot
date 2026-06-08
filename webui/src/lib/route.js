@@ -35,6 +35,12 @@ function parseHash() {
     }
     return { name: 'skills', params: {} };
   }
+  if (parts[0] === 'secrets') {
+    if (parts[1]) {
+      return { name: 'secrets', params: { id: decodeURIComponent(parts[1]) } };
+    }
+    return { name: 'secrets', params: {} };
+  }
   if (parts[0] === 'overview' || parts[0] === 'components' || parts[0] === 'sessions' || parts[0] === 'tools' || parts[0] === 'logger') {
     return { name: parts[0], params: {} };
   }
@@ -48,7 +54,8 @@ function routeToHash(name, params = {}) {
   if (name === 'llm' && params.id) return `#/llm/${encodeURIComponent(params.id)}`;
   if (name === 'adapter' && params.id) return `#/adapter/${encodeURIComponent(params.id)}`;
   if (name === 'skills' && params.id) return `#/skills/${encodeURIComponent(params.id)}`;
-  if (name === 'overview' || name === 'components' || name === 'sessions' || name === 'tools' || name === 'logger' || name === 'skills' || name === 'llm' || name === 'adapter') {
+  if (name === 'secrets' && params.id) return `#/secrets/${encodeURIComponent(params.id)}`;
+  if (name === 'overview' || name === 'components' || name === 'sessions' || name === 'tools' || name === 'logger' || name === 'skills' || name === 'secrets' || name === 'llm' || name === 'adapter') {
     return `#/${name}`;
   }
   return '#/overview';

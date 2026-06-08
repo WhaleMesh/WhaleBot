@@ -241,6 +241,29 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  memory:
+    build: ./memory
+    image: whalebot/memory:latest
+    container_name: memory
+    environment:
+      MEMORY_PORT: ${MEMORY_PORT:-8087}
+      MEMORY_DB_PATH: /data/memory.db
+      MEMORY_SECRET_KEY: ${MEMORY_SECRET_KEY:-}
+      ORCHESTRATOR_URL: http://orchestrator:8080
+      SERVICE_HOST: memory
+    volumes:
+      - memory_data:/data
+    networks: [whalebot_net]
+    depends_on:
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${MEMORY_PORT:-8087}/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   adapter-webui:
     build: ./adapter-webui
     image: whalebot/adapter-webui:latest
@@ -332,3 +355,4 @@ volumes:
   adapter_telegram_data:
   adapter_webui_data:
   webui_data:
+  memory_data:
