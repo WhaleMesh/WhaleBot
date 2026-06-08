@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -242,10 +243,18 @@ func main() {
 	_ = srv.Shutdown(shCtx)
 }
 
+type cachedCatalog struct {
+	catalog runtimeCatalog
+	routes  availableRoutes
+	fetched time.Time
+}
+
 type reactService struct {
 	orchURL, sessionURL, llmOpenAIURL string
 	http                              *http.Client
 	maxSteps                          int
+	catalogCache                      *cachedCatalog
+	catalogMu                         sync.RWMutex
 }
 
 func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +297,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	catalog, routes, err := s.fetchRuntimeCatalog(r.Context())
+	catalog, routes, err := s.getRuntimeCatalog(r.Context())
 	if err != nil {
 		slog.Warn("fetch runtime catalog failed; continue with discovered defaults", "err", err, "trace_id", traceID)
 	}
@@ -1611,6 +1620,26 @@ func (s *reactService) appendMessages(sessionID string, msgs []sessionMessage) e
 		return fmt.Errorf("append_messages %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (s *reactService) getRuntimeCatalog(ctx context.Context) (runtimeCatalog, availableRoutes, error) {
+	s.catalogMu.RLock()
+	if s.catalogCache != nil && time.Since(s.catalogCache.fetched) < 10*time.Second {
+		c, r := s.catalogCache.catalog, s.catalogCache.routes
+		s.catalogMu.RUnlock()
+		return c, r, nil
+	}
+	s.catalogMu.RUnlock()
+
+	catalog, routes, err := s.fetchRuntimeCatalog(ctx)
+	if err != nil {
+		return catalog, routes, err
+	}
+
+	s.catalogMu.Lock()
+	s.catalogCache = &cachedCatalog{catalog: catalog, routes: routes, fetched: time.Now()}
+	s.catalogMu.Unlock()
+	return catalog, routes, nil
 }
 
 func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog, availableRoutes, error) {
