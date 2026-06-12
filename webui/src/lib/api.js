@@ -115,10 +115,39 @@ export const api = {
   skillsGet: (id) => req("/api/v1/skills/" + encodeURIComponent(id)),
   skillsCreate: (body) =>
     req("/api/v1/skills", { method: "POST", body: JSON.stringify(body) }),
+  skillsImportZip: async (file, slug = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (slug) fd.append("slug", slug);
+    const res = await fetch(base() + "/api/v1/skills/import", {
+      method: "POST",
+      cache: "no-store",
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText}: ${data.error || JSON.stringify(data)}`);
+    }
+    return data;
+  },
   skillsUpdate: (id, body) =>
     req("/api/v1/skills/" + encodeURIComponent(id), {
       method: "PUT",
       body: JSON.stringify(body),
+    }),
+  skillsPutFile: (id, path, content) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files/" + path.split("/").map(encodeURIComponent).join("/"), {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+  skillsCreateFile: (id, path, content) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    }),
+  skillsDeleteFile: (id, path) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files/" + path.split("/").map(encodeURIComponent).join("/"), {
+      method: "DELETE",
     }),
   skillsDelete: (id) =>
     req("/api/v1/skills/" + encodeURIComponent(id), { method: "DELETE" }),

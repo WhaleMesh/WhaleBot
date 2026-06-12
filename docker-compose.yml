@@ -159,7 +159,9 @@ services:
     container_name: skills
     environment:
       SKILLS_PORT: ${SKILLS_PORT:-18093}
-      SKILLS_DB_PATH: /data/skills.db
+      SKILLS_ROOT: /data
+      SKILLS_INDEX_PATH: /data/.index/index.db
+      SKILLS_LEGACY_DB_PATH: /data/skills.db
       ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
       SERVICE_HOST: skills
     volumes:

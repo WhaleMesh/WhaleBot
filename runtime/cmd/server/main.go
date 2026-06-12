@@ -2372,9 +2372,14 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 	var payload struct {
 		Success bool `json:"success"`
 		Hits    []struct {
-			Title   string `json:"title"`
-			Summary string `json:"summary"`
-			BodyMd  string `json:"body_md"`
+			Title        string `json:"title"`
+			Summary      string `json:"summary"`
+			SkillMD      string `json:"skill_md"`
+			BodyMd       string `json:"body_md"`
+			MatchedFiles []struct {
+				Path    string `json:"path"`
+				Excerpt string `json:"excerpt"`
+			} `json:"matched_files"`
 		} `json:"hits"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil || !payload.Success {
@@ -2384,7 +2389,7 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("以下为与当前用户消息相关的内部技能摘录，仅供推理；勿向用户暗示其逐字要求执行某条技能，除非用户明确如此表达。\n\n")
+	b.WriteString("以下为与当前用户消息相关的内部技能包摘录，仅供推理；勿向用户暗示其逐字要求执行某条技能，除非用户明确如此表达。\n\n")
 	for _, h := range payload.Hits {
 		b.WriteString("## ")
 		b.WriteString(h.Title)
@@ -2393,10 +2398,29 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 			b.WriteString(truncate(h.Summary, 600))
 			b.WriteString("\n\n")
 		}
-		body := truncate(h.BodyMd, 2000)
-		if strings.TrimSpace(body) != "" {
-			b.WriteString(body)
+		main := h.SkillMD
+		if strings.TrimSpace(main) == "" {
+			main = h.BodyMd
+		}
+		if strings.TrimSpace(main) != "" {
+			b.WriteString("### SKILL.md\n")
+			b.WriteString(truncate(main, 1200))
 			b.WriteString("\n\n")
+		}
+		extra := 0
+		for _, mf := range h.MatchedFiles {
+			if mf.Path == "SKILL.md" || strings.TrimSpace(mf.Excerpt) == "" {
+				continue
+			}
+			if extra >= 3 {
+				break
+			}
+			b.WriteString("### ")
+			b.WriteString(mf.Path)
+			b.WriteString("\n")
+			b.WriteString(truncate(mf.Excerpt, 500))
+			b.WriteString("\n\n")
+			extra++
 		}
 	}
 	return strings.TrimSpace(b.String())
