@@ -70,7 +70,7 @@ No Caddy in container — the Go binary serves everything directly. Use an exter
 | `ADAPTER_DATA_DIR` | `/data` | Data directory for credentials/config |
 | `STATIC_DIR` | `/srv` | Static files directory |
 | `ORCHESTRATOR_URL` | `http://orchestrator:18080` | Orchestrator URL |
-| `SESSION_URL` | `http://session:8090` | Session service URL |
+| `SESSION_URL` | `http://session:18090` | Session service URL |
 | `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC` | `240` | Chat proxy timeout (seconds) |
 | `SERVICE_HOST` | `adapter-webui` | Service hostname for registration |
 

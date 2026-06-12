@@ -435,7 +435,7 @@ func pollLoop(ctx context.Context, token, orchURL string, allowed map[int64]stru
 	chatTimeoutSec := getenvInt("ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
 	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
 	orchSessCLI := &http.Client{Timeout: 15 * time.Second}
-	sessionURL := getenv("SESSION_URL", "http://session:8090")
+	sessionURL := getenv("SESSION_URL", "http://session:18090")
 	sessionCLI := &http.Client{Timeout: 20 * time.Second}
 	conv := newConversationManager()
 	go sessionExpiryLoop(ctx, bot, conv, orchSessCLI, orchURL)

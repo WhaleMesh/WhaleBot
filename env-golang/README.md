@@ -9,7 +9,7 @@ image: whalebot/env-golang:latest
 build_context: ./env-golang
 owner: tbd
 runtime: go_http_service
-default_port: 8083
+default_port: 18083
 health_endpoint: GET /health
 component_registration:
   enabled: true
@@ -72,7 +72,7 @@ error_behavior:
 ### ENV_GOLANG_PORT
 ```yaml
 name: ENV_GOLANG_PORT
-default: "8083"
+default: "18083"
 required: false
 effect: bind_port_for_http_server
 ```

@@ -16,5 +16,5 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 COPY --from=nodebuild /app/dist /srv
 COPY --from=gobuild /adapter-webui /usr/local/bin/adapter-webui
-EXPOSE 8083
+EXPOSE 18083
 ENTRYPOINT ["/usr/local/bin/adapter-webui"]

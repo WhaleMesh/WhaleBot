@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -o /out/user-docker-manager ./cmd/server
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/user-docker-manager /usr/local/bin/user-docker-manager
-EXPOSE 8082
+EXPOSE 18082
 ENTRYPOINT ["/usr/local/bin/user-docker-manager"]

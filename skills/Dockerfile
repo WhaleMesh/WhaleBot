@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -o /out/skills ./cmd/server
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/skills /usr/local/bin/skills
-EXPOSE 8093
+EXPOSE 18093
 ENTRYPOINT ["/usr/local/bin/skills"]
