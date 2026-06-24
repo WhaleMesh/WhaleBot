@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -o /out/llm-openai ./cmd/server
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/llm-openai /usr/local/bin/llm-openai
-EXPOSE 8081
+EXPOSE 18081
 ENTRYPOINT ["/usr/local/bin/llm-openai"]

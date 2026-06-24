@@ -9,7 +9,7 @@ image: whalebot/session:latest
 build_context: ./session
 owner: tbd
 runtime: go_http_service
-default_port: 8090
+default_port: 18090
 health_endpoint: GET /health
 component_registration:
   enabled: true
@@ -134,7 +134,7 @@ error_behavior:
 ### SESSION_PORT
 ```yaml
 name: SESSION_PORT
-default: "8090"
+default: "18090"
 required: false
 effect: bind_port_for_http_server
 ```

@@ -12,9 +12,17 @@
   let detailLoading = false;
   let detailErr = '';
   let saving = false;
+  let importUploading = false;
+  /** @type {HTMLInputElement | null} */
+  let zipInput = null;
   /** @type {'preview' | 'edit'} */
   let viewMode = 'preview';
-  let form = { title: '', summary: '', body_md: '', tags: '' };
+  let form = { title: '', summary: '', tags: '' };
+  /** @type {Record<string, string>} */
+  let fileContents = {};
+  /** @type {string[]} */
+  let filePaths = [];
+  let selectedPath = 'SKILL.md';
   let currentId = '';
   let loadToken = 0;
   /** @type {string} */
@@ -24,10 +32,26 @@
 
   marked.setOptions({ gfm: true, breaks: true });
 
+  $: editablePaths = filePaths.filter((p) => p !== 'skill.yaml');
+  $: previewContent = fileContents[selectedPath] || '';
   $: renderedHtml =
     viewMode === 'preview'
-      ? DOMPurify.sanitize(marked.parse(form.body_md || ''))
+      ? DOMPurify.sanitize(marked.parse(previewContent || ''))
       : '';
+
+  function sortPaths(paths) {
+    const main = [];
+    const refs = [];
+    const rest = [];
+    for (const p of paths) {
+      if (p === 'SKILL.md') main.push(p);
+      else if (p.startsWith('references/')) refs.push(p);
+      else if (p !== 'skill.yaml') rest.push(p);
+    }
+    refs.sort();
+    rest.sort();
+    return [...main, ...refs, ...rest];
+  }
 
   async function refreshList() {
     listErr = '';
@@ -53,15 +77,29 @@
       form = {
         title: sk.title || '',
         summary: sk.summary || '',
-        body_md: sk.body_md || '',
         tags: sk.tags || '',
       };
-      currentId = String(sk.id);
+      const files = sk.files || [];
+      fileContents = {};
+      for (const f of files) {
+        if (f.path && f.path !== 'skill.yaml') {
+          fileContents[f.path] = f.content || '';
+        }
+      }
+      filePaths = sortPaths(Object.keys(fileContents));
+      if (!fileContents['SKILL.md']) {
+        fileContents['SKILL.md'] = '';
+        filePaths = sortPaths(['SKILL.md', ...filePaths.filter((p) => p !== 'SKILL.md')]);
+      }
+      selectedPath = 'SKILL.md';
+      currentId = String(sk.slug || sk.id);
       viewMode = 'preview';
     } catch (e) {
       if (my !== loadToken) return;
       detailErr = String(e.message || e);
-      form = { title: '', summary: '', body_md: '', tags: '' };
+      form = { title: '', summary: '', tags: '' };
+      fileContents = {};
+      filePaths = [];
       currentId = '';
     } finally {
       if (my === loadToken) detailLoading = false;
@@ -82,7 +120,9 @@
         } else {
           loadToken++;
           currentId = '';
-          form = { title: '', summary: '', body_md: '', tags: '' };
+          form = { title: '', summary: '', tags: '' };
+          fileContents = {};
+          filePaths = [];
           detailErr = '';
           detailLoading = false;
           viewMode = 'preview';
@@ -101,13 +141,40 @@
       const data = await api.skillsCreate({
         title: t('skills.newDefaultTitle'),
         summary: '',
-        body_md: '',
         tags: '',
+        body_md: '# ' + t('skills.newDefaultTitle') + '\n',
       });
       await refreshList();
-      goto('skills', { id: String(data.id) });
+      goto('skills', { id: String(data.slug || data.id) });
     } catch (e) {
       listErr = String(e.message || e);
+    }
+  }
+
+  function pickZipImport() {
+    zipInput?.click();
+  }
+
+  /** @param {Event} ev */
+  async function onZipSelected(ev) {
+    const input = /** @type {HTMLInputElement} */ (ev.currentTarget);
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    if (!/\.zip$/i.test(file.name)) {
+      listErr = t('skills.importZipInvalid');
+      return;
+    }
+    listErr = '';
+    importUploading = true;
+    try {
+      const data = await api.skillsImportZip(file);
+      await refreshList();
+      goto('skills', { id: String(data.slug || data.id) });
+    } catch (e) {
+      listErr = String(e.message || e);
+    } finally {
+      importUploading = false;
     }
   }
 
@@ -116,13 +183,18 @@
     saving = true;
     detailErr = '';
     try {
+      const files = {};
+      for (const p of editablePaths) {
+        files[p] = fileContents[p] ?? '';
+      }
       await api.skillsUpdate(currentId, {
         title: form.title,
         summary: form.summary,
-        body_md: form.body_md,
         tags: form.tags,
+        files,
       });
       await refreshList();
+      await loadDetail(currentId);
     } catch (e) {
       detailErr = String(e.message || e);
     } finally {
@@ -130,16 +202,50 @@
     }
   }
 
-  async function removeSkill() {
+  async function addReferenceFile() {
     if (!currentId) return;
-    if (!confirm(t('skills.confirmDelete'))) return;
+    const name = prompt(t('skills.newFilePrompt'), 'references/notes.md');
+    if (!name) return;
+    const path = name.trim().replace(/^\/+/, '');
+    if (!path || path === 'SKILL.md' || path === 'skill.yaml') return;
     detailErr = '';
     try {
-      await api.skillsDelete(currentId);
-      await refreshList();
-      goto('skills', {});
+      await api.skillsCreateFile(currentId, path, '# ' + path + '\n');
+      await loadDetail(currentId);
+      selectedPath = path;
+      viewMode = 'edit';
     } catch (e) {
       detailErr = String(e.message || e);
+    }
+  }
+
+  async function removeCurrentFile() {
+    if (!currentId || !selectedPath || selectedPath === 'SKILL.md') return;
+    if (!confirm(t('skills.confirmDeleteFile'))) return;
+    detailErr = '';
+    try {
+      await api.skillsDeleteFile(currentId, selectedPath);
+      await loadDetail(currentId);
+      selectedPath = 'SKILL.md';
+    } catch (e) {
+      detailErr = String(e.message || e);
+    }
+  }
+
+  /** @param {string} id @param {MouseEvent} [ev] */
+  async function removeSkillFromList(id, ev) {
+    ev?.stopPropagation();
+    ev?.preventDefault();
+    if (!confirm(t('skills.confirmDelete'))) return;
+    listErr = '';
+    try {
+      await api.skillsDelete(id);
+      await refreshList();
+      if (String(routeId) === String(id)) {
+        goto('skills', {});
+      }
+    } catch (e) {
+      listErr = String(e.message || e);
     }
   }
 
@@ -155,41 +261,72 @@
   <div role="alert" class="alert alert-soft alert-error mt-3 text-sm">{listErr}</div>
 {/if}
 
-<div class="mt-3 grid min-w-0 grid-cols-1 items-start gap-4 md:grid-cols-[minmax(0,17rem)_1fr]">
+<div class="mt-3 grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(15rem,24rem)_minmax(0,1fr)]">
   <aside
-    class="min-w-0 max-w-full overflow-hidden rounded-xl border border-base-300/40 bg-base-200 p-3 md:max-h-[calc(100vh-8rem)] md:overflow-y-auto"
+    class="skills-aside min-w-0 rounded-xl border border-base-300/40 bg-base-200 p-4 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto"
   >
-    <div class="flex min-w-0 max-w-full flex-col gap-2">
-      <div class="flex min-w-0 flex-wrap gap-2">
-        <button type="button" class="btn btn-primary shrink-0" on:click={createSkill}>{$_('skills.create')}</button>
-        <button type="button" class="btn btn-outline shrink-0" on:click={refreshList}>{$_('skills.refresh')}</button>
+    <div class="flex flex-col gap-3">
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" class="btn btn-primary btn-sm" on:click={createSkill}>
+          {$_('skills.create')}
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline btn-sm"
+          disabled={importUploading}
+          on:click={pickZipImport}
+        >
+          {importUploading ? $_('skills.importZipUploading') : $_('skills.importZipShort')}
+        </button>
       </div>
-      <ul class="menu skills-sidebar w-full min-w-0 max-w-full rounded-box bg-base-100 p-0">
+      <button type="button" class="btn btn-ghost btn-sm w-full" on:click={refreshList}>
+        {$_('skills.refresh')}
+      </button>
+      <input
+        bind:this={zipInput}
+        type="file"
+        accept=".zip,application/zip"
+        class="hidden"
+        on:change={onZipSelected}
+      />
+
+      <div class="skills-list" role="list">
         {#if listInitialLoad}
-          {#each [1, 2, 3, 4, 5, 6] as _}
-            <li class="px-2 py-2">
-              <div class="skeleton h-10 w-full"></div>
-            </li>
+          {#each [1, 2, 3, 4, 5] as _}
+            <div class="skeleton mb-2 h-[4.25rem] w-full rounded-lg"></div>
           {/each}
+        {:else if list.length === 0}
+          <p class="px-1 py-6 text-center text-sm text-base-content/60">{$_('skills.emptyList')}</p>
         {:else}
-        {#each list as s (s.id)}
-          <li class="min-w-0 max-w-full">
-            <button
-              type="button"
-              class="flex w-full min-w-0 max-w-full items-center gap-2 text-left {String(s.id) === routeId
-                ? 'active bg-base-300'
-                : ''}"
-              on:click={() => selectRow(s.id)}
-            >
-              <span class="min-w-0 flex-1 truncate text-base">{s.title || $_('skills.noTitle')}</span>
-              <span class="badge badge-ghost wb-mono shrink-0 whitespace-nowrap text-sm">#{s.id}</span>
-            </button>
-          </li>
-        {:else}
-          <li class="px-3 py-4 text-center text-base text-base-content/60">{$_('skills.emptyList')}</li>
-        {/each}
+          {#each list as s (s.slug || s.id)}
+            {@const sid = String(s.slug || s.id)}
+            {@const active = sid === routeId}
+            <div class="skill-row {active ? 'skill-row-active' : ''}" role="listitem">
+              <button
+                type="button"
+                class="skill-row-main"
+                aria-current={active ? 'true' : undefined}
+                on:click={() => selectRow(sid)}
+              >
+                <span class="skill-row-title">{s.title || $_('skills.noTitle')}</span>
+                <span class="skill-row-slug">{sid}</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-square btn-sm skill-row-delete"
+                title={$_('skills.deletePackage')}
+                aria-label={$_('skills.deletePackage')}
+                on:click={(ev) => removeSkillFromList(sid, ev)}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4" aria-hidden="true">
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" />
+                  <path d="M10 11v6M14 11v6" />
+                </svg>
+              </button>
+            </div>
+          {/each}
         {/if}
-      </ul>
+      </div>
     </div>
   </aside>
 
@@ -200,19 +337,8 @@
       {#if !routeId}
         <p class="py-12 text-center text-base text-base-content/60">{$_('skills.placeholder')}</p>
       {:else if detailLoading}
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div class="join">
-            <div class="skeleton btn join-item h-10 min-w-[6.5rem]"></div>
-            <div class="skeleton btn join-item h-10 min-w-[6.5rem]"></div>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <div class="skeleton h-10 w-24"></div>
-            <div class="skeleton h-10 w-24"></div>
-          </div>
-        </div>
         <div class="skeleton h-10 w-full"></div>
         <div class="skeleton h-24 w-full"></div>
-        <div class="skeleton h-10 w-full"></div>
         <div class="skeleton min-h-[200px] w-full"></div>
       {:else}
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -232,12 +358,20 @@
               {$_('skills.edit')}
             </button>
           </div>
-          <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn btn-primary" disabled={saving || !currentId} on:click={saveSkill}>
+          <div class="skills-action-bar grid w-full min-w-[15rem] max-w-md grid-cols-3 gap-2 sm:w-auto">
+            <button type="button" class="btn btn-outline w-full" disabled={!currentId} on:click={addReferenceFile}>
+              {$_('skills.add')}
+            </button>
+            <button type="button" class="btn btn-primary w-full" disabled={saving || !currentId} on:click={saveSkill}>
               {saving ? $_('skills.saving') : $_('skills.save')}
             </button>
-            <button type="button" class="btn btn-outline btn-error" disabled={!currentId} on:click={removeSkill}>
-              {$_('skills.delete')}
+            <button
+              type="button"
+              class="btn btn-outline btn-error w-full"
+              disabled={!currentId || !selectedPath || selectedPath === 'SKILL.md'}
+              on:click={removeCurrentFile}
+            >
+              {$_('skills.deleteFileShort')}
             </button>
           </div>
         </div>
@@ -268,21 +402,40 @@
           />
         </label>
 
-        <div class="form-control w-full">
-          <span class="label label-text text-sm">{$_('skills.bodyLabel')}</span>
-          {#if viewMode === 'edit'}
-            <textarea
-              class="textarea textarea-bordered min-h-[280px] w-full font-mono text-base leading-relaxed"
-              rows="18"
-              bind:value={form.body_md}
-            ></textarea>
-          {:else}
-            <article
-              class="md-preview rounded-lg border border-base-300 bg-base-100 p-4 text-base leading-relaxed text-base-content min-h-[280px] max-h-[60vh] overflow-y-auto"
-            >
-              {@html renderedHtml}
-            </article>
-          {/if}
+        <div class="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,12rem)_1fr]">
+          <div class="min-w-0">
+            <span class="label label-text text-sm">{$_('skills.filesLabel')}</span>
+            <ul class="menu rounded-box border border-base-300 bg-base-100 p-1">
+              {#each editablePaths as path (path)}
+                <li>
+                  <button
+                    type="button"
+                    class="justify-start text-left {selectedPath === path ? 'active' : ''}"
+                    on:click={() => (selectedPath = path)}
+                  >
+                    <span class="truncate font-mono text-xs">{path}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+
+          <div class="form-control min-w-0 w-full">
+            <span class="label label-text text-sm">{selectedPath}</span>
+            {#if viewMode === 'edit'}
+              <textarea
+                class="textarea textarea-bordered min-h-[280px] w-full font-mono text-base leading-relaxed"
+                rows="18"
+                bind:value={fileContents[selectedPath]}
+              ></textarea>
+            {:else}
+              <article
+                class="md-preview rounded-lg border border-base-300 bg-base-100 p-4 text-base leading-relaxed text-base-content min-h-[280px] max-h-[60vh] overflow-y-auto"
+              >
+                {@html renderedHtml}
+              </article>
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
@@ -324,9 +477,88 @@
   .md-preview :global(a) {
     color: var(--color-primary);
   }
-  :global(ul.skills-sidebar.menu li > button),
-  :global(ul.skills-sidebar.menu li > a) {
-    max-width: 100%;
-    overflow: hidden;
+
+  .skills-aside {
+    width: 100%;
+  }
+
+  .skills-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .skill-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.25rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+    border-radius: 0.625rem;
+    background: var(--color-base-100);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .skill-row:hover {
+    border-color: color-mix(in oklab, var(--color-primary) 35%, transparent);
+  }
+
+  .skill-row-active {
+    border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+    box-shadow: inset 3px 0 0 var(--color-primary);
+  }
+
+  .skill-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+    padding: 0.65rem 0.75rem;
+    text-align: left;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  .skill-row-main:hover,
+  .skill-row-main:focus-visible {
+    outline: none;
+    background: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+  }
+
+  .skill-row-title {
+    width: 100%;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+
+  .skill-row-slug {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.72rem;
+    line-height: 1.3;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+    word-break: break-all;
+  }
+
+  .skill-row-delete {
+    flex-shrink: 0;
+    align-self: center;
+    margin-right: 0.25rem;
+    color: color-mix(in oklab, var(--color-error) 85%, var(--color-base-content));
+    opacity: 0.75;
+  }
+
+  .skill-row-delete:hover {
+    opacity: 1;
+    background: color-mix(in oklab, var(--color-error) 12%, transparent);
+  }
+
+  .skills-action-bar :global(.btn) {
+    min-width: 0;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
 </style>

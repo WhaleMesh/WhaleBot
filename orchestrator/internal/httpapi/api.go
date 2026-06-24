@@ -64,6 +64,10 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/stats/overview", s.handleStatsOverview)
 		r.Get("/skills/search", s.handleSkillsSearch)
+		r.Post("/skills/import", s.handleSkillsImportZip)
+		r.Put("/skills/{id}/files/*", s.handleSkillsPutFile)
+		r.Post("/skills/{id}/files", s.handleSkillsPostFile)
+		r.Delete("/skills/{id}/files/*", s.handleSkillsDeleteFile)
 		r.Get("/skills/{id}", s.handleSkillsGetOne)
 		r.Put("/skills/{id}", s.handleSkillsPutOne)
 		r.Delete("/skills/{id}", s.handleSkillsDeleteOne)
@@ -560,6 +564,15 @@ func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
 	s.proxyPost(w, r, sk.Endpoint+"/skills")
 }
 
+func (s *Server) handleSkillsImportZip(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	s.proxyPostPreserveHeaders(w, r, sk.Endpoint+"/skills/import")
+}
+
 func (s *Server) handleSkillsGetOne(w http.ResponseWriter, r *http.Request) {
 	sk := s.skillsUpstream()
 	if sk == nil {
@@ -588,6 +601,38 @@ func (s *Server) handleSkillsDeleteOne(w http.ResponseWriter, r *http.Request) {
 	}
 	id := chi.URLParam(r, "id")
 	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id)
+}
+
+func (s *Server) handleSkillsPutFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	path := chi.URLParam(r, "*")
+	s.proxyPut(w, r, sk.Endpoint+"/skills/"+id+"/files/"+path)
+}
+
+func (s *Server) handleSkillsPostFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyPost(w, r, sk.Endpoint+"/skills/"+id+"/files")
+}
+
+func (s *Server) handleSkillsDeleteFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	path := chi.URLParam(r, "*")
+	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id+"/files/"+path)
 }
 
 // --- Secrets (proxied to memory service) ---
@@ -705,6 +750,23 @@ func (s *Server) proxyPost(w http.ResponseWriter, r *http.Request, target string
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
+func (s *Server) proxyPostPreserveHeaders(w http.ResponseWriter, r *http.Request, target string) {
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, 400, "body read failed: "+err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(buf))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
 	s.doProxy(w, req)
 }
 

@@ -159,7 +159,9 @@ services:
     container_name: skills
     environment:
       SKILLS_PORT: ${SKILLS_PORT:-18093}
-      SKILLS_DB_PATH: /data/skills.db
+      SKILLS_ROOT: /data
+      SKILLS_INDEX_PATH: /data/.index/index.db
+      SKILLS_LEGACY_DB_PATH: /data/skills.db
       ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
       SERVICE_HOST: skills
     volumes:
@@ -246,10 +248,10 @@ services:
     image: whalebot/memory:latest
     container_name: memory
     environment:
-      MEMORY_PORT: ${MEMORY_PORT:-8087}
+      MEMORY_PORT: ${MEMORY_PORT:-18087}
       MEMORY_DB_PATH: /data/memory.db
       MEMORY_SECRET_KEY: ${MEMORY_SECRET_KEY:-}
-      ORCHESTRATOR_URL: http://orchestrator:8080
+      ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
       SERVICE_HOST: memory
     volumes:
       - memory_data:/data
@@ -257,7 +259,7 @@ services:
     depends_on:
       orchestrator: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${MEMORY_PORT:-8087}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${MEMORY_PORT:-18087}/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5

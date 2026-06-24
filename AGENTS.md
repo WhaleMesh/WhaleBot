@@ -76,11 +76,12 @@ Read this first, then read only the referenced source-of-truth files.
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
   - note: when a healthy `type=skills` with `skills_search` is registered and `RUNTIME_SKILLS_INJECT` is not `0`, each main `/run` calls `GET {skills_endpoint}/skills/search` (top `RUNTIME_SKILLS_TOP_K` hits, FTS5/BM25) and appends an extra **system** message with excerpts for retrieval-first context (failure is non-fatal)
 - `skills`
-  - purpose: SQLite skill store + FTS5 full-text search (`bm25` ranking)
+  - purpose: filesystem skill packages + SQLite FTS search index (`bm25` ranking)
   - entry: `skills/cmd/server/main.go`
   - host exposed: no
-  - note: registers `type=skills`, name `skills`, capabilities `skills_list`, `skills_write`, `skills_search`; persistence `SKILLS_DB_PATH` (default `/data/skills.db` on volume `skills_data`)
-  - note: on first start (**empty `skills` table**), seeds one default in-chat skill titled **`whalemesh best practices`** (body in `skills/internal/defaults/whalemesh_best_practices.md`); existing DBs are not modified
+  - note: registers `type=skills`, name `skills`, capabilities `skills_list`, `skills_write`, `skills_search`; packages under **`SKILLS_ROOT/packages/{slug}/`** (default volume mount `/data`): required **`SKILL.md`** + **`skill.yaml`** metadata; optional `references/*.md` etc.; search index at `SKILLS_INDEX_PATH` (default `/data/.index/index.db`); legacy single-table SQLite at `SKILLS_LEGACY_DB_PATH` is imported once into packages when `packages/` is empty
+  - note: on first start (**empty `packages/`**), seeds **`whalemesh-best-practices/`** from embedded defaults; existing package dirs are not modified
+  - note: runtime injects **`SKILL.md`** (truncated) plus up to 3 matched reference excerpts per hit from `GET …/skills/search`
 - `adapter-telegram`
   - purpose: Telegram user I/O adapter (`type=adapter` at orchestrator registration)
   - entry: `adapter-telegram/cmd/server/main.go`
@@ -165,7 +166,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
-  - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
+  - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{slug}` edits a **directory package** (metadata + file tree: `SKILL.md`, `references/*`); **Import ZIP** uploads a package archive via `POST /api/v1/skills/import`
   - note: sidebar **Secrets** opens `#/secrets` (CRUD via orchestrator `/api/v1/secrets*`), `#/secrets/{id}` edits one entry; values are masked in the UI, full values only accessible by runtime internally
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits adapter-specific config via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to adapter `/api/v1/adapter/config`) — `adapter-telegram`: bot token + whitelist; `adapter-webui`: username/password
@@ -185,7 +186,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Telegram adapter:
   - `ADAPTER_CONFIG_PATH` (default `/data/adapter-config.json` in compose; no token -> register only, no long poll)
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `ADAPTER_WEBUI_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `ADAPTER_WEBUI_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `SKILLS_ROOT`, `SKILLS_INDEX_PATH`, `SKILLS_LEGACY_DB_PATH`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
 - Memory secrets:
   - `MEMORY_SECRET_KEY` (optional; hex 64 chars; auto-generated to `/data/.secret-key` if empty)
 - Runtime tuning:
