@@ -26,9 +26,9 @@ func getenv(k, def string) string {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("STATS_PORT", "8092")
+	port := getenv("STATS_PORT", "18092")
 	dbPath := getenv("STATS_DB_PATH", "/data/stats.db")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "stats")
 	self := "http://" + selfHost + ":" + port
 

@@ -30,7 +30,7 @@ last_verified_from:
 ```
 
 ## Purpose
-- Provides the human-facing dashboard for component status, logs, sessions, tool operations, LLM profiles, and **adapter** configuration (e.g. Telegram bot token + user ID whitelist via orchestrator `adapter-components` proxy).
+- Provides the human-facing dashboard for component status, logs, sessions, tool operations, LLM profiles, and **adapter** configuration (adapter-specific via orchestrator `adapter-components` proxy, e.g. Telegram token/whitelist and adapter-webui username/password).
 - Calls orchestrator REST API from the browser (same origin as the UI for auth only; orchestrator base URL remains `ORCHESTRATOR_URL` in `env.js`).
 - Is not a backend component in the orchestrator registry.
 - Renders session content as standard Markdown (no IM-specific formatting conversion).
@@ -100,6 +100,7 @@ error_behavior: standard_http_status_from_caddy
   - `GET /api/v1/tools/user-dockers/interface-contract`
   - `GET /api/v1/tools/user-dockers/{name}/interface`
   - `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` (Skills page)
+  - `GET|PUT /api/v1/adapter-components/{name}/config` (Adapters page; proxied to each adapter service `/api/v1/adapter/config`)
 
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.
@@ -121,7 +122,7 @@ error_behavior: standard_http_status_from_caddy
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://localhost:8080
+default: http://localhost:18080
 required: false
 effect: browser_reachable_base_url_for_api_requests_injected_as_runtime_env
 ```
@@ -129,7 +130,7 @@ effect: browser_reachable_base_url_for_api_requests_injected_as_runtime_env
 ### WEBUI_PORT
 ```yaml
 name: WEBUI_PORT
-default: "3000"
+default: "18000"
 required: false
 effect: host_port_mapping_to_container_port_80_in_compose
 ```
@@ -148,7 +149,7 @@ effect: host_port_mapping_to_container_port_80_in_compose
 - Recommended responsibility split:
   - inner Caddy: static files + SPA fallback + runtime `env.js` serving + `/api/webui` reverse proxy to loopback auth.
   - outer gateway: TLS, domain routing, auth, rate limit, access logs, WAF-like policies.
-- Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:8080` in public deployments).
+- Keep `ORCHESTRATOR_URL` browser-reachable from end users (do not point to Docker-internal DNS such as `http://orchestrator:18080` in public deployments).
 - Keep `/env.js` non-cached (`Cache-Control: no-store`) so runtime endpoint changes can take effect without rebuilding.
 - If deploying under a path prefix (for example `/whalebot/`), align:
   - frontend base path build/runtime config

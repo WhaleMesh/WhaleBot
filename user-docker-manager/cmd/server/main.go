@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -55,8 +56,8 @@ type switchScopeRequest struct {
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("USER_DOCKER_MANAGER_PORT", "8082")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("USER_DOCKER_MANAGER_PORT", "18082")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "user-docker-manager")
 	self := "http://" + selfHost + ":" + port
 	defaultImage := getenv("USERDOCKER_DEFAULT_IMAGE", "whalebot/userdocker-base:latest")
@@ -682,6 +683,9 @@ func sweepIdle(ctx context.Context, cr *creator.Creator, idleTTL time.Duration) 
 		return
 	}
 	now := time.Now().UTC()
+
+	type expired struct{ name string }
+	var toRemove []expired
 	for _, c := range containers {
 		if c.Scope != creator.ScopeSessionScoped {
 			continue
@@ -697,15 +701,31 @@ func sweepIdle(ctx context.Context, cr *creator.Creator, idleTTL time.Duration) 
 		if now.Sub(last) < idleTTL {
 			continue
 		}
-		stopCtx, stopCancel := context.WithTimeout(ctx, 20*time.Second)
-		_ = cr.Stop(stopCtx, c.Name, 10)
-		stopCancel()
-		rmCtx, rmCancel := context.WithTimeout(ctx, 40*time.Second)
-		if err := cr.Remove(rmCtx, c.Name, true); err != nil {
-			slog.Warn("idle sweeper remove failed", "name", c.Name, "err", err)
-		} else {
-			slog.Info("idle sweeper removed container", "name", c.Name, "last_active_at", ts)
-		}
-		rmCancel()
+		toRemove = append(toRemove, expired{name: c.Name})
 	}
+	if len(toRemove) == 0 {
+		return
+	}
+
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+	for _, exp := range toRemove {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			stopCtx, stopCancel := context.WithTimeout(ctx, 20*time.Second)
+			_ = cr.Stop(stopCtx, name, 10)
+			stopCancel()
+			rmCtx, rmCancel := context.WithTimeout(ctx, 40*time.Second)
+			if err := cr.Remove(rmCtx, name, true); err != nil {
+				slog.Warn("idle sweeper remove failed", "name", name, "err", err)
+			} else {
+				slog.Info("idle sweeper removed container", "name", name)
+			}
+			rmCancel()
+		}(exp.name)
+	}
+	wg.Wait()
 }

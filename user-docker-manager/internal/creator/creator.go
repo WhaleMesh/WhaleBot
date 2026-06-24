@@ -651,6 +651,7 @@ func (c *Creator) TouchByCreatorSessionID(ctx context.Context, creatorSessionID 
 	if err != nil {
 		return 0, err
 	}
+	now := time.Now().UTC()
 	n := 0
 	for _, it := range items {
 		if it.Scope != ScopeSessionScoped {
@@ -666,9 +667,7 @@ func (c *Creator) TouchByCreatorSessionID(ctx context.Context, creatorSessionID 
 		if cid != creatorSessionID {
 			continue
 		}
-		if _, err := c.Touch(ctx, it.Name); err != nil {
-			continue
-		}
+		c.markActive(it.Name, now)
 		n++
 	}
 	return n, nil

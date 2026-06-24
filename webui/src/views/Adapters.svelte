@@ -20,6 +20,22 @@
   let botTokenHint = '';
   let botTokenInput = '';
   let whitelistText = '';
+  let adapterWebuiUsername = '';
+  let adapterWebuiPassword = '';
+  let adapterWebuiHasPassword = false;
+
+  const ADAPTER_KIND_TELEGRAM = 'telegram';
+  const ADAPTER_KIND_WEBUI = 'webui';
+  const ADAPTER_KIND_GENERIC = 'generic';
+
+  function adapterKind(name) {
+    const n = String(name || '').trim().toLowerCase();
+    if (n === 'adapter-telegram') return ADAPTER_KIND_TELEGRAM;
+    if (n === 'adapter-webui') return ADAPTER_KIND_WEBUI;
+    return ADAPTER_KIND_GENERIC;
+  }
+
+  $: activeAdapterKind = adapterKind(adapterName);
 
   function isAdapter(c) {
     return String(c?.type || '').toLowerCase() === 'adapter';
@@ -88,14 +104,21 @@
     try {
       const data = await api.adapterConfigGet(adapterName);
       const cfg = data.config || {};
-      hasBotToken = !!cfg.has_bot_token;
-      botTokenHint = cfg.bot_token_hint || '';
-      const ids = Array.isArray(cfg.allowed_user_ids) ? cfg.allowed_user_ids : [];
-      whitelistText = idsToText(ids);
-      botTokenInput = '';
+      if (activeAdapterKind === ADAPTER_KIND_TELEGRAM) {
+        hasBotToken = !!cfg.has_bot_token;
+        botTokenHint = cfg.bot_token_hint || '';
+        const ids = Array.isArray(cfg.allowed_user_ids) ? cfg.allowed_user_ids : [];
+        whitelistText = idsToText(ids);
+        botTokenInput = '';
+      } else if (activeAdapterKind === ADAPTER_KIND_WEBUI) {
+        adapterWebuiUsername = String(cfg.username || '');
+        adapterWebuiHasPassword = !!cfg.has_password;
+        adapterWebuiPassword = '';
+      }
     } catch (e) {
       cfgError = String(e);
       whitelistText = '';
+      adapterWebuiPassword = '';
     } finally {
       cfgLoading = false;
     }
@@ -104,22 +127,42 @@
   async function saveConfig() {
     saveMsg = '';
     cfgError = '';
-    if (!hasBotToken && !(botTokenInput || '').trim()) {
-      cfgError = t('adapter.tokenRequiredSave');
-      return;
-    }
-    let ids;
     try {
-      ids = parseWhitelist(whitelistText);
-    } catch (e) {
-      cfgError = String(e);
-      return;
-    }
-    try {
-      await api.adapterConfigPut(adapterName, {
-        bot_token: (botTokenInput || '').trim(),
-        allowed_user_ids: ids,
-      });
+      if (activeAdapterKind === ADAPTER_KIND_TELEGRAM) {
+        if (!hasBotToken && !(botTokenInput || '').trim()) {
+          cfgError = t('adapter.tokenRequiredSave');
+          return;
+        }
+        let ids;
+        try {
+          ids = parseWhitelist(whitelistText);
+        } catch (e) {
+          cfgError = String(e);
+          return;
+        }
+        await api.adapterConfigPut(adapterName, {
+          bot_token: (botTokenInput || '').trim(),
+          allowed_user_ids: ids,
+        });
+      } else if (activeAdapterKind === ADAPTER_KIND_WEBUI) {
+        const username = String(adapterWebuiUsername || '').trim();
+        const password = String(adapterWebuiPassword || '');
+        if (!username) {
+          cfgError = t('adapter.webuiUsernameRequired');
+          return;
+        }
+        if (password && password.length < 8) {
+          cfgError = t('adapter.webuiPasswordMin');
+          return;
+        }
+        await api.adapterConfigPut(adapterName, {
+          username,
+          password,
+        });
+      } else {
+        cfgError = t('adapter.unsupported');
+        return;
+      }
       saveMsg = t('adapter.saved');
       await loadConfig();
       await refreshList();
@@ -177,35 +220,70 @@
       <div role="status" class="alert alert-soft alert-success mt-2 py-2 text-base">{saveMsg}</div>
     {/if}
 
-    <p class="mt-2 text-base text-base-content/70">{$_('adapter.hintWhitelist')}</p>
+    {#if activeAdapterKind === ADAPTER_KIND_TELEGRAM}
+      <p class="mt-2 text-base text-base-content/70">{$_('adapter.hintWhitelist')}</p>
 
-    <div class="mt-4 flex max-w-2xl flex-col gap-4">
-      <label class="form-control w-full">
-        <span class="label-text text-base font-medium">{$_('adapter.botToken')}</span>
-        <input
-          type="password"
-          class="input input-bordered wb-mono w-full"
-          bind:value={botTokenInput}
-          placeholder={hasBotToken ? $_('adapter.tokenUnchanged') : $_('adapter.tokenRequired')}
-        />
-        {#if hasBotToken && botTokenHint}
-          <span class="label-text-alt text-base-content/60">{$_('adapter.storedHint', { hint: botTokenHint })}</span>
-        {/if}
-      </label>
+      <div class="mt-4 flex max-w-2xl flex-col gap-4">
+        <label class="form-control w-full">
+          <span class="label-text text-base font-medium">{$_('adapter.botToken')}</span>
+          <input
+            type="password"
+            class="input input-bordered wb-mono w-full"
+            bind:value={botTokenInput}
+            placeholder={hasBotToken ? $_('adapter.tokenUnchanged') : $_('adapter.tokenRequired')}
+          />
+          {#if hasBotToken && botTokenHint}
+            <span class="label-text-alt text-base-content/60">{$_('adapter.storedHint', { hint: botTokenHint })}</span>
+          {/if}
+        </label>
 
-      <label class="form-control w-full">
-        <span class="label-text text-base font-medium">{$_('adapter.whitelistLabel')}</span>
-        <textarea
-          class="textarea textarea-bordered wb-mono min-h-32 w-full text-base"
-          bind:value={whitelistText}
-          placeholder={$_('adapter.whitelistPlaceholder')}
-        ></textarea>
-      </label>
+        <label class="form-control w-full">
+          <span class="label-text text-base font-medium">{$_('adapter.whitelistLabel')}</span>
+          <textarea
+            class="textarea textarea-bordered wb-mono min-h-32 w-full text-base"
+            bind:value={whitelistText}
+            placeholder={$_('adapter.whitelistPlaceholder')}
+          ></textarea>
+        </label>
 
-      <button type="button" class="btn btn-primary w-fit" on:click={saveConfig}>
-        {$_('adapter.save')}
-      </button>
-    </div>
+        <button type="button" class="btn btn-primary w-fit" on:click={saveConfig}>
+          {$_('adapter.save')}
+        </button>
+      </div>
+    {:else if activeAdapterKind === ADAPTER_KIND_WEBUI}
+      <p class="mt-2 text-base text-base-content/70">{$_('adapter.webuiHint')}</p>
+
+      <div class="mt-4 flex max-w-2xl flex-col gap-4">
+        <label class="form-control w-full">
+          <span class="label-text text-base font-medium">{$_('adapter.webuiUsername')}</span>
+          <input
+            type="text"
+            class="input input-bordered wb-mono w-full"
+            bind:value={adapterWebuiUsername}
+            placeholder={$_('adapter.webuiUsernamePlaceholder')}
+          />
+        </label>
+
+        <label class="form-control w-full">
+          <span class="label-text text-base font-medium">{$_('adapter.webuiPassword')}</span>
+          <input
+            type="password"
+            class="input input-bordered wb-mono w-full"
+            bind:value={adapterWebuiPassword}
+            placeholder={$_('adapter.webuiPasswordPlaceholder')}
+          />
+          {#if adapterWebuiHasPassword}
+            <span class="label-text-alt text-base-content/60">{$_('adapter.webuiPasswordHint')}</span>
+          {/if}
+        </label>
+
+        <button type="button" class="btn btn-primary w-fit" on:click={saveConfig}>
+          {$_('adapter.save')}
+        </button>
+      </div>
+    {:else}
+      <p class="mt-2 text-base text-base-content/70">{$_('adapter.unsupported')}</p>
+    {/if}
   {/if}
 {:else}
   <h1 class="wb-page-title">{$_('adapter.listTitle')}</h1>

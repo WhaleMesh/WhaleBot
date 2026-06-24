@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -o /out/runtime ./cmd/server
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/runtime /usr/local/bin/runtime
-EXPOSE 8085
+EXPOSE 18085
 ENTRYPOINT ["/usr/local/bin/runtime"]

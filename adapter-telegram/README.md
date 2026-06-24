@@ -9,7 +9,7 @@ image: whalebot/adapter-telegram:latest
 build_context: ./adapter-telegram
 owner: tbd
 runtime: go_http_service_plus_telegram_long_poll
-default_port: 8084
+default_port: 18084
 health_endpoint: GET /health
 component_registration:
   enabled: true
@@ -73,7 +73,7 @@ Notes:
 ### ADAPTER_TELEGRAM_PORT
 ```yaml
 name: ADAPTER_TELEGRAM_PORT
-default: "8084"
+default: "18084"
 required: false
 effect: bind_port_for_health_endpoint
 ```
@@ -89,7 +89,7 @@ effect: JSON_file_for_bot_token_and_allowed_user_ids_parent_dir_created_on_start
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: target_for_chat_forwarding_and_registration
 ```
@@ -97,7 +97,7 @@ effect: target_for_chat_forwarding_and_registration
 ### SESSION_URL
 ```yaml
 name: SESSION_URL
-default: http://session:8090
+default: http://session:18090
 required: false
 effect: optional_append_artifact_status_lines_to_session_when_telegram_upload_succeeds
 ```

@@ -9,5 +9,5 @@ RUN CGO_ENABLED=0 go build -o /out/env-golang ./cmd/server
 FROM golang:1.22-alpine
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/env-golang /usr/local/bin/env-golang
-EXPOSE 8083
+EXPOSE 18083
 ENTRYPOINT ["/usr/local/bin/env-golang"]

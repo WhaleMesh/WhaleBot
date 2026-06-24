@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -62,6 +64,10 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/stats/overview", s.handleStatsOverview)
 		r.Get("/skills/search", s.handleSkillsSearch)
+		r.Post("/skills/import", s.handleSkillsImportZip)
+		r.Put("/skills/{id}/files/*", s.handleSkillsPutFile)
+		r.Post("/skills/{id}/files", s.handleSkillsPostFile)
+		r.Delete("/skills/{id}/files/*", s.handleSkillsDeleteFile)
 		r.Get("/skills/{id}", s.handleSkillsGetOne)
 		r.Put("/skills/{id}", s.handleSkillsPutOne)
 		r.Delete("/skills/{id}", s.handleSkillsDeleteOne)
@@ -93,6 +99,13 @@ func (s *Server) Router() http.Handler {
 		r.Post("/tools/user-dockers/{name}/files/mkdir", s.handleUserDockerFilesMkdir)
 		r.Post("/tools/user-dockers/{name}/files/move", s.handleUserDockerFilesMove)
 		r.Get("/tools/user-dockers/{name}/artifacts/export", s.handleUserDockerArtifactExport)
+
+		// Secrets (proxied to memory service)
+		r.Get("/secrets", s.handleSecretsList)
+		r.Post("/secrets", s.handleSecretsCreate)
+		r.Get("/secrets/{key}", s.handleSecretsGetOne)
+		r.Put("/secrets/{key}", s.handleSecretsUpdate)
+		r.Delete("/secrets/{key}", s.handleSecretsDelete)
 	})
 	return r
 }
@@ -551,6 +564,15 @@ func (s *Server) handleSkillsCreate(w http.ResponseWriter, r *http.Request) {
 	s.proxyPost(w, r, sk.Endpoint+"/skills")
 }
 
+func (s *Server) handleSkillsImportZip(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	s.proxyPostPreserveHeaders(w, r, sk.Endpoint+"/skills/import")
+}
+
 func (s *Server) handleSkillsGetOne(w http.ResponseWriter, r *http.Request) {
 	sk := s.skillsUpstream()
 	if sk == nil {
@@ -581,6 +603,130 @@ func (s *Server) handleSkillsDeleteOne(w http.ResponseWriter, r *http.Request) {
 	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id)
 }
 
+func (s *Server) handleSkillsPutFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	path := chi.URLParam(r, "*")
+	s.proxyPut(w, r, sk.Endpoint+"/skills/"+id+"/files/"+path)
+}
+
+func (s *Server) handleSkillsPostFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	s.proxyPost(w, r, sk.Endpoint+"/skills/"+id+"/files")
+}
+
+func (s *Server) handleSkillsDeleteFile(w http.ResponseWriter, r *http.Request) {
+	sk := s.skillsUpstream()
+	if sk == nil {
+		writeError(w, 503, "no healthy skills service")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	path := chi.URLParam(r, "*")
+	s.proxyDelete(w, r, sk.Endpoint+"/skills/"+id+"/files/"+path)
+}
+
+// --- Secrets (proxied to memory service) ---
+
+var validSecretKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-]+$`)
+
+func (s *Server) memoryUpstream() *registry.Component {
+	return s.Registry.FirstReadyByCapability("secrets_list")
+}
+
+func (s *Server) handleSecretsList(w http.ResponseWriter, r *http.Request) {
+	mem := s.memoryUpstream()
+	if mem == nil {
+		writeError(w, 503, "no healthy memory service")
+		return
+	}
+	s.proxyGet(w, r, mem.Endpoint+"/secrets")
+}
+
+func (s *Server) handleSecretsCreate(w http.ResponseWriter, r *http.Request) {
+	mem := s.memoryUpstream()
+	if mem == nil {
+		writeError(w, 503, "no healthy memory service")
+		return
+	}
+	s.proxyPost(w, r, mem.Endpoint+"/secrets")
+}
+
+func (s *Server) handleSecretsGetOne(w http.ResponseWriter, r *http.Request) {
+	mem := s.memoryUpstream()
+	if mem == nil {
+		writeError(w, 503, "no healthy memory service")
+		return
+	}
+	key := chi.URLParam(r, "key")
+	if !validSecretKeyPattern.MatchString(key) {
+		writeError(w, 400, "invalid secret key format")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, mem.Endpoint+"/secrets/"+url.PathEscape(key), nil)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	resp, err := s.HTTP.Do(req)
+	if err != nil {
+		writeError(w, 502, "upstream error: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(b)
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(b, &payload); err != nil {
+		writeError(w, 502, "invalid upstream response")
+		return
+	}
+	delete(payload, "value")
+	writeJSON(w, resp.StatusCode, payload)
+}
+
+func (s *Server) handleSecretsUpdate(w http.ResponseWriter, r *http.Request) {
+	mem := s.memoryUpstream()
+	if mem == nil {
+		writeError(w, 503, "no healthy memory service")
+		return
+	}
+	key := chi.URLParam(r, "key")
+	if !validSecretKeyPattern.MatchString(key) {
+		writeError(w, 400, "invalid secret key format")
+		return
+	}
+	s.proxyPut(w, r, mem.Endpoint+"/secrets/"+url.PathEscape(key))
+}
+
+func (s *Server) handleSecretsDelete(w http.ResponseWriter, r *http.Request) {
+	mem := s.memoryUpstream()
+	if mem == nil {
+		writeError(w, 503, "no healthy memory service")
+		return
+	}
+	key := chi.URLParam(r, "key")
+	if !validSecretKeyPattern.MatchString(key) {
+		writeError(w, 400, "invalid secret key format")
+		return
+	}
+	s.proxyDelete(w, r, mem.Endpoint+"/secrets/"+url.PathEscape(key))
+}
+
 // --- helpers ---
 
 func (s *Server) proxyGet(w http.ResponseWriter, r *http.Request, target string) {
@@ -604,6 +750,23 @@ func (s *Server) proxyPost(w http.ResponseWriter, r *http.Request, target string
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.doProxy(w, req)
+}
+
+func (s *Server) proxyPostPreserveHeaders(w http.ResponseWriter, r *http.Request, target string) {
+	buf, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, 400, "body read failed: "+err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(buf))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
 	s.doProxy(w, req)
 }
 

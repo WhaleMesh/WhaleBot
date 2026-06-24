@@ -4,35 +4,41 @@ import (
 	"database/sql"
 	_ "embed"
 	"log/slog"
-	"time"
+	"os"
+	"path/filepath"
+
+	"github.com/whalebot/skills/internal/store"
 )
 
 //go:embed whalemesh_best_practices.md
 var whalemeshBody string
 
 const (
+	WhalemeshSlug    = "whalemesh-best-practices"
 	WhalemeshTitle   = "whalemesh best practices"
 	whalemeshSummary = "In-chat playbook: use only injected tools (primarily manage_user_docker), staged read-then-mutate flows, remove temporary containers when done, respect plan/safety behavior."
 	whalemeshTags    = "whalemesh,chat-agent,tools,userdocker,react"
 )
 
-// EnsureSeed inserts the default whalemesh skill when the skills table is empty.
-func EnsureSeed(db *sql.DB) error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM skills`).Scan(&n); err != nil {
-		return err
-	}
-	if n > 0 {
-		return nil
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := db.Exec(
-		`INSERT INTO skills (title, summary, body_md, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		WhalemeshTitle, whalemeshSummary, whalemeshBody, whalemeshTags, now, now,
-	)
+// EnsureSeed creates the default whalemesh package when packages/ is empty.
+func EnsureSeed(root string, st *store.Store) error {
+	packagesRoot := filepath.Join(root, "packages")
+	entries, err := os.ReadDir(packagesRoot)
 	if err != nil {
 		return err
 	}
-	slog.Info("seeded default skill", "title", WhalemeshTitle)
-	return nil
+	if len(entries) > 0 {
+		return nil
+	}
+	slog.Info("seeding default skill package", "slug", WhalemeshSlug)
+	_, err = st.Create(store.CreateInput{
+		Title:   WhalemeshTitle,
+		Summary: whalemeshSummary,
+		Tags:    whalemeshTags,
+		BodyMd:  whalemeshBody,
+	})
+	return err
 }
+
+// EnsureSeedLegacy is kept for tests that still pass *sql.DB; no-op.
+func EnsureSeedLegacy(_ *sql.DB) error { return nil }

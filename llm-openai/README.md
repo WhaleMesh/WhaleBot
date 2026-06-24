@@ -9,7 +9,7 @@ image: whalebot/llm-openai:latest
 build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
-default_port: 8081
+default_port: 18081
 health_endpoint: GET /health
 status_endpoint: GET /status
 component_registration:
@@ -105,7 +105,7 @@ Body optional `{ model_id }`; if omitted, tests the **active** profile. Response
 ### LLM_OPENAI_PORT
 ```yaml
 name: LLM_OPENAI_PORT
-default: "8081"
+default: "18081"
 required: false
 effect: bind_port_for_http_server
 ```
@@ -121,7 +121,7 @@ effect: JSON file for model profiles and active_model_id (compose mounts llm_ope
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: target_for_component_registration
 ```

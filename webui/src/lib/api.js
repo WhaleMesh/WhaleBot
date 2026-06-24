@@ -1,6 +1,6 @@
 function base() {
   const env = window.__WHALEBOT_ENV__ || {};
-  return env.ORCHESTRATOR_URL || "http://localhost:8080";
+  return env.ORCHESTRATOR_URL || "http://localhost:18080";
 }
 
 /** Same URL as internal `base()` — for custom fetch (e.g. LLM test 409 body). */
@@ -115,11 +115,51 @@ export const api = {
   skillsGet: (id) => req("/api/v1/skills/" + encodeURIComponent(id)),
   skillsCreate: (body) =>
     req("/api/v1/skills", { method: "POST", body: JSON.stringify(body) }),
+  skillsImportZip: async (file, slug = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (slug) fd.append("slug", slug);
+    const res = await fetch(base() + "/api/v1/skills/import", {
+      method: "POST",
+      cache: "no-store",
+      body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText}: ${data.error || JSON.stringify(data)}`);
+    }
+    return data;
+  },
   skillsUpdate: (id, body) =>
     req("/api/v1/skills/" + encodeURIComponent(id), {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  skillsPutFile: (id, path, content) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files/" + path.split("/").map(encodeURIComponent).join("/"), {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+  skillsCreateFile: (id, path, content) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    }),
+  skillsDeleteFile: (id, path) =>
+    req("/api/v1/skills/" + encodeURIComponent(id) + "/files/" + path.split("/").map(encodeURIComponent).join("/"), {
+      method: "DELETE",
+    }),
   skillsDelete: (id) =>
     req("/api/v1/skills/" + encodeURIComponent(id), { method: "DELETE" }),
+  secretsList: () => req("/api/v1/secrets"),
+  secretsCreate: (body) =>
+    req("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),
+  secretsGet: (key) => req("/api/v1/secrets/" + encodeURIComponent(key)),
+  secretsUpdate: (key, body) =>
+    req("/api/v1/secrets/" + encodeURIComponent(key), {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  secretsDelete: (key) =>
+    req("/api/v1/secrets/" + encodeURIComponent(key), { method: "DELETE" }),
 };

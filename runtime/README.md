@@ -9,7 +9,7 @@ image: whalebot/runtime:latest
 build_context: ./runtime
 owner: tbd
 runtime: go_http_service
-default_port: 8085
+default_port: 18085
 health_endpoint: GET /health
 component_registration:
   enabled: true
@@ -100,7 +100,7 @@ error_behavior:
 ### RUNTIME_PORT
 ```yaml
 name: RUNTIME_PORT
-default: "8085"
+default: "18085"
 required: false
 effect: bind_port_for_http_server
 ```
@@ -116,7 +116,7 @@ effect: max_iterations_before_runtime_forces_text_finalization
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: tool_execution_target_and_component_registration_target
 ```
@@ -124,7 +124,7 @@ effect: tool_execution_target_and_component_registration_target
 ### SESSION_URL
 ```yaml
 name: SESSION_URL
-default: http://session:8090
+default: http://session:18090
 required: false
 effect: source_of_chat_history_and_target_for_context_persistence
 ```
@@ -132,7 +132,7 @@ effect: source_of_chat_history_and_target_for_context_persistence
 ### LLM_OPENAI_URL
 ```yaml
 name: LLM_OPENAI_URL
-default: http://llm-openai:8081
+default: http://llm-openai:18081
 required: false
 effect: model_inference_and_tool_call_generation_target
 ```

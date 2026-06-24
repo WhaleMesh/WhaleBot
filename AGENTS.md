@@ -12,8 +12,9 @@ Read this first, then read only the referenced source-of-truth files.
   - `docker compose up --build`
   - WebUI: sign in → LLM page + Adapters → `adapter-telegram` (bot token from @BotFather) for Telegram bot chat
 - Host URLs:
-  - WebUI: `http://localhost:3000`
-  - Orchestrator API: `http://localhost:8080`
+  - WebUI: `http://localhost:18000`
+  - Orchestrator API: `http://localhost:18080`
+  - Adapter WebUI (chat): `http://localhost:18083`
 - Source of truth priority:
   1. `docker-compose.yml`
   2. `.env.example`
@@ -24,6 +25,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Ingress:
   - `webui` (browser) -> `orchestrator`
   - `adapter-telegram` (long poll) -> `orchestrator`
+  - `adapter-webui` (browser chat) -> `orchestrator`
 - Core flow:
   - `orchestrator` coordinates `session`, `llm-openai`, `runtime`, `skills`, and tool components.
 - Runtime/tooling:
@@ -31,7 +33,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `user-docker-manager` talks to Docker Engine via `/var/run/docker.sock`.
   - Go/project build execution is handled through `manage_user_docker` + container `exec`.
 - Persistence:
-  - `session`, `skills`, `logger`, `stats`, `workspace`, `webui` use named volumes (`memory` is deferred; see `memory/TODO.md`); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`).
+  - `session`, `skills`, `logger`, `stats`, `workspace`, `memory`, `webui` use named volumes (`memory` secrets are AES-256-GCM encrypted at rest); `webui` stores dashboard auth (`credentials.json` bcrypt hash + `jwt-secret.bin`); `adapter-webui` stores the same auth pattern in its own volume.
 - Dynamic nodes:
   - `userdocker-base` and `userdocker-golang` images are build placeholders in compose; real `userdocker` containers are created on demand by API.
 
@@ -40,7 +42,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `orchestrator`
   - purpose: registry + health loop + API gateway + chat orchestration
   - entry: `orchestrator/cmd/server/main.go`
-  - host exposed: yes (`${ORCHESTRATOR_PORT:-8080}:8080`)
+ - host exposed: yes (`${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}`)
   - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
   - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
   - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (`status=healthy` from `health_endpoint` probes) **and** operationally ready when they register an optional `status_endpoint` (`operational_state` from `GET status_endpoint` must be `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
@@ -74,11 +76,12 @@ Read this first, then read only the referenced source-of-truth files.
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
   - note: when a healthy `type=skills` with `skills_search` is registered and `RUNTIME_SKILLS_INJECT` is not `0`, each main `/run` calls `GET {skills_endpoint}/skills/search` (top `RUNTIME_SKILLS_TOP_K` hits, FTS5/BM25) and appends an extra **system** message with excerpts for retrieval-first context (failure is non-fatal)
 - `skills`
-  - purpose: SQLite skill store + FTS5 full-text search (`bm25` ranking)
+  - purpose: filesystem skill packages + SQLite FTS search index (`bm25` ranking)
   - entry: `skills/cmd/server/main.go`
   - host exposed: no
-  - note: registers `type=skills`, name `skills`, capabilities `skills_list`, `skills_write`, `skills_search`; persistence `SKILLS_DB_PATH` (default `/data/skills.db` on volume `skills_data`)
-  - note: on first start (**empty `skills` table**), seeds one default in-chat skill titled **`whalemesh best practices`** (body in `skills/internal/defaults/whalemesh_best_practices.md`); existing DBs are not modified
+  - note: registers `type=skills`, name `skills`, capabilities `skills_list`, `skills_write`, `skills_search`; packages under **`SKILLS_ROOT/packages/{slug}/`** (default volume mount `/data`): required **`SKILL.md`** + **`skill.yaml`** metadata; optional `references/*.md` etc.; search index at `SKILLS_INDEX_PATH` (default `/data/.index/index.db`); legacy single-table SQLite at `SKILLS_LEGACY_DB_PATH` is imported once into packages when `packages/` is empty
+  - note: on first start (**empty `packages/`**), seeds **`whalemesh-best-practices/`** from embedded defaults; existing package dirs are not modified
+  - note: runtime injects **`SKILL.md`** (truncated) plus up to 3 matched reference excerpts per hit from `GET …/skills/search`
 - `adapter-telegram`
   - purpose: Telegram user I/O adapter (`type=adapter` at orchestrator registration)
   - entry: `adapter-telegram/cmd/server/main.go`
@@ -94,6 +97,20 @@ Read this first, then read only the referenced source-of-truth files.
   - note: supports basic Telegram commands `/new`, `/end`, `/status`, `/help` for session lifecycle control
   - note: first contact uses an auto-generated session id (same key shape as `/new`, not a bare `chat_id` string); when a local chat is `/end`ed, the next plain message auto-starts a new session; background poll notifies IM when the **server** marks a session idle-expired and rotates to a new id
   - note: `/new` still generates a fresh `chatID-…` key for manual resets
+- `adapter-webui`
+  - purpose: ChatGPT-like web chat interface (`type=adapter` at orchestrator registration)
+  - entry: `adapter-webui/cmd/server/main.go` (Go backend); `adapter-webui/web/src/main.js` (Svelte SPA)
+  - host exposed: yes (`${ADAPTER_WEBUI_PORT:-18083}:${ADAPTER_WEBUI_PORT:-18083}`)
+  - note: Go backend serves static SPA files + API + dynamic `env.js` directly; designed for external reverse proxy (nginx/Traefik/etc.)
+  - note: Go backend listens on `:18083` inside container
+  - note: JWT auth with HttpOnly cookie `adapter_webui_token`; default credentials `admin` / `whalebot` (same as webui); data in `/data/` volume (`credentials.json` + `jwt-secret.bin`)
+  - note: registers with orchestrator as `type=adapter`, name `adapter-webui`, capabilities `webui_chat`
+  - note: chat proxy: `POST /api/adapter-webui/chat` -> orchestrator `POST /api/v1/chat` with `channel=webui`; session ID format `webui_<key>`
+  - note: session list filtered to `webui_*` prefix only
+  - note: progress polling via `GET /api/adapter-webui/logger/events` -> orchestrator logger events; frontend polls every 2s during active chat
+  - note: i18n (en/zh/ja) with `localStorage` key `adapter_webui_lang`; same whalebot dark theme as webui
+ - note: config endpoint `GET|PUT /api/v1/adapter/config` exposed for orchestrator WebUI Adapters page proxy; returns/updates `username` + `has_password` for admin credential management (password is write-only)
+  - note: `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC` controls the HTTP client timeout for orchestrator chat calls (default 240s)
 - `user-docker-manager`
   - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations)
   - entry: `user-docker-manager/cmd/server/main.go`
@@ -116,10 +133,15 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `stats/cmd/server/main.go`
   - host exposed: no
   - note: registers `type=stats` with capabilities `stats_overview`, `stats_ingest`; compose includes the service; omit or stop the container if you do not want metrics
-- `memory` (code only; not in default `docker-compose.yml`)
-  - purpose: lightweight memory KV/notes (SQLite) — roadmap in `memory/TODO.md`
+- `memory`
+  - purpose: persistent memory notes (KV) + encrypted secrets store (SQLite)
   - entry: `memory/cmd/server/main.go`
-  - host exposed: no (re-add service to compose or run container manually to enable)
+  - host exposed: no
+  - note: registers `type=memory`, name `memory`, capabilities `notes_get`, `notes_put`, `secrets_get`, `secrets_put`, `secrets_list`, `secrets_delete`; persistence `MEMORY_DB_PATH` (default `/data/memory.db` on volume `memory_data`)
+  - note: secrets are AES-256-GCM encrypted at rest; key from `MEMORY_SECRET_KEY` (hex 64 chars) or auto-generated to `/data/.secret-key`
+  - note: `GET /secrets` returns masked values (`ghp_****xyz9`); `GET /secrets/{key}` returns full decrypted value (used internally by runtime); orchestrator proxy strips `value` field from the detail response — only runtime accesses memory directly for full values
+  - note: runtime discovers `secrets_get` capability and exposes `list_secrets` tool to agent; agent references secrets via `{{secret:key_name}}` placeholders in exec env/command_sh and write_file content; runtime resolves placeholders transparently before forwarding to userdocker-manager, so raw secret values never enter the LLM context
+  - note: runtime redacts known secret values from tool results, logger events, and final replies (defense in depth)
 - `workspace`
   - purpose: workspace directory manager
   - entry: `workspace/cmd/server/main.go`
@@ -127,7 +149,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `webui`
   - purpose: Svelte dashboard via Caddy plus small loopback **auth** process (`webui-auth` from `webui/authsrv`)
   - entry: `webui/src/main.js` (UI); `webui/authsrv/main.go` (auth API on `127.0.0.1:8089`, proxied by Caddy as `/api/webui/*`)
-  - host exposed: yes (`${WEBUI_PORT:-3000}:80`)
+  - host exposed: yes (`${WEBUI_PORT:-18000}:80`)
   - note: compose mounts **`webui_data:/data`**: first boot seeds default login **`admin` / `whalebot`** (bcrypt hash in `credentials.json` only); JWT signing key in `jwt-secret.bin`. Session cookie is **HttpOnly** (`webui_token`). SPA shows a sign-in gate until `GET /api/webui/auth/me` succeeds; sidebar account menu opens **account settings** (username + optional new password in one form) and **logout**. **Orchestrator remains directly reachable** at its host port for API calls; this auth gates the dashboard UI only.
   - note: UI stack is **Svelte 4 + Vite + Tailwind CSS v4 + DaisyUI v5**; custom dark theme `whalebot` is defined in `webui/src/styles/global.css` (same pattern as Tailwind `@plugin "daisyui/theme"`).
   - note: **i18n**: default copy is **English**; UI strings also ship **zh** and **ja** via `webui/src/lib/i18n.js` + `webui/src/lib/i18n/messages.js` (deep-merge fallbacks to English). Locale auto-detects from `navigator.language` on first visit; manual override persists in `localStorage` key `whalebot_lang` (`en` | `zh` | `ja`). Left **collapsible sidebar** (when signed in) includes primary routes, a language menu, and account menu; collapsed width shows **icons only** (including a compact brand placeholder icon); collapse state persists in `localStorage` key `whalebot_sidebar_collapsed` (`0`/`1`).
@@ -144,9 +166,10 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
   - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
-  - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{id}` edits one entry; Markdown body defaults to **preview** with optional **edit** toggle
+  - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{slug}` edits a **directory package** (metadata + file tree: `SKILL.md`, `references/*`); **Import ZIP** uploads a package archive via `POST /api/v1/skills/import`
+  - note: sidebar **Secrets** opens `#/secrets` (CRUD via orchestrator `/api/v1/secrets*`), `#/secrets/{id}` edits one entry; values are masked in the UI, full values only accessible by runtime internally
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
-  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits Telegram token + whitelist via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to `/api/v1/adapter/config`)
+ - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits adapter-specific config via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to adapter `/api/v1/adapter/config`) — `adapter-telegram`: bot token + whitelist; `adapter-webui`: username/password
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
@@ -163,7 +186,9 @@ Read this first, then read only the referenced source-of-truth files.
 - Telegram adapter:
   - `ADAPTER_CONFIG_PATH` (default `/data/adapter-config.json` in compose; no token -> register only, no long poll)
 - Ports:
-  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+  - `ORCHESTRATOR_PORT`, `SESSION_PORT`, `LLM_OPENAI_PORT`, `USER_DOCKER_MANAGER_PORT`, `ADAPTER_TELEGRAM_PORT`, `ADAPTER_WEBUI_PORT`, `RUNTIME_PORT`, `SKILLS_PORT`, `SKILLS_ROOT`, `SKILLS_INDEX_PATH`, `SKILLS_LEGACY_DB_PATH`, `LOGGER_PORT`, `STATS_PORT`, `MEMORY_PORT`, `WORKSPACE_PORT`, `WEBUI_PORT`
+- Memory secrets:
+  - `MEMORY_SECRET_KEY` (optional; hex 64 chars; auto-generated to `/data/.secret-key` if empty)
 - Runtime tuning:
   - `REACT_MAX_STEPS`
   - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `5`)
@@ -173,6 +198,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
 - Telegram adapter chat timeout:
   - `ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC`
+- WebUI adapter chat timeout:
+  - `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC`
 - Telegram in-chat progress:
   - single placeholder message edited from logger polling every 2s during chat execution (no extra env required); other adapters should follow `docs/adapter-progress-pattern.md`
 - Userdocker manager lifecycle:
@@ -185,10 +212,10 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 13 services including `runtime`, `skills`, `logger`, `stats`, `workspace` (no `memory` service until roadmap is implemented).
+- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `memory`, `adapter-webui`.
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
-- Compose currently exposes only `orchestrator` and `webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `webui_data`.
+- Compose currently exposes `orchestrator`, `webui`, and `adapter-webui` ports to host.
+- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`, `memory_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
@@ -206,6 +233,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
+- Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
 - `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
 - `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
@@ -214,14 +242,15 @@ Read this first, then read only the referenced source-of-truth files.
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
 - Quick diagnostics:
-  - check chat min stack: `curl -s http://localhost:8080/health` (`chat_ready`, `chat_error`)
-  - check components: `curl -s http://localhost:8080/api/v1/components`
-  - check persistent logger events: `curl -s http://localhost:8080/api/v1/logger/events/recent?limit=20`
-  - check stats overview (when stats service running): `curl -s http://localhost:8080/api/v1/stats/overview`
-  - check userdocker manager contract: `curl -s http://localhost:8080/api/v1/tools/user-dockers/interface-contract`
-  - check userdocker allowed images: `curl -s http://localhost:8080/api/v1/tools/user-dockers/images`
-  - check userdocker list: `curl -s http://localhost:8080/api/v1/tools/user-dockers`
-  - check skills list (when skills service running): `curl -s http://localhost:8080/api/v1/skills`
+  - check chat min stack: `curl -s http://localhost:18080/health` (`chat_ready`, `chat_error`)
+  - check components: `curl -s http://localhost:18080/api/v1/components`
+  - check persistent logger events: `curl -s http://localhost:18080/api/v1/logger/events/recent?limit=20`
+  - check stats overview (when stats service running): `curl -s http://localhost:18080/api/v1/stats/overview`
+  - check userdocker manager contract: `curl -s http://localhost:18080/api/v1/tools/user-dockers/interface-contract`
+  - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
+  - check userdocker list: `curl -s http://localhost:18080/api/v1/tools/user-dockers`
+  - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
+  - check secrets list (when memory service running): `curl -s http://localhost:18080/api/v1/secrets`
   - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
 
 ## 8) Mandatory Update Policy

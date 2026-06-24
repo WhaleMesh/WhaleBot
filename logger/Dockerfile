@@ -8,5 +8,5 @@ RUN CGO_ENABLED=0 go build -o /out/logger ./cmd/server
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates wget
 COPY --from=build /out/logger /usr/local/bin/logger
-EXPOSE 8086
+EXPOSE 18086
 ENTRYPOINT ["/usr/local/bin/logger"]

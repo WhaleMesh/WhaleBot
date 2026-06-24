@@ -35,7 +35,7 @@ func getenvInt(k string, def int) int {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	port := getenv("ORCHESTRATOR_PORT", "8080")
+	port := getenv("ORCHESTRATOR_PORT", "18080")
 	interval := time.Duration(getenvInt("HEALTHCHECK_INTERVAL_SEC", 5)) * time.Second
 	threshold := getenvInt("HEALTHCHECK_FAIL_THRESHOLD", 3)
 	upstreamTimeout := time.Duration(getenvInt("ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC", 240)) * time.Second

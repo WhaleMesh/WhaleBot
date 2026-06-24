@@ -341,8 +341,8 @@ func sessionExpiryLoop(ctx context.Context, bot *tgbotapi.BotAPI, conv *conversa
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	port := getenv("ADAPTER_TELEGRAM_PORT", "8084")
-	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:8080")
+	port := getenv("ADAPTER_TELEGRAM_PORT", "18084")
+	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
 	selfHost := getenv("SERVICE_HOST", "adapter-telegram")
 	self := "http://" + selfHost + ":" + port
 	cfgPath := getenv("ADAPTER_CONFIG_PATH", "/data/adapter-config.json")
@@ -435,7 +435,7 @@ func pollLoop(ctx context.Context, token, orchURL string, allowed map[int64]stru
 	chatTimeoutSec := getenvInt("ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC", 240)
 	cli := &http.Client{Timeout: time.Duration(chatTimeoutSec) * time.Second}
 	orchSessCLI := &http.Client{Timeout: 15 * time.Second}
-	sessionURL := getenv("SESSION_URL", "http://session:8090")
+	sessionURL := getenv("SESSION_URL", "http://session:18090")
 	sessionCLI := &http.Client{Timeout: 20 * time.Second}
 	conv := newConversationManager()
 	go sessionExpiryLoop(ctx, bot, conv, orchSessCLI, orchURL)

@@ -9,7 +9,7 @@ image: whalebot/user-docker-manager:latest
 build_context: ./user-docker-manager
 owner: tbd
 runtime: go_http_service_with_docker_socket_access
-default_port: 8082
+default_port: 18082
 health_endpoint: GET /health
 component_registration:
   enabled: true
@@ -196,7 +196,7 @@ response:
 ### USER_DOCKER_MANAGER_PORT
 ```yaml
 name: USER_DOCKER_MANAGER_PORT
-default: "8082"
+default: "18082"
 required: false
 effect: bind_port_for_http_server
 ```
@@ -204,7 +204,7 @@ effect: bind_port_for_http_server
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
-default: http://orchestrator:8080
+default: http://orchestrator:18080
 required: false
 effect: registration_target_and_env_injection_source_for_spawned_containers
 ```
