@@ -210,6 +210,23 @@ error_behavior:
   upstream_failure: propagated_or_502
 ```
 
+### Endpoint Group: image pull + estimate (proxied to user-docker-manager)
+```yaml
+estimate: GET /api/v1/tools/user-dockers/images/estimate?ref=<image>   # capability userdocker_images_estimate
+pull: POST /api/v1/tools/user-dockers/pull                             # capability userdocker_pull (async job)
+pull_status: GET /api/v1/tools/user-dockers/pull/status?job_id=<id>    # capability userdocker_pull
+error_behavior:
+  no_userdocker_manager_component: http_503
+```
+
+### Endpoint Group: async exec + logs (proxied to user-docker-manager)
+```yaml
+exec_status: GET /api/v1/tools/user-dockers/{name}/exec/status?job_id=<id>  # capability userdocker_exec
+logs: GET /api/v1/tools/user-dockers/{name}/logs?tail=200                   # capability userdocker_logs
+error_behavior:
+  no_userdocker_manager_component: http_503
+```
+
 ### Endpoint: POST /api/v1/tools/user-dockers
 ```yaml
 method: POST
@@ -337,6 +354,11 @@ query_to_endpoint:
   list_persistent_logger_events: GET /api/v1/logger/events/recent
   list_userdockers: GET /api/v1/tools/user-dockers
   list_userdocker_images: GET /api/v1/tools/user-dockers/images
+  estimate_image_pull: GET /api/v1/tools/user-dockers/images/estimate
+  pull_image: POST /api/v1/tools/user-dockers/pull
+  pull_status: GET /api/v1/tools/user-dockers/pull/status
+  userdocker_logs: GET /api/v1/tools/user-dockers/{name}/logs
+  exec_status: GET /api/v1/tools/user-dockers/{name}/exec/status
   create_userdocker: POST /api/v1/tools/user-dockers
   remove_userdocker: DELETE /api/v1/tools/user-dockers/{name}
   restart_userdocker: POST /api/v1/tools/user-dockers/{name}/restart

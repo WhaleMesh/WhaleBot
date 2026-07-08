@@ -29,6 +29,9 @@ component_registration:
     - userdocker_artifact_export
     - userdocker_interface_contract
     - userdocker_images
+    - userdocker_images_estimate
+    - userdocker_pull
+    - userdocker_logs
     - userdocker_interface_discovery
   meta:
     default_image: whalebot/userdocker-base:latest
@@ -80,6 +83,7 @@ request:
     scope: string (session_scoped|global_service, default session_scoped)
     session_id: string (required when scope=session_scoped)
     workspace: string (optional volume name; default derived from scope)
+    purpose: string (optional; one-line description stored as label whalebot.userdocker.purpose and echoed in list)
     external_image_approved_by_user: boolean (required for non-framework images)
 response:
   success: boolean
@@ -118,6 +122,80 @@ response:
       recommended_image: whalebot/userdocker-golang:latest
 ```
 
+### Endpoint: GET /api/v1/user-dockers/images/estimate
+```yaml
+method: GET
+path: /api/v1/user-dockers/images/estimate?ref=<image>
+request: none
+response:
+  success: boolean
+  estimate:
+    ref: string
+    already_local: boolean
+    compressed_bytes: int   # upper bound; cached layers not subtracted
+    layer_count: int
+    note: string            # explains estimate limits / unsupported registries
+note: only docker.io anonymous manifests are sized; other registries return a note only.
+```
+
+### Endpoint: POST /api/v1/user-dockers/pull
+```yaml
+method: POST
+path: /api/v1/user-dockers/pull
+request:
+  content_type: application/json
+  body:
+    ref: string (required)
+    external_image_approved_by_user: boolean (required for non whalebot/* refs)
+response:
+  success: boolean
+  job_id: string   # poll via pull/status
+  ref: string
+  error: string
+note: pull runs asynchronously (background, 30m cap) so chat requests do not block on large downloads.
+```
+
+### Endpoint: GET /api/v1/user-dockers/pull/status
+```yaml
+method: GET
+path: /api/v1/user-dockers/pull/status?job_id=<id>
+response:
+  success: boolean
+  job:
+    ref: string
+    done: boolean
+    error: string
+    started_at: string
+```
+
+### Endpoint: GET /api/v1/user-dockers/{name}/logs
+```yaml
+method: GET
+path: /api/v1/user-dockers/{name}/logs?tail=200
+request: none
+response:
+  success: boolean
+  name: string
+  logs: string   # demultiplexed stdout+stderr, trailing `tail` lines (default 200, max 2000)
+note: session_scoped containers require matching session_id.
+```
+
+### Endpoint: GET /api/v1/user-dockers/{name}/exec/status
+```yaml
+method: GET
+path: /api/v1/user-dockers/{name}/exec/status?job_id=<id>
+request: none
+response:
+  success: boolean
+  job_id: string
+  done: boolean
+  exit_code: int
+  stdout: string
+  stderr: string
+  duration_ms: int
+note: proxied to userdocker /api/v1/userdocker/exec/status; used to poll async exec jobs.
+```
+
 ### Endpoint: DELETE /api/v1/user-dockers/{name}
 ```yaml
 method: DELETE
@@ -154,9 +232,11 @@ switch_scope_body:
 ### Endpoint Group: Workspace operations
 ```yaml
 exec: POST /api/v1/user-dockers/{name}/exec
+exec_note: body accepts async=true -> returns job_id; poll exec/status. Sync path clamps timeout to 300s.
+exec_status: GET /api/v1/user-dockers/{name}/exec/status?job_id=<id>
 files_list: GET /api/v1/user-dockers/{name}/files?path=.
 file_read: GET /api/v1/user-dockers/{name}/file?path=...
-file_write: PUT /api/v1/user-dockers/{name}/file
+file_write: PUT /api/v1/user-dockers/{name}/file (body: path + content_base64 OR plain content)
 file_delete: DELETE /api/v1/user-dockers/{name}/file?path=...
 mkdir: POST /api/v1/user-dockers/{name}/files/mkdir
 move: POST /api/v1/user-dockers/{name}/files/move
@@ -272,8 +352,13 @@ aliases:
   - container_lifecycle_tool
 query_to_endpoint:
   list_userdocker_images: GET /api/v1/user-dockers/images
+  estimate_image_pull: GET /api/v1/user-dockers/images/estimate
+  pull_image: POST /api/v1/user-dockers/pull
+  pull_status: GET /api/v1/user-dockers/pull/status
   list_userdockers: GET /api/v1/user-dockers
   create_userdocker: POST /api/v1/user-dockers
+  userdocker_logs: GET /api/v1/user-dockers/{name}/logs
+  exec_status: GET /api/v1/user-dockers/{name}/exec/status
   start_userdocker: POST /api/v1/user-dockers/{name}/start
   stop_userdocker: POST /api/v1/user-dockers/{name}/stop
   touch_userdocker: POST /api/v1/user-dockers/{name}/touch

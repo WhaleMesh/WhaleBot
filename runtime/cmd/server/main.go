@@ -107,6 +107,7 @@ type usage struct {
 type userDockerCreateBody struct {
 	Name                        string            `json:"name"`
 	Image                       string            `json:"image"`
+	Purpose                     string            `json:"purpose,omitempty"`
 	Cmd                         []string          `json:"cmd"`
 	Env                         map[string]string `json:"env"`
 	Labels                      map[string]string `json:"labels"`
@@ -134,11 +135,14 @@ type userDockerListResp struct {
 }
 
 type userDockerVM struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	State  string `json:"state"`
-	Status string `json:"status"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Image        string `json:"image"`
+	State        string `json:"state"`
+	Status       string `json:"status"`
+	Scope        string `json:"scope,omitempty"`
+	Purpose      string `json:"purpose,omitempty"`
+	LastActiveAt string `json:"last_active_at,omitempty"`
 }
 
 type userDockerSimpleResp struct {
@@ -174,24 +178,27 @@ type toolSpec struct {
 }
 
 type availableRoutes struct {
-	CanUserDockerList    bool
-	CanUserDockerImages  bool
-	CanUserDockerCreate  bool
-	CanUserDockerStart   bool
-	CanUserDockerStop    bool
-	CanUserDockerTouch   bool
-	CanUserDockerSwitch  bool
-	CanUserDockerRemove  bool
-	CanUserDockerRestart bool
-	CanUserDockerInspect bool
-	CanUserDockerExec    bool
-	CanUserDockerFiles   bool
-	CanUserDockerExport  bool
-	CanSecretsGet        bool
-	MemoryEndpoint       string
-	LoggerWriteEndpoint  string
-	StatsWriteEndpoint   string
-	SkillsSearchBase     string
+	CanUserDockerList     bool
+	CanUserDockerImages   bool
+	CanUserDockerCreate   bool
+	CanUserDockerStart    bool
+	CanUserDockerStop     bool
+	CanUserDockerTouch    bool
+	CanUserDockerSwitch   bool
+	CanUserDockerRemove   bool
+	CanUserDockerRestart  bool
+	CanUserDockerInspect  bool
+	CanUserDockerExec     bool
+	CanUserDockerFiles    bool
+	CanUserDockerExport   bool
+	CanUserDockerEstimate bool
+	CanUserDockerPull     bool
+	CanUserDockerLogs     bool
+	CanSecretsGet         bool
+	MemoryEndpoint        string
+	LoggerWriteEndpoint   string
+	StatsWriteEndpoint    string
+	SkillsSearchBase      string
 }
 
 func main() {
@@ -524,10 +531,10 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 			cctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			s.emitStatsEvents(cctx, ep, []map[string]any{{
-				"kind":               "tokens",
-				"prompt_tokens":      int64(u.PromptTokens),
+				"kind":              "tokens",
+				"prompt_tokens":     int64(u.PromptTokens),
 				"completion_tokens": int64(u.CompletionTokens),
-				"total_tokens":       int64(u.TotalTokens),
+				"total_tokens":      int64(u.TotalTokens),
 			}})
 		}()
 	}
@@ -552,10 +559,11 @@ func userDockerManagerToolDefinition() map[string]any {
 				"properties": map[string]any{
 					"action": map[string]any{
 						"type":        "string",
-						"description": "Operation: list_images | list | create | start | stop | touch | switch_scope | remove | restart | get_interface | exec | list_files | read_file | write_file | delete_file | mkdir | move | export_artifact.",
+						"description": "Operation. Discovery/read-only: list_images, list (existing reusable containers with their purpose), estimate_image_pull, pull_status, exec_status, logs, get_interface, list_files, read_file. Mutating: create, start, stop, touch, switch_scope, remove, restart, pull_image, exec, write_file, delete_file, mkdir, move, export_artifact.",
 						"enum": []string{
-							"list_images", "list", "create", "start", "stop", "touch", "switch_scope", "remove", "restart",
-							"get_interface", "exec", "list_files", "read_file", "write_file", "delete_file",
+							"list_images", "list", "estimate_image_pull", "pull_image", "pull_status",
+							"create", "start", "stop", "touch", "switch_scope", "remove", "restart",
+							"get_interface", "exec", "exec_status", "logs", "list_files", "read_file", "write_file", "delete_file",
 							"mkdir", "move", "export_artifact",
 						},
 					},
@@ -566,6 +574,14 @@ func userDockerManagerToolDefinition() map[string]any {
 					"image": map[string]any{
 						"type":        "string",
 						"description": "Docker image reference. Prefer framework images. For Go build tasks, prefer whalebot/userdocker-golang:latest. External images require explicit user approval and must implement /api/v1/userdocker/interface.",
+					},
+					"purpose": map[string]any{
+						"type":        "string",
+						"description": "For action=create: one-line description of what this container is for and what will be installed in it. Stored on the container and shown in action=list so future runs can decide whether to reuse it.",
+					},
+					"ref": map[string]any{
+						"type":        "string",
+						"description": "Image reference for action=estimate_image_pull / pull_image (falls back to `image` if omitted).",
 					},
 					"cmd": map[string]any{
 						"type": "array", "items": map[string]any{"type": "string"},
@@ -630,7 +646,11 @@ func userDockerManagerToolDefinition() map[string]any {
 					},
 					"content_base64": map[string]any{
 						"type":        "string",
-						"description": "Base64 file content for action=write_file.",
+						"description": "Base64 file content for action=write_file. Prefer plain `content` for text files.",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "Plain-text file content for action=write_file (used when content_base64 is empty). Prefer this for source/config files.",
 					},
 					"command": map[string]any{
 						"type":        "array",
@@ -644,6 +664,18 @@ func userDockerManagerToolDefinition() map[string]any {
 					"cwd": map[string]any{
 						"type":        "string",
 						"description": "Working directory for action=exec.",
+					},
+					"async": map[string]any{
+						"type":        "boolean",
+						"description": "For action=exec: run in background (for long installs/builds >~1min). Returns job_id; poll with action=exec_status.",
+					},
+					"job_id": map[string]any{
+						"type":        "string",
+						"description": "Job id for action=exec_status (from an async exec) or action=pull_status (from pull_image).",
+					},
+					"tail": map[string]any{
+						"type":        "integer",
+						"description": "For action=logs: number of trailing log lines to return (default 200).",
 					},
 				},
 				"required": []string{"action"},
@@ -785,7 +817,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			var err error
 			if tc.Function.Name == "manage_user_docker" && !allowMutatingTools {
 				act := parseDockerActionFromArgs(tc.Function.Arguments)
-				if isMutatingDockerAction(act) {
+				if isHighRiskDockerAction(act, tc.Function.Arguments) {
 					resText = toolJSON(false, nil, mutatingToolBlockedMessage(act))
 					err = nil
 					s.emitRuntimeEvent(ctx, routes.LoggerWriteEndpoint, "warn", "runtime_tool_gate_blocked", map[string]string{
@@ -1047,6 +1079,8 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		Action                      string            `json:"action"`
 		Name                        string            `json:"name"`
 		Image                       string            `json:"image"`
+		Purpose                     string            `json:"purpose"`
+		Ref                         string            `json:"ref"`
 		Cmd                         []string          `json:"cmd"`
 		Env                         map[string]string `json:"env"`
 		Labels                      map[string]string `json:"labels"`
@@ -1065,9 +1099,13 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		From                        string            `json:"from"`
 		To                          string            `json:"to"`
 		ContentB64                  string            `json:"content_base64"`
+		Content                     string            `json:"content"`
 		Command                     []string          `json:"command"`
 		CommandSh                   string            `json:"command_sh"`
 		Cwd                         string            `json:"cwd"`
+		Async                       *bool             `json:"async"`
+		JobID                       string            `json:"job_id"`
+		Tail                        int               `json:"tail"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return toolJSON(false, nil, "invalid tool arguments: "+err.Error()), nil
@@ -1105,6 +1143,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		body := userDockerCreateBody{
 			Name:         args.Name,
 			Image:        args.Image,
+			Purpose:      args.Purpose,
 			Cmd:          args.Cmd,
 			Env:          args.Env,
 			Labels:       args.Labels,
@@ -1194,7 +1233,66 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			"env":         args.Env,
 			"timeout_sec": args.TimeoutSec,
 		}
+		if args.Async != nil {
+			body["async"] = *args.Async
+		}
 		return s.userDockerPost(ctx, args.Name, "exec", body)
+	case "exec_status":
+		if !routes.CanUserDockerExec {
+			return toolJSON(false, nil, "exec_status unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" || args.JobID == "" {
+			return toolJSON(false, nil, "name and job_id are required for action=exec_status"), nil
+		}
+		return s.userDockerGet(ctx, args.Name, "exec/status", map[string]string{"job_id": args.JobID, "session_id": sessionID})
+	case "logs":
+		if !routes.CanUserDockerLogs {
+			return toolJSON(false, nil, "logs unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" {
+			return toolJSON(false, nil, "name is required for action=logs"), nil
+		}
+		q := map[string]string{"session_id": sessionID}
+		if args.Tail > 0 {
+			q["tail"] = strconv.Itoa(args.Tail)
+		}
+		return s.userDockerGet(ctx, args.Name, "logs", q)
+	case "estimate_image_pull":
+		if !routes.CanUserDockerEstimate {
+			return toolJSON(false, nil, "estimate_image_pull unavailable: manager capability missing"), nil
+		}
+		ref := args.Ref
+		if ref == "" {
+			ref = args.Image
+		}
+		if ref == "" {
+			return toolJSON(false, nil, "ref (or image) is required for action=estimate_image_pull"), nil
+		}
+		return s.userDockerGetGlobal(ctx, "images/estimate", map[string]string{"ref": ref})
+	case "pull_image":
+		if !routes.CanUserDockerPull {
+			return toolJSON(false, nil, "pull_image unavailable: manager capability missing"), nil
+		}
+		ref := args.Ref
+		if ref == "" {
+			ref = args.Image
+		}
+		if ref == "" {
+			return toolJSON(false, nil, "ref (or image) is required for action=pull_image"), nil
+		}
+		body := map[string]any{"ref": ref}
+		if args.ExternalImageApprovedByUser != nil {
+			body["external_image_approved_by_user"] = *args.ExternalImageApprovedByUser
+		}
+		return s.userDockerPullImage(ctx, body)
+	case "pull_status":
+		if !routes.CanUserDockerPull {
+			return toolJSON(false, nil, "pull_status unavailable: manager capability missing"), nil
+		}
+		if args.JobID == "" {
+			return toolJSON(false, nil, "job_id is required for action=pull_status"), nil
+		}
+		return s.userDockerGetGlobal(ctx, "pull/status", map[string]string{"job_id": args.JobID})
 	case "list_files":
 		if !routes.CanUserDockerFiles {
 			return toolJSON(false, nil, "list_files unavailable: manager capability missing"), nil
@@ -1209,7 +1307,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if !routes.CanUserDockerFiles {
 			return toolJSON(false, nil, "write_file unavailable: manager capability missing"), nil
 		}
-		return s.userDockerPut(ctx, args.Name, "file", map[string]any{"path": args.Path, "content_base64": args.ContentB64, "session_id": sessionID})
+		return s.userDockerPut(ctx, args.Name, "file", map[string]any{"path": args.Path, "content_base64": args.ContentB64, "content": args.Content, "session_id": sessionID})
 	case "delete_file":
 		if !routes.CanUserDockerFiles {
 			return toolJSON(false, nil, "delete_file unavailable: manager capability missing"), nil
@@ -1490,6 +1588,40 @@ func (s *reactService) userDockerDelete(ctx context.Context, name, action string
 	return s.userDockerDoRequest(req)
 }
 
+// userDockerGetGlobal calls a manager endpoint that is not scoped to a
+// container name (e.g. images/estimate, pull/status).
+func (s *reactService) userDockerGetGlobal(ctx context.Context, action string, query map[string]string) (string, error) {
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s", s.orchURL, action)
+	q := url.Values{}
+	for k, v := range query {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	return s.userDockerDoRequest(req)
+}
+
+func (s *reactService) userDockerPullImage(ctx context.Context, payload map[string]any) (string, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.orchURL+"/api/v1/tools/user-dockers/pull", bytes.NewReader(raw))
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return s.userDockerDoRequest(req)
+}
+
 func (s *reactService) userDockerImages(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.orchURL+"/api/v1/tools/user-dockers/images", nil)
 	if err != nil {
@@ -1677,13 +1809,13 @@ func (s *reactService) decidePlanGate(ctx context.Context, userMessage string, h
 	dec, parsed := parsePlanGateResponse(out.Message.Content)
 	if logEP != "" {
 		s.emitRuntimeEvent(context.Background(), logEP, "info", "runtime_plan_gate", map[string]string{
-			"trace_id":                 traceID,
-			"session_id":               sessionID,
-			"module":                   "runtime",
-			"phase":                    "plan_gate",
-			"inject_plan_only":         strconv.FormatBool(dec.InjectPlanOnly),
+			"trace_id":                traceID,
+			"session_id":              sessionID,
+			"module":                  "runtime",
+			"phase":                   "plan_gate",
+			"inject_plan_only":        strconv.FormatBool(dec.InjectPlanOnly),
 			"restrict_mutating_tools": strconv.FormatBool(dec.RestrictMutatingTools),
-			"parsed_ok":                strconv.FormatBool(parsed),
+			"parsed_ok":               strconv.FormatBool(parsed),
 		})
 	}
 	if !parsed {
@@ -1710,14 +1842,26 @@ func parseDockerActionFromArgs(argsJSON string) string {
 	return strings.TrimSpace(strings.ToLower(v.Action))
 }
 
-func isMutatingDockerAction(action string) bool {
+// isHighRiskDockerAction gates the subset of mutating actions that always
+// require an explicit user plan+confirmation, even when the plan gate would
+// otherwise allow immediate execution. Low-risk mutations (create from a
+// framework image, exec, writes) are intentionally not blocked here so routine
+// container work stays fluid; only destructive or bandwidth-consuming actions
+// keep the hard confirmation.
+func isHighRiskDockerAction(action, argsJSON string) bool {
 	switch action {
-	case "list_images", "list", "get_interface", "list_files", "read_file", "touch":
-		return false
-	case "":
+	case "remove", "delete_file", "pull_image":
 		return true
+	case "create":
+		var v struct {
+			Image string `json:"image"`
+		}
+		_ = json.Unmarshal([]byte(argsJSON), &v)
+		img := strings.TrimSpace(v.Image)
+		// Framework images (whalebot/*) and the default (empty) image are low risk.
+		return img != "" && !strings.HasPrefix(img, "whalebot/")
 	default:
-		return true
+		return false
 	}
 }
 
@@ -1874,6 +2018,15 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 			}
 			if hasCapability(c.Capabilities, "userdocker_artifact_export") {
 				routes.CanUserDockerExport = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_images_estimate") {
+				routes.CanUserDockerEstimate = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_pull") {
+				routes.CanUserDockerPull = true
+			}
+			if hasCapability(c.Capabilities, "userdocker_logs") {
+				routes.CanUserDockerLogs = true
 			}
 			if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
 				if !containsTool(catalog.Tools, "manage_user_docker") {
@@ -2102,7 +2255,7 @@ func renderToolInventoryReply(c runtimeCatalog) string {
 		lines = append(lines, fmt.Sprintf("%d. `%s`", i+1, t.Name))
 		lines = append(lines, "   - "+t.Description)
 		if t.Name == "manage_user_docker" {
-			lines = append(lines, "   - actions: list_images, list, create, start, stop, touch, switch_scope, remove, restart, get_interface, exec, list_files, read_file, write_file, delete_file, mkdir, move, export_artifact")
+			lines = append(lines, "   - actions: list_images, list, estimate_image_pull, pull_image, pull_status, create, start, stop, touch, switch_scope, remove, restart, get_interface, exec, exec_status, logs, list_files, read_file, write_file, delete_file, mkdir, move, export_artifact")
 		}
 	}
 	lines = append(lines, "如果你看到我提到未在上面出现的工具名称，那就是错误输出，请直接指出。")
@@ -2430,9 +2583,14 @@ func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
 		"你是 WhaleBot 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
 		"当前可用能力由运行时实时发现：",
-		"涉及工程创建、编译、产物导出时，默认使用 manage_user_docker：先 create，再写文件/exec，最后 export_artifact。",
-		"创建容器优先使用框架镜像（例如 whalebot/*）；如需外部镜像，必须先明确征得用户同意后再继续。",
-		"在选择镜像前，先使用 manage_user_docker(action=list_images) 获取框架可用镜像列表。",
+		"涉及工程创建、编译、产物导出时，默认使用 manage_user_docker。",
+		"容器选择决策阶梯（按顺序考虑，选第一个可行项）：1) 先 action=list（含 include_stopped=true）查看已有容器及其 purpose，若有用途匹配的容器就复用它（stopped 的先 action=start 拉起，比新建快）；2) 无可复用容器时，用 action=list_images 从框架镜像（whalebot/*）新建；3) 只有框架镜像无法满足需求时，才考虑外部镜像。",
+		"action=create 时必须提供 purpose 参数（一句话说明用途和将安装的环境），以便后续运行判断能否复用。",
+		"复用容器前，先 action=read_file 读取该容器的 /workspace/.whalebot/NOTES.md（若存在）了解已安装的环境与接口；每次安装新环境（apt/pip/go install 等）后，用 action=write_file 追加更新 NOTES.md。",
+		"外部镜像流程：必须先 action=estimate_image_pull 预估下载流量，把预估大小（MB/GB）告知用户并征得明确同意；用户同意后再带 external_image_approved_by_user=true 执行 create 或 action=pull_image。绝不在未同意时拉取外部镜像。",
+		"耗时较长的命令（依赖安装、编译、下载）用 action=exec 并设 async=true，拿到 job_id 后用 action=exec_status 轮询，避免请求超时。",
+		"排查长期运行的服务容器时，可用 action=logs 查看容器日志。",
+		"create 返回的 name 可能带 session 后缀，后续所有操作必须使用返回的真实 name。",
 		"Go 编译任务优先使用 whalebot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
 		"当关键结果（例如编译日志、访问结果、产物导出结果）已拿到时，立即停止继续调用工具并输出最终回复。",
 		"当 export_artifact 已返回成功时，不要再次调用 export_artifact；应直接总结并回复用户。",
