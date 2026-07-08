@@ -39,6 +39,58 @@ func TestParsePlanGateResponse_markdownFence(t *testing.T) {
 	}
 }
 
+func TestParsePlanGateResponse_thinkingModel(t *testing.T) {
+	t.Parallel()
+	raw := "<think>\nThe user wants to build a Go project, so this is substantive execution.\n</think>\nSure. {\"inject_plan_only\": true, \"restrict_mutating_tools\": true}"
+	d, ok := parsePlanGateResponse(raw)
+	if !ok {
+		t.Fatal("expected parsed ok")
+	}
+	if !d.InjectPlanOnly || !d.RestrictMutatingTools {
+		t.Fatalf("unexpected %+v", d)
+	}
+	// Unclosed think block with no JSON after it -> parse failure, conservative default.
+	if _, ok := parsePlanGateResponse("<think>still reasoning when max_tokens hit"); ok {
+		t.Fatal("truncated think-only output should not parse")
+	}
+}
+
+func TestNormalizeDockerToolCall(t *testing.T) {
+	t.Parallel()
+	// Alias with explicit action passes through under canonical name.
+	name, args := normalizeDockerToolCall("docker_files", `{"action":"read_file","name":"c1","path":"/workspace/a.go"}`)
+	if name != "manage_user_docker" {
+		t.Fatalf("got name %q", name)
+	}
+	if parseDockerActionFromArgs(args) != "read_file" {
+		t.Fatalf("action lost: %s", args)
+	}
+	// Default action injected when omitted.
+	name, args = normalizeDockerToolCall("export_artifact", `{"name":"c1","path":"/workspace/out.tar.gz"}`)
+	if name != "manage_user_docker" || parseDockerActionFromArgs(args) != "export_artifact" {
+		t.Fatalf("got %q / %s", name, args)
+	}
+	name, args = normalizeDockerToolCall("docker_exec", `{"name":"c1","command_sh":"go build ./..."}`)
+	if name != "manage_user_docker" || parseDockerActionFromArgs(args) != "exec" {
+		t.Fatalf("got %q / %s", name, args)
+	}
+	// Non-alias tools untouched.
+	if name, _ := normalizeDockerToolCall("list_secrets", `{}`); name != "list_secrets" {
+		t.Fatalf("got %q", name)
+	}
+	// Legacy canonical name untouched.
+	if name, _ := normalizeDockerToolCall("manage_user_docker", `{"action":"list"}`); name != "manage_user_docker" {
+		t.Fatalf("got %q", name)
+	}
+	// Malformed args must not panic and still route to canonical dispatch.
+	if name, _ := normalizeDockerToolCall("docker_lifecycle", `{`); name != "manage_user_docker" {
+		t.Fatalf("got %q", name)
+	}
+	if name, _ := normalizeDockerToolCall("docker_exec", `null`); name != "manage_user_docker" {
+		t.Fatalf("got %q", name)
+	}
+}
+
 func TestParsePlanGateResponse_invalid(t *testing.T) {
 	t.Parallel()
 	d, ok := parsePlanGateResponse("not json")

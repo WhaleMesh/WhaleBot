@@ -67,11 +67,12 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `runtime/cmd/server/main.go`
   - host exposed: no
   - note: discovers healthy tool/environment components via orchestrator and builds tool list per run
-  - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
+  - note: user-docker capability is exposed to the model as **four split tools** (`docker_lifecycle`, `docker_exec`, `docker_files`, `export_artifact`) with narrow schemas (small-local-model friendly); all normalize via `normalizeDockerToolCall` onto the single internal `manage_user_docker` dispatch/gating/logging path, so logger events keep `tool_name=manage_user_docker`
+  - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step; per-step completion budget `RUNTIME_MAX_TOKENS` (default 4096, sized to cover thinking/reasoning tokens)
   - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
   - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available; when `stats` (`stats_ingest`) is healthy, also posts batched overview metrics to `stats` `POST /events` (messages on successful session append, `tool_call` per tool start, `tokens` on `runtime_run_completed` when usage is present)
-  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `llm-openai` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; when restriction is on, only **high-risk** `manage_user_docker` actions are hard-blocked until plan confirmation (`isPlanConfirmationMessage`): `remove`, `delete_file`, `pull_image`, and `create` with a non-framework image. Routine mutations (framework-image create, exec, writes) stay fluid
- - note: `manage_user_docker` container-selection guidance in the system prompt is a decision ladder — reuse an existing container (matched by its `purpose` from `action=list`) before creating from a framework image, and only pull external images after `estimate_image_pull` + explicit user approval; agents record installed environments in each container's `/workspace/.whalebot/NOTES.md`. Long installs/builds use `action=exec` `async=true` + `action=exec_status` polling
+  - note: each `/run` does a structured **plan_gate** call to `llm-openai` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; the parser tolerates thinking-model output (strips `<think>` blocks, extracts the JSON object from surrounding prose; 512 `max_tokens`, 30s budget). When restriction is on, only **high-risk** docker actions are hard-blocked until plan confirmation (`isPlanConfirmationMessage`): `remove`, `delete_file`, `pull_image`, and `create` with a non-framework image. Routine mutations (framework-image create, exec, writes) stay fluid
+ - note: the system prompt is intentionally short (small-model friendly); container-selection process knowledge lives in the tool descriptions — reuse an existing container (matched by its `purpose` from `action=list`) before creating from a framework image, and only pull external images after `estimate_image_pull` + explicit user approval; agents record installed environments in each container's `/workspace/.whalebot/NOTES.md`. Long installs/builds use `action=exec` `async=true` + `action=exec_status` polling
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
@@ -196,7 +197,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `MEMORY_SECRET_KEY` (optional; hex 64 chars; auto-generated to `/data/.secret-key` if empty)
 - Runtime tuning:
   - `REACT_MAX_STEPS`
-  - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `5`)
+  - `RUNTIME_MAX_TOKENS` (default `4096`; per-step completion budget incl. thinking tokens)
+  - `RUNTIME_SKILLS_INJECT` (default `1`; set `0` to disable skills search injection), `RUNTIME_SKILLS_TOP_K` (default `2`)
 - IM/session sync:
   - `SESSION_URL` (for `adapter-telegram` optional artifact append to session)
 - Orchestrator request timeout:
@@ -236,13 +238,13 @@ Read this first, then read only the referenced source-of-truth files.
 - Runtime discovers capabilities per chat run from `GET /api/v1/components` on orchestrator.
 - Only components that pass **readiness** are considered: `status=healthy` from liveness, and when `status_endpoint` is registered, `operational_state` must be `normal` (or omit `status_endpoint` to rely on liveness only).
 - Tool mapping:
-  - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
+  - `type=tool` + capabilities `userdocker_*` -> model-facing tools `docker_lifecycle` / `docker_exec` / `docker_files` / `export_artifact` (all normalize to internal `manage_user_docker` dispatch, endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
-- `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, artifact export, plus `estimate_image_pull`, `pull_image`, `pull_status`, `exec_status`, `logs`.
+- docker tool actions: `docker_lifecycle` covers lifecycle/images (`list/list_images/create/start/stop/restart/remove/touch/switch_scope/get_interface/estimate_image_pull/pull_image/pull_status`), `docker_exec` covers `exec/exec_status/logs`, `docker_files` covers workspace file CRUD, `export_artifact` exports artifacts.
 - container-selection ladder: `action=list` (reuse a container matched by its `purpose`) → `action=list_images` + `create` from a framework image → external image only after `estimate_image_pull` + user approval. `create` passes a `purpose`; agents keep `/workspace/.whalebot/NOTES.md` per container to record installed envs.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
-- runtime no longer relies on `environment`-type execution capability; build/run flows use `manage_user_docker`.
+- runtime no longer relies on `environment`-type execution capability; build/run flows use the docker tools.
 - Degrade behavior:
   - If a capability is not discoverable, runtime should not rely on that tool.
   - Tool calls without healthy backing component must return explicit unavailable errors.
@@ -256,7 +258,7 @@ Read this first, then read only the referenced source-of-truth files.
   - check userdocker list: `curl -s http://localhost:18080/api/v1/tools/user-dockers`
   - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
   - check secrets list (when memory service running): `curl -s http://localhost:18080/api/v1/secrets`
-  - ask runtime via chat to list tool names and confirm `manage_user_docker` is visible.
+  - ask runtime via chat to list tool names and confirm the `docker_*` tools are visible.
 
 ## 8) Mandatory Update Policy
 

@@ -441,7 +441,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if getenv("RUNTIME_SKILLS_INJECT", "1") != "0" && routes.SkillsSearchBase != "" {
-		topK := getenvInt("RUNTIME_SKILLS_TOP_K", 5)
+		topK := getenvInt("RUNTIME_SKILLS_TOP_K", 2)
 		if sk := s.buildSkillsContext(r.Context(), routes.SkillsSearchBase, req.Message, topK); sk != "" {
 			msgs = append(msgs, cmMessage{Role: "system", Content: sk})
 		}
@@ -548,140 +548,132 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func userDockerManagerToolDefinition() map[string]any {
+// The user-docker capability is exposed to the model as four small, focused
+// tools instead of one 23-action mega tool: small local models select tools
+// and fill arguments far more reliably with narrow schemas. All four are
+// aliases that normalize to the single manage_user_docker dispatch path
+// (gating, secret resolution, attachment extraction stay unchanged).
+
+func fnTool(name, description string, properties map[string]any, required []string) map[string]any {
+	params := map[string]any{"type": "object", "properties": properties}
+	if len(required) > 0 {
+		params["required"] = required
+	}
 	return map[string]any{
 		"type": "function",
 		"function": map[string]any{
-			"name":        "manage_user_docker",
-			"description": "Primary execution tool. Create and control userdocker containers for project setup, build, run and artifact export.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"action": map[string]any{
-						"type":        "string",
-						"description": "Operation. Discovery/read-only: list_images, list (existing reusable containers with their purpose), estimate_image_pull, pull_status, exec_status, logs, get_interface, list_files, read_file. Mutating: create, start, stop, touch, switch_scope, remove, restart, pull_image, exec, write_file, delete_file, mkdir, move, export_artifact.",
-						"enum": []string{
-							"list_images", "list", "estimate_image_pull", "pull_image", "pull_status",
-							"create", "start", "stop", "touch", "switch_scope", "remove", "restart",
-							"get_interface", "exec", "exec_status", "logs", "list_files", "read_file", "write_file", "delete_file",
-							"mkdir", "move", "export_artifact",
-						},
-					},
-					"name": map[string]any{
-						"type":        "string",
-						"description": "Container name (required for most actions except list).",
-					},
-					"image": map[string]any{
-						"type":        "string",
-						"description": "Docker image reference. Prefer framework images. For Go build tasks, prefer whalebot/userdocker-golang:latest. External images require explicit user approval and must implement /api/v1/userdocker/interface.",
-					},
-					"purpose": map[string]any{
-						"type":        "string",
-						"description": "For action=create: one-line description of what this container is for and what will be installed in it. Stored on the container and shown in action=list so future runs can decide whether to reuse it.",
-					},
-					"ref": map[string]any{
-						"type":        "string",
-						"description": "Image reference for action=estimate_image_pull / pull_image (falls back to `image` if omitted).",
-					},
-					"cmd": map[string]any{
-						"type": "array", "items": map[string]any{"type": "string"},
-						"description": "Optional container command override.",
-					},
-					"env":     map[string]any{"type": "object", "description": "Optional env key/value map."},
-					"labels":  map[string]any{"type": "object", "description": "Optional Docker labels map."},
-					"network": map[string]any{"type": "string", "description": "Docker network name; omit for default compose network (whalebot_net)."},
-					"auto_register": map[string]any{
-						"type":        "boolean",
-						"description": "If true, container self-registers with the orchestrator (default true).",
-					},
-					"include_stopped": map[string]any{
-						"type":        "boolean",
-						"description": "Only for action=list. If true, include stopped containers.",
-					},
-					"force": map[string]any{
-						"type":        "boolean",
-						"description": "Only for action=remove. If true, force remove running container.",
-					},
-					"timeout_sec": map[string]any{
-						"type":        "integer",
-						"description": "Only for action=restart. Restart timeout seconds.",
-					},
-					"port": map[string]any{
-						"type":        "integer",
-						"description": "Optional userdocker service port for create/get_interface. Default 9000.",
-					},
-					"scope": map[string]any{
-						"type":        "string",
-						"description": "Container scope for create: session_scoped | global_service.",
-						"enum":        []string{"session_scoped", "global_service"},
-					},
-					"target_scope": map[string]any{
-						"type":        "string",
-						"description": "Target scope for action=switch_scope.",
-						"enum":        []string{"session_scoped", "global_service"},
-					},
-					"session_id": map[string]any{
-						"type":        "string",
-						"description": "Optional explicit session id. Defaults to current runtime session.",
-					},
-					"workspace": map[string]any{
-						"type":        "string",
-						"description": "Optional workspace volume name for create.",
-					},
-					"external_image_approved_by_user": map[string]any{
-						"type":        "boolean",
-						"description": "Only for action=create with non-framework image. Must be true only after user explicitly approves pulling external image.",
-					},
-					"path": map[string]any{
-						"type":        "string",
-						"description": "Path argument for list_files/read_file/write_file/delete_file/mkdir/export_artifact.",
-					},
-					"from": map[string]any{
-						"type":        "string",
-						"description": "Source path for action=move.",
-					},
-					"to": map[string]any{
-						"type":        "string",
-						"description": "Destination path for action=move.",
-					},
-					"content_base64": map[string]any{
-						"type":        "string",
-						"description": "Base64 file content for action=write_file. Prefer plain `content` for text files.",
-					},
-					"content": map[string]any{
-						"type":        "string",
-						"description": "Plain-text file content for action=write_file (used when content_base64 is empty). Prefer this for source/config files.",
-					},
-					"command": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Command argv for action=exec.",
-					},
-					"command_sh": map[string]any{
-						"type":        "string",
-						"description": "Shell command for action=exec.",
-					},
-					"cwd": map[string]any{
-						"type":        "string",
-						"description": "Working directory for action=exec.",
-					},
-					"async": map[string]any{
-						"type":        "boolean",
-						"description": "For action=exec: run in background (for long installs/builds >~1min). Returns job_id; poll with action=exec_status.",
-					},
-					"job_id": map[string]any{
-						"type":        "string",
-						"description": "Job id for action=exec_status (from an async exec) or action=pull_status (from pull_image).",
-					},
-					"tail": map[string]any{
-						"type":        "integer",
-						"description": "For action=logs: number of trailing log lines to return (default 200).",
-					},
-				},
-				"required": []string{"action"},
-			},
+			"name":        name,
+			"description": description,
+			"parameters":  params,
 		},
 	}
+}
+
+func actionProp(desc string, enum []string) map[string]any {
+	return map[string]any{"type": "string", "description": desc, "enum": enum}
+}
+
+func strProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+func boolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
+func intProp(desc string) map[string]any {
+	return map[string]any{"type": "integer", "description": desc}
+}
+
+func userDockerToolDefinitions() []map[string]any {
+	return []map[string]any{
+		fnTool("docker_lifecycle",
+			"Manage workspace containers. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. create returns the real container `name` (may include a session suffix) — always use that returned name in later calls. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
+			map[string]any{
+				"action": actionProp("Operation to perform.", []string{
+					"list", "list_images", "create", "start", "stop", "restart", "remove",
+					"touch", "switch_scope", "get_interface", "estimate_image_pull", "pull_image", "pull_status",
+				}),
+				"name":                            strProp("Container name (required for most actions except list/list_images)."),
+				"image":                           strProp("Docker image reference for create. Prefer framework whalebot/* images."),
+				"purpose":                         strProp("Required for create: one-line description of what this container is for and what will be installed, so future runs can decide whether to reuse it."),
+				"ref":                             strProp("Image reference for estimate_image_pull / pull_image (falls back to `image`)."),
+				"env":                             map[string]any{"type": "object", "description": "Optional container env key/value map for create."},
+				"include_stopped":                 boolProp("For list: include stopped containers (recommended true when looking for reusable containers)."),
+				"force":                           boolProp("For remove: force remove a running container."),
+				"scope":                           actionProp("Container scope for create.", []string{"session_scoped", "global_service"}),
+				"target_scope":                    actionProp("Target scope for switch_scope.", []string{"session_scoped", "global_service"}),
+				"external_image_approved_by_user": boolProp("Only for non-framework images, and only after the user explicitly approved the download."),
+				"job_id":                          strProp("Job id for pull_status (returned by pull_image)."),
+			},
+			[]string{"action"}),
+		fnTool("docker_exec",
+			"Run shell commands inside a container. Long commands (dependency installs, builds, downloads >~1min) MUST use async=true, then poll with action=exec_status and the returned job_id. action=logs tails container logs for debugging services. Example: {\"action\":\"exec\",\"name\":\"c1\",\"command_sh\":\"go build ./...\",\"async\":true}",
+			map[string]any{
+				"action":     actionProp("exec runs a command; exec_status polls an async job; logs tails container logs.", []string{"exec", "exec_status", "logs"}),
+				"name":       strProp("Container name."),
+				"command_sh": strProp("Shell command for exec. May contain {{secret:key}} placeholders."),
+				"cwd":        strProp("Working directory for exec."),
+				"env":        map[string]any{"type": "object", "description": "Optional env key/value map for exec. Values may contain {{secret:key}} placeholders."},
+				"async":      boolProp("For exec: run in background and return job_id (required for long commands)."),
+				"job_id":     strProp("Job id for exec_status."),
+				"tail":       intProp("For logs: number of trailing lines (default 200)."),
+			},
+			[]string{"action", "name"}),
+		fnTool("docker_files",
+			"Read and write files under a container's /workspace. Before reusing a container, read /workspace/.whalebot/NOTES.md (if present) to learn what is installed; after installing new tooling, append an update to NOTES.md via write_file. Example: {\"action\":\"write_file\",\"name\":\"c1\",\"path\":\"/workspace/main.go\",\"content\":\"package main...\"}",
+			map[string]any{
+				"action":         actionProp("File operation.", []string{"list_files", "read_file", "write_file", "delete_file", "mkdir", "move"}),
+				"name":           strProp("Container name."),
+				"path":           strProp("Target path for list_files/read_file/write_file/delete_file/mkdir."),
+				"from":           strProp("Source path for move."),
+				"to":             strProp("Destination path for move."),
+				"content":        strProp("Plain-text content for write_file. Prefer this for source/config files."),
+				"content_base64": strProp("Base64 content for write_file (binary files only)."),
+			},
+			[]string{"action", "name"}),
+		fnTool("export_artifact",
+			"Export a file or directory from a container as a downloadable artifact delivered to the user. Call at most once per artifact — do not re-export after success.",
+			map[string]any{
+				"name": strProp("Container name."),
+				"path": strProp("Path inside the container to export."),
+			},
+			[]string{"name", "path"}),
+	}
+}
+
+// dockerToolAliases maps the model-facing split tool names to the canonical
+// dispatch name plus a default action injected when the model omits one.
+var dockerToolAliases = map[string]string{
+	"docker_lifecycle": "",
+	"docker_exec":      "exec",
+	"docker_files":     "",
+	"export_artifact":  "export_artifact",
+}
+
+// normalizeDockerToolCall rewrites split-tool calls onto the canonical
+// manage_user_docker name so all downstream logic (gating, secrets,
+// attachments, dispatch, logs) keeps working unchanged.
+func normalizeDockerToolCall(name, argsJSON string) (string, string) {
+	defAction, ok := dockerToolAliases[name]
+	if !ok {
+		return name, argsJSON
+	}
+	args := map[string]any{}
+	trimmed := strings.TrimSpace(argsJSON)
+	if trimmed != "" {
+		if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
+			return "manage_user_docker", argsJSON
+		}
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	if act, _ := args["action"].(string); strings.TrimSpace(act) == "" && defAction != "" {
+		args["action"] = defAction
+		if b, err := json.Marshal(args); err == nil {
+			argsJSON = string(b)
+		}
+	}
+	return "manage_user_docker", argsJSON
 }
 
 func listSecretsToolDefinition() map[string]any {
@@ -699,16 +691,18 @@ func listSecretsToolDefinition() map[string]any {
 }
 
 func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes availableRoutes, traceID, sessionID string, forcePlanOnly bool, restrictMutatingTools bool, userMessage string, gateHistory []sessionMessage) (string, *usage, []chatAttachment, error) {
-	tools := make([]map[string]any, 0, 2)
+	tools := make([]map[string]any, 0, 5)
 	if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
-		tools = append(tools, userDockerManagerToolDefinition())
+		tools = append(tools, userDockerToolDefinitions()...)
 	}
 	if routes.CanSecretsGet {
 		tools = append(tools, listSecretsToolDefinition())
 	}
 	params := map[string]any{
 		"temperature": 0.4,
-		"max_tokens":  1536.0,
+		// Thinking-mode models spend completion tokens on reasoning before the
+		// tool call / answer, so the budget must cover both.
+		"max_tokens":  float64(getenvInt("RUNTIME_MAX_TOKENS", 4096)),
 		"tool_choice": "auto",
 	}
 	totalUsage := &usage{}
@@ -793,6 +787,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			if tc.Type == "" {
 				tc.Type = "function"
 			}
+			tc.Function.Name, tc.Function.Arguments = normalizeDockerToolCall(tc.Function.Name, tc.Function.Arguments)
 			callStart := time.Now()
 			startFields := map[string]string{
 				"trace_id":     traceID,
@@ -1702,9 +1697,12 @@ func conservativePlanGateDefault() planGateDecision {
 	return planGateDecision{InjectPlanOnly: false, RestrictMutatingTools: true}
 }
 
+var thinkBlockRe = regexp.MustCompile(`(?s)<think(?:ing)?>.*?(</think(?:ing)?>|$)`)
+
 func parsePlanGateResponse(raw string) (planGateDecision, bool) {
 	def := conservativePlanGateDefault()
-	s := strings.TrimSpace(raw)
+	// Thinking-mode local models may emit <think>...</think> before the JSON.
+	s := strings.TrimSpace(thinkBlockRe.ReplaceAllString(raw, ""))
 	if s == "" {
 		return def, false
 	}
@@ -1714,6 +1712,10 @@ func parsePlanGateResponse(raw string) (planGateDecision, bool) {
 			s = s[idx+1:]
 		}
 		s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "```"))
+	}
+	// Tolerate prose around the JSON object: take first '{' .. last '}'.
+	if i, j := strings.IndexByte(s, '{'), strings.LastIndexByte(s, '}'); i >= 0 && j > i {
+		s = s[i : j+1]
 	}
 	var d struct {
 		InjectPlanOnly        *bool `json:"inject_plan_only"`
@@ -1769,7 +1771,9 @@ func (s *reactService) decidePlanGate(ctx context.Context, userMessage string, h
 		return planGateDecision{InjectPlanOnly: force, RestrictMutatingTools: false}
 	}
 
-	gctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	// Thinking-mode models reason before answering: give them token and time
+	// budget, and let parsePlanGateResponse strip the <think> block.
+	gctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	userBlock := buildPlanGateTranscript(userMessage, history)
 	gateMsgs := []cmMessage{
@@ -1778,7 +1782,7 @@ func (s *reactService) decidePlanGate(ctx context.Context, userMessage string, h
 	}
 	out, err := s.invokeChatModel(gctx, gateMsgs, nil, map[string]any{
 		"temperature": 0.0,
-		"max_tokens":  128.0,
+		"max_tokens":  512.0,
 	})
 	if err != nil {
 		slog.Warn("plan_gate invoke error", "err", err, "trace_id", traceID)
@@ -1867,7 +1871,7 @@ func isHighRiskDockerAction(action, argsJSON string) bool {
 
 func mutatingToolBlockedMessage(action string) string {
 	return fmt.Sprintf(
-		"runtime_gate: mutating manage_user_docker action %q is blocked until you output a concise plan, ask the user to confirm (e.g. whether to proceed), and they approve. / 变更类操作 %q 已被拦截：请先说明计划并征得用户明确确认后再调用。",
+		"runtime_gate: mutating docker action %q is blocked until you output a concise plan, ask the user to confirm (e.g. whether to proceed), and they approve. / 变更类操作 %q 已被拦截：请先说明计划并征得用户明确确认后再调用。",
 		action, action,
 	)
 }
@@ -2029,12 +2033,15 @@ func (s *reactService) fetchRuntimeCatalog(ctx context.Context) (runtimeCatalog,
 				routes.CanUserDockerLogs = true
 			}
 			if routes.CanUserDockerImages || routes.CanUserDockerList || routes.CanUserDockerCreate || routes.CanUserDockerStart || routes.CanUserDockerStop || routes.CanUserDockerTouch || routes.CanUserDockerSwitch || routes.CanUserDockerRemove || routes.CanUserDockerRestart || routes.CanUserDockerInspect || routes.CanUserDockerExec || routes.CanUserDockerFiles || routes.CanUserDockerExport {
-				if !containsTool(catalog.Tools, "manage_user_docker") {
-					catalog.Tools = append(catalog.Tools, toolSpec{
-						Name:        "manage_user_docker",
-						Description: "Manage user docker containers (lifecycle/scope/exec/files/artifacts)",
-						Endpoint:    "/api/v1/tools/user-dockers",
-					})
+				for _, t := range []toolSpec{
+					{Name: "docker_lifecycle", Description: "Create/start/stop/reuse workspace containers and manage images", Endpoint: "/api/v1/tools/user-dockers"},
+					{Name: "docker_exec", Description: "Run shell commands inside a container (sync/async) and tail logs", Endpoint: "/api/v1/tools/user-dockers"},
+					{Name: "docker_files", Description: "Read/write files under a container workspace", Endpoint: "/api/v1/tools/user-dockers"},
+					{Name: "export_artifact", Description: "Export a container file/directory as a downloadable artifact", Endpoint: "/api/v1/tools/user-dockers"},
+				} {
+					if !containsTool(catalog.Tools, t.Name) {
+						catalog.Tools = append(catalog.Tools, t)
+					}
 				}
 			}
 		case "logger":
@@ -2250,12 +2257,17 @@ func renderToolInventoryReply(c runtimeCatalog) string {
 	if len(c.Tools) == 0 {
 		return "我当前没有可用工具（runtime 未发现健康 tool 组件）。"
 	}
+	toolActions := map[string]string{
+		"docker_lifecycle": "list, list_images, create, start, stop, restart, remove, touch, switch_scope, get_interface, estimate_image_pull, pull_image, pull_status",
+		"docker_exec":      "exec, exec_status, logs",
+		"docker_files":     "list_files, read_file, write_file, delete_file, mkdir, move",
+	}
 	lines := []string{"我当前仅能使用以下 runtime 注册工具（不会使用未列出的工具）："}
 	for i, t := range c.Tools {
 		lines = append(lines, fmt.Sprintf("%d. `%s`", i+1, t.Name))
 		lines = append(lines, "   - "+t.Description)
-		if t.Name == "manage_user_docker" {
-			lines = append(lines, "   - actions: list_images, list, estimate_image_pull, pull_image, pull_status, create, start, stop, touch, switch_scope, remove, restart, get_interface, exec, exec_status, logs, list_files, read_file, write_file, delete_file, mkdir, move, export_artifact")
+		if acts := toolActions[t.Name]; acts != "" {
+			lines = append(lines, "   - actions: "+acts)
 		}
 	}
 	lines = append(lines, "如果你看到我提到未在上面出现的工具名称，那就是错误输出，请直接指出。")
@@ -2317,12 +2329,12 @@ func hasPendingPlanPrompt(history []sessionMessage) bool {
 func sanitizeToolResultTextForModel(raw string) string {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return truncate(raw, 4000)
+		return truncate(raw, 3000)
 	}
 	cleaned := sanitizeToolPayloadForModel(payload, "")
 	b, err := json.Marshal(cleaned)
 	if err != nil {
-		return truncate(raw, 4000)
+		return truncate(raw, 3000)
 	}
 	return string(b)
 }
@@ -2451,10 +2463,12 @@ func sanitizeAnyForModel(v any, key string, artifactExport bool) any {
 		out = append(out, fmt.Sprintf("... truncated %d items", len(val)-maxItems))
 		return out
 	case string:
-		limit := 4000
+		// ponytail: tight caps keep long tool output from drowning small-model
+		// context; the agent can re-filter with exec + grep/tail if it needs more.
+		limit := 3000
 		switch key {
 		case "stdout", "stderr", "content":
-			limit = 3000
+			limit = 2000
 		case "content_base64":
 			if artifactExport {
 				limit = 1024
@@ -2579,35 +2593,29 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 	return strings.TrimSpace(b.String())
 }
 
+// buildSystemPrompt is intentionally short: small local models only follow a
+// handful of system rules reliably, so per-action process knowledge (reuse
+// ladder, external-image approval, async exec, NOTES.md) lives in the tool
+// descriptions instead.
 func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
-		"你是 WhaleBot 的 ReAct 助手：先思考，再在必要时调用工具，最后给出简洁友好的结果。",
-		"当前可用能力由运行时实时发现：",
-		"涉及工程创建、编译、产物导出时，默认使用 manage_user_docker。",
-		"容器选择决策阶梯（按顺序考虑，选第一个可行项）：1) 先 action=list（含 include_stopped=true）查看已有容器及其 purpose，若有用途匹配的容器就复用它（stopped 的先 action=start 拉起，比新建快）；2) 无可复用容器时，用 action=list_images 从框架镜像（whalebot/*）新建；3) 只有框架镜像无法满足需求时，才考虑外部镜像。",
-		"action=create 时必须提供 purpose 参数（一句话说明用途和将安装的环境），以便后续运行判断能否复用。",
-		"复用容器前，先 action=read_file 读取该容器的 /workspace/.whalebot/NOTES.md（若存在）了解已安装的环境与接口；每次安装新环境（apt/pip/go install 等）后，用 action=write_file 追加更新 NOTES.md。",
-		"外部镜像流程：必须先 action=estimate_image_pull 预估下载流量，把预估大小（MB/GB）告知用户并征得明确同意；用户同意后再带 external_image_approved_by_user=true 执行 create 或 action=pull_image。绝不在未同意时拉取外部镜像。",
-		"耗时较长的命令（依赖安装、编译、下载）用 action=exec 并设 async=true，拿到 job_id 后用 action=exec_status 轮询，避免请求超时。",
-		"排查长期运行的服务容器时，可用 action=logs 查看容器日志。",
-		"create 返回的 name 可能带 session 后缀，后续所有操作必须使用返回的真实 name。",
-		"Go 编译任务优先使用 whalebot/userdocker-golang:latest；如列表中不存在该镜像，先告知用户并请求确认下一步。",
-		"当关键结果（例如编译日志、访问结果、产物导出结果）已拿到时，立即停止继续调用工具并输出最终回复。",
-		"当 export_artifact 已返回成功时，不要再次调用 export_artifact；应直接总结并回复用户。",
-		"你绝对不能虚构任何工具名。只能使用和描述当前 runtime 显示的工具清单；禁止提及未注册工具。",
-		"Language: match the user's primary language in the latest user message for the user-visible reply (Chinese if they wrote Chinese, English if English; mixed → follow the dominant language).",
-		"When the request is underspecified: in a single reply, briefly state your best guess at intent, ask any needed follow-up in one combined sentence (avoid multi-step questionnaires), and if a guessed action is very low-cost and side-effect free (e.g. stating readiness or read-only capability), you may include it alongside the question. Do not start high-impact work (containers, exec, writes, deploy) without clarity or without plan-first when the runtime requires it.",
-		"When the user message is very short or lacks a clear object, do NOT use a numbered \"execution plan\" plus \"是否按此计划执行？\" unless the user explicitly asked for a written plan or the runtime has injected plan-first instructions in this turn.",
-		"Secrets: use list_secrets to discover available secret keys. Reference secrets with {{secret:key_name}} in exec command_sh/env or write_file content_base64. The runtime resolves these placeholders transparently — the raw value never enters your context. Do NOT attempt to read or echo secret values in your reply.",
+		"你是 WhaleBot 的 ReAct 助手：先思考，必要时调用工具，最后给出简洁友好的回复。",
+		"工程创建、编译、运行、产物导出一律通过 docker_* 工具在容器里完成；具体流程规则见各工具描述，严格遵循。",
+		"拿到关键结果（编译日志、运行输出、导出成功）后立即停止调用工具并输出最终回复；export_artifact 成功后不要重复导出。",
+		"只能使用下方列出的工具，绝不虚构工具名。",
+		"用户可见回复的语言跟随用户最新消息的主要语言（中文则中文，英文则英文）。",
+		"需求不明确时：一次性说出你对意图的最佳猜测并合并成一句追问；未澄清前不要开始高影响操作（建容器、exec、写文件、部署）。用户消息很短时不要主动输出编号计划加“是否按此计划执行？”，除非本轮已注入 plan-first 指令。",
+		"Secrets: use list_secrets to discover keys; reference them as {{secret:key_name}} in exec command_sh/env or file content — the runtime resolves placeholders transparently. Never try to read or echo secret values.",
 	}
 	if len(c.Tools) == 0 {
-		lines = append(lines, "- 暂无可用 tool，只能直接回答。")
+		lines = append(lines, "当前暂无可用工具，只能直接回答。")
 		return joinLines(lines)
 	}
+	lines = append(lines, "当前可用工具：")
 	for _, t := range c.Tools {
-		lines = append(lines, fmt.Sprintf("- tool `%s`: %s (endpoint: %s)", t.Name, t.Description, t.Endpoint))
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", t.Name, t.Description))
 	}
-	lines = append(lines, "只有在用户需求明确时才调用工具；调用失败时需解释原因并给出下一步建议。")
+	lines = append(lines, "只有在用户需求明确时才调用工具；调用失败时解释原因并给出下一步建议。")
 	return joinLines(lines)
 }
 

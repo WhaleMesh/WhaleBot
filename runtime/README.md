@@ -29,6 +29,7 @@ last_verified_from:
 - Runs the ReAct loop for chat requests.
 - Dynamically discovers healthy tool components from orchestrator before each run.
 - Calls `llm-openai` with dynamically built tool definitions and executes returned tool calls.
+- The user-docker capability is exposed to the model as four focused tools (`docker_lifecycle`, `docker_exec`, `docker_files`, `export_artifact`) with narrow schemas so small local models select tools reliably; all four normalize to the single internal `manage_user_docker` dispatch path (logger events keep `tool_name=manage_user_docker`).
 - Persists final user+assistant pair into `session`.
 - Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.
 - For execution-oriented requests, first returns an execution plan and asks user confirmation before running tools.
@@ -118,6 +119,14 @@ required: false
 effect: max_iterations_before_runtime_forces_text_finalization
 ```
 
+### RUNTIME_MAX_TOKENS
+```yaml
+name: RUNTIME_MAX_TOKENS
+default: "4096"
+required: false
+effect: per_step_completion_token_budget_including_reasoning_tokens
+```
+
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL
@@ -191,7 +200,7 @@ internal_tool_name_map:
 ## Change Safety
 - Keep `POST /run` schema aligned with orchestrator `/api/v1/chat` payload.
 - Do not remove session writeback (`append_messages`) or chat history continuity breaks.
-- Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync.
+- Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync. Model-facing names are the four split docker tools; `normalizeDockerToolCall` maps them (and injects default actions) onto `manage_user_docker` before gating/dispatch/logging.
 - Tool event fields (`trace_id`, `session_id`, `module`, `phase`, `tool_name`, `tool_call_id`, `step`, `duration_ms`, `args`, `result`) are consumed by Logger diagnostics; keep them stable.
 - For `manage_user_docker(action=create)`, prefer framework images by default; external image pull must follow explicit user approval.
 - Container selection ladder: reuse an existing container (`action=list`, matched by its `purpose`) before creating from a framework image, and only pull an external image after `estimate_image_pull` + user approval.
