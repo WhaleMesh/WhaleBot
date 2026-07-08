@@ -17,20 +17,72 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
+// execJob holds the state of one async exec invocation. ponytail: kept fully
+// in-memory, so results are lost on container restart and the map only grows
+// until swept; upgrade path is a small on-disk/SQLite store if durability is
+// ever needed.
+type execJob struct {
+	Done       bool   `json:"done"`
+	ExitCode   int    `json:"exit_code"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	Err        string `json:"error,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+	StartedAt  time.Time
+}
+
+type jobStore struct {
+	mu   sync.Mutex
+	jobs map[string]*execJob
+}
+
+func newJobStore() *jobStore { return &jobStore{jobs: map[string]*execJob{}} }
+
+func (s *jobStore) create(id string) *execJob {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Sweep jobs older than 1h to bound memory.
+	for k, j := range s.jobs {
+		if j.Done && time.Since(j.StartedAt) > time.Hour {
+			delete(s.jobs, k)
+		}
+	}
+	j := &execJob{StartedAt: time.Now()}
+	s.jobs[id] = j
+	return j
+}
+
+func (s *jobStore) get(id string) (*execJob, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j, ok := s.jobs[id]
+	return j, ok
+}
+
+func (s *jobStore) update(id string, fn func(*execJob)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if j, ok := s.jobs[id]; ok {
+		fn(j)
+	}
+}
+
 type registerRequest struct {
-	Name             string            `json:"name"`
-	Type             string            `json:"type"`
-	Version          string            `json:"version"`
-	Endpoint         string            `json:"endpoint"`
-	HealthEndpoint   string            `json:"health_endpoint"`
-	StatusEndpoint   string            `json:"status_endpoint,omitempty"`
-	Capabilities     []string          `json:"capabilities"`
-	Meta             map[string]string `json:"meta"`
+	Name           string            `json:"name"`
+	Type           string            `json:"type"`
+	Version        string            `json:"version"`
+	Endpoint       string            `json:"endpoint"`
+	HealthEndpoint string            `json:"health_endpoint"`
+	StatusEndpoint string            `json:"status_endpoint,omitempty"`
+	Capabilities   []string          `json:"capabilities"`
+	Meta           map[string]string `json:"meta"`
 }
 
 type interfaceEndpoint struct {
@@ -71,6 +123,7 @@ func main() {
 	orchURL := getenv("ORCHESTRATOR_URL", "")
 	workspaceRoot := getenv("WORKSPACE_ROOT", "/workspace")
 	_ = os.MkdirAll(workspaceRoot, 0o755)
+	jobs := newJobStore()
 	self := "http://" + name + ":" + port
 	intf := interfaceDescriptor{
 		InterfaceVersion: "userdocker.v1",
@@ -81,10 +134,11 @@ func main() {
 			{Method: "GET", Path: "/", Description: "Basic service info output."},
 			{Method: "GET", Path: "/health", Description: "Health probe endpoint."},
 			{Method: "GET", Path: "/api/v1/userdocker/interface", Description: "Returns public userdocker interface descriptor."},
-			{Method: "POST", Path: "/api/v1/userdocker/exec", Description: "Executes a command inside userdocker workspace."},
+			{Method: "POST", Path: "/api/v1/userdocker/exec", Description: "Executes a command inside userdocker workspace. Pass async=true for long-running jobs and poll exec/status."},
+			{Method: "GET", Path: "/api/v1/userdocker/exec/status", Description: "Returns status/result of an async exec job by job_id."},
 			{Method: "GET", Path: "/api/v1/userdocker/files", Description: "Lists files under workspace path."},
 			{Method: "GET", Path: "/api/v1/userdocker/file", Description: "Reads a file from workspace and returns base64 content."},
-			{Method: "PUT", Path: "/api/v1/userdocker/file", Description: "Writes a base64 payload to workspace file path."},
+			{Method: "PUT", Path: "/api/v1/userdocker/file", Description: "Writes a file to workspace; accepts content_base64 or plain content."},
 			{Method: "DELETE", Path: "/api/v1/userdocker/file", Description: "Deletes a file or directory from workspace path."},
 			{Method: "POST", Path: "/api/v1/userdocker/files/mkdir", Description: "Creates a directory inside workspace."},
 			{Method: "POST", Path: "/api/v1/userdocker/files/move", Description: "Moves or renames path inside workspace."},
@@ -126,6 +180,7 @@ func main() {
 			Cwd       string            `json:"cwd"`
 			Env       map[string]string `json:"env"`
 			Timeout   int               `json:"timeout_sec"`
+			Async     bool              `json:"async"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, 200, jsonResp{"success": false, "error": "invalid json: " + err.Error()})
@@ -140,6 +195,37 @@ func main() {
 			writeJSON(w, 200, jsonResp{"success": false, "error": err.Error()})
 			return
 		}
+		// Sync path clamps to 300s (bounded by the manager HTTP client). Async
+		// path allows long installs/builds (default 30m, hard cap 2h) and returns
+		// a job id the caller polls via exec/status.
+		if req.Async {
+			timeout := req.Timeout
+			if timeout <= 0 {
+				timeout = 1800
+			}
+			if timeout > 7200 {
+				timeout = 7200
+			}
+			jobID := "exec-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+			jobs.create(jobID)
+			go func() {
+				runCtx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+				defer cancel()
+				stdout, stderr, exitCode, runErr := runExecCommand(runCtx, dir, req.Command, req.CommandSh, req.Env)
+				jobs.update(jobID, func(j *execJob) {
+					j.Done = true
+					j.ExitCode = exitCode
+					j.Stdout = stdout
+					j.Stderr = stderr
+					j.DurationMS = time.Since(j.StartedAt).Milliseconds()
+					if runErr != nil {
+						j.Err = runErr.Error()
+					}
+				})
+			}()
+			writeJSON(w, 200, jsonResp{"success": true, "async": true, "job_id": jobID})
+			return
+		}
 		timeout := req.Timeout
 		if timeout <= 0 {
 			timeout = 20
@@ -149,41 +235,42 @@ func main() {
 		}
 		runCtx, cancel := context.WithTimeout(r.Context(), time.Duration(timeout)*time.Second)
 		defer cancel()
-		var cmd *exec.Cmd
-		if strings.TrimSpace(req.CommandSh) != "" {
-			cmd = exec.CommandContext(runCtx, "sh", "-lc", req.CommandSh)
-		} else {
-			cmd = exec.CommandContext(runCtx, req.Command[0], req.Command[1:]...)
-		}
-		cmd.Dir = dir
-		cmd.Env = os.Environ()
-		for k, v := range req.Env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
 		start := time.Now()
-		err = cmd.Run()
-		exitCode := 0
-		if err != nil {
-			if ee, ok := err.(*exec.ExitError); ok {
-				exitCode = ee.ExitCode()
-			} else if runCtx.Err() != nil {
-				exitCode = 124
-			} else {
-				exitCode = 1
-			}
-		}
+		stdout, stderr, exitCode, runErr := runExecCommand(runCtx, dir, req.Command, req.CommandSh, req.Env)
 		resp := jsonResp{
-			"success":     err == nil,
-			"stdout":      stdout.String(),
-			"stderr":      stderr.String(),
+			"success":     runErr == nil,
+			"stdout":      stdout,
+			"stderr":      stderr,
 			"exit_code":   exitCode,
 			"duration_ms": time.Since(start).Milliseconds(),
 		}
-		if err != nil {
-			resp["error"] = err.Error()
+		if runErr != nil {
+			resp["error"] = runErr.Error()
+		}
+		writeJSON(w, 200, resp)
+	})
+	mux.HandleFunc("/api/v1/userdocker/exec/status", func(w http.ResponseWriter, r *http.Request) {
+		jobID := r.URL.Query().Get("job_id")
+		if strings.TrimSpace(jobID) == "" {
+			writeJSON(w, 200, jsonResp{"success": false, "error": "job_id is required"})
+			return
+		}
+		j, ok := jobs.get(jobID)
+		if !ok {
+			writeJSON(w, 200, jsonResp{"success": false, "error": "unknown job_id"})
+			return
+		}
+		resp := jsonResp{
+			"success":     true,
+			"job_id":      jobID,
+			"done":        j.Done,
+			"exit_code":   j.ExitCode,
+			"stdout":      j.Stdout,
+			"stderr":      j.Stderr,
+			"duration_ms": j.DurationMS,
+		}
+		if j.Err != "" {
+			resp["error"] = j.Err
 		}
 		writeJSON(w, 200, resp)
 	})
@@ -244,6 +331,7 @@ func main() {
 			var req struct {
 				Path          string `json:"path"`
 				ContentBase64 string `json:"content_base64"`
+				Content       string `json:"content"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeJSON(w, 200, jsonResp{"success": false, "error": "invalid json: " + err.Error()})
@@ -254,10 +342,15 @@ func main() {
 				writeJSON(w, 200, jsonResp{"success": false, "error": err.Error()})
 				return
 			}
-			raw, err := base64.StdEncoding.DecodeString(req.ContentBase64)
-			if err != nil {
-				writeJSON(w, 200, jsonResp{"success": false, "error": "invalid content_base64: " + err.Error()})
-				return
+			var raw []byte
+			if req.ContentBase64 != "" {
+				raw, err = base64.StdEncoding.DecodeString(req.ContentBase64)
+				if err != nil {
+					writeJSON(w, 200, jsonResp{"success": false, "error": "invalid content_base64: " + err.Error()})
+					return
+				}
+			} else {
+				raw = []byte(req.Content)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				writeJSON(w, 200, jsonResp{"success": false, "error": err.Error()})
@@ -403,6 +496,34 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func runExecCommand(ctx context.Context, dir string, command []string, commandSh string, env map[string]string) (stdout, stderr string, exitCode int, err error) {
+	var cmd *exec.Cmd
+	if strings.TrimSpace(commandSh) != "" {
+		cmd = exec.CommandContext(ctx, "sh", "-lc", commandSh)
+	} else {
+		cmd = exec.CommandContext(ctx, command[0], command[1:]...)
+	}
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else if ctx.Err() != nil {
+			exitCode = 124
+		} else {
+			exitCode = 1
+		}
+	}
+	return outBuf.String(), errBuf.String(), exitCode, err
 }
 
 func resolveWorkspacePath(root, in string) (string, error) {

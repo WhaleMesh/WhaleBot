@@ -74,8 +74,8 @@ func (h *HealthChecker) checkOne(ctx context.Context, c *Component) {
 }
 
 type statusPayload struct {
-	Service            string `json:"service"`
-	OperationalState   string `json:"operational_state"`
+	Service          string `json:"service"`
+	OperationalState string `json:"operational_state"`
 }
 
 func (h *HealthChecker) pollStatus(ctx context.Context, name, statusURL string) {

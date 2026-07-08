@@ -78,6 +78,9 @@ error_behavior:
 - `ORCHESTRATOR_URL`:
   - `GET /api/v1/components` for runtime capability discovery
   - `GET /api/v1/tools/user-dockers/images` for `manage_user_docker(action=list_images)`
+  - `GET /api/v1/tools/user-dockers/images/estimate` for `manage_user_docker(action=estimate_image_pull)`
+  - `POST /api/v1/tools/user-dockers/pull` for `manage_user_docker(action=pull_image)`
+  - `GET /api/v1/tools/user-dockers/pull/status` for `manage_user_docker(action=pull_status)`
   - `POST /api/v1/tools/user-dockers` for `manage_user_docker(action=create)`
   - `GET /api/v1/tools/user-dockers` for `manage_user_docker(action=list)`
   - `POST /api/v1/tools/user-dockers/{name}/start` for `manage_user_docker(action=start)`
@@ -88,6 +91,8 @@ error_behavior:
   - `POST /api/v1/tools/user-dockers/{name}/restart` for `manage_user_docker(action=restart)`
   - `GET /api/v1/tools/user-dockers/{name}/interface` for `manage_user_docker(action=get_interface)`
   - `POST /api/v1/tools/user-dockers/{name}/exec` for `manage_user_docker(action=exec)`
+  - `GET /api/v1/tools/user-dockers/{name}/exec/status` for `manage_user_docker(action=exec_status)`
+  - `GET /api/v1/tools/user-dockers/{name}/logs` for `manage_user_docker(action=logs)`
   - `/api/v1/tools/user-dockers/{name}/file(s)*` for file CRUD/mkdir/move
   - `GET /api/v1/tools/user-dockers/{name}/artifacts/export` for `manage_user_docker(action=export_artifact)`
   - `POST /api/v1/components/register` for self-registration
@@ -164,6 +169,9 @@ query_to_endpoint:
 internal_tool_name_map:
   manage_user_docker:
     list_images: GET /api/v1/tools/user-dockers/images
+    estimate_image_pull: GET /api/v1/tools/user-dockers/images/estimate
+    pull_image: POST /api/v1/tools/user-dockers/pull
+    pull_status: GET /api/v1/tools/user-dockers/pull/status
     list: GET /api/v1/tools/user-dockers
     create: POST /api/v1/tools/user-dockers
     start: POST /api/v1/tools/user-dockers/{name}/start
@@ -173,7 +181,9 @@ internal_tool_name_map:
     remove: DELETE /api/v1/tools/user-dockers/{name}
     restart: POST /api/v1/tools/user-dockers/{name}/restart
     get_interface: GET /api/v1/tools/user-dockers/{name}/interface
-    exec: POST /api/v1/tools/user-dockers/{name}/exec
+    exec: POST /api/v1/tools/user-dockers/{name}/exec (async=true -> job_id)
+    exec_status: GET /api/v1/tools/user-dockers/{name}/exec/status
+    logs: GET /api/v1/tools/user-dockers/{name}/logs
     files: /api/v1/tools/user-dockers/{name}/file(s)*
     export_artifact: GET /api/v1/tools/user-dockers/{name}/artifacts/export
 ```
@@ -184,3 +194,7 @@ internal_tool_name_map:
 - Tool names are runtime-discovered contracts; keep dispatcher and tool schema in sync.
 - Tool event fields (`trace_id`, `session_id`, `module`, `phase`, `tool_name`, `tool_call_id`, `step`, `duration_ms`, `args`, `result`) are consumed by Logger diagnostics; keep them stable.
 - For `manage_user_docker(action=create)`, prefer framework images by default; external image pull must follow explicit user approval.
+- Container selection ladder: reuse an existing container (`action=list`, matched by its `purpose`) before creating from a framework image, and only pull an external image after `estimate_image_pull` + user approval.
+- `action=create` should pass `purpose`; the agent maintains `/workspace/.whalebot/NOTES.md` in each container to record installed environments for future reuse.
+- Long installs/builds use `action=exec` with `async=true` + `action=exec_status` polling to avoid HTTP timeouts.
+- Plan-gate hard confirmation (when `restrict_mutating_tools` is on) now only blocks high-risk actions: `remove`, `delete_file`, `pull_image`, and `create` with a non-framework image; routine mutations (framework-image create, exec, writes) stay fluid.

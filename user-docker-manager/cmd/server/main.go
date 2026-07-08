@@ -117,6 +117,84 @@ func main() {
 		})
 	})
 
+	r.Get("/api/v1/user-dockers/images/estimate", func(w http.ResponseWriter, req *http.Request) {
+		ref := strings.TrimSpace(req.URL.Query().Get("ref"))
+		if ref == "" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "ref is required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		est, err := cr.EstimateImagePull(ctx, ref)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "estimate": est})
+	})
+
+	r.Post("/api/v1/user-dockers/pull", func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			Ref                         string `json:"ref"`
+			ExternalImageApprovedByUser bool   `json:"external_image_approved_by_user"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "invalid json: " + err.Error()})
+			return
+		}
+		ref := strings.TrimSpace(body.Ref)
+		if ref == "" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "ref is required"})
+			return
+		}
+		if !strings.HasPrefix(ref, "whalebot/") && !body.ExternalImageApprovedByUser {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "external image pull requires external_image_approved_by_user=true"})
+			return
+		}
+		jobID := cr.StartPull(ref)
+		writeJSON(w, 200, map[string]any{"success": true, "job_id": jobID, "ref": ref})
+	})
+
+	r.Get("/api/v1/user-dockers/pull/status", func(w http.ResponseWriter, req *http.Request) {
+		jobID := strings.TrimSpace(req.URL.Query().Get("job_id"))
+		if jobID == "" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "job_id is required"})
+			return
+		}
+		job, ok := cr.PullStatus(jobID)
+		if !ok {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "unknown job_id"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "job": job})
+	})
+
+	r.Get("/api/v1/user-dockers/{name}/logs", func(w http.ResponseWriter, req *http.Request) {
+		name := chi.URLParam(req, "name")
+		tail := 0
+		if raw := req.URL.Query().Get("tail"); raw != "" {
+			tail, _ = strconv.Atoi(raw)
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		meta, err := cr.ContainerMeta(ctx, name)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		sessionID := requestSessionID(req, nil)
+		if err := authorizeSession(meta, sessionID); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		logs, err := cr.Logs(ctx, name, tail)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "name": name, "logs": logs})
+	})
+
 	r.Get("/api/v1/user-dockers", func(w http.ResponseWriter, req *http.Request) {
 		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
 		defer cancel()
@@ -417,6 +495,16 @@ func main() {
 		proxyUserDockerJSON(ctx, w, req, cr, name, sessionID, http.MethodPost, "/api/v1/userdocker/exec", payload)
 	})
 
+	r.Get("/api/v1/user-dockers/{name}/exec/status", func(w http.ResponseWriter, req *http.Request) {
+		name := chi.URLParam(req, "name")
+		sessionID := requestSessionID(req, nil)
+		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		jobID := req.URL.Query().Get("job_id")
+		targetPath := "/api/v1/userdocker/exec/status?job_id=" + url.QueryEscape(jobID)
+		proxyUserDockerRaw(ctx, w, req, cr, name, sessionID, http.MethodGet, targetPath, nil)
+	})
+
 	r.Get("/api/v1/user-dockers/{name}/files", func(w http.ResponseWriter, req *http.Request) {
 		name := chi.URLParam(req, "name")
 		sessionID := requestSessionID(req, nil)
@@ -522,14 +610,17 @@ func main() {
 			"userdocker_artifact_export",
 			"userdocker_interface_contract",
 			"userdocker_images",
+			"userdocker_images_estimate",
+			"userdocker_pull",
+			"userdocker_logs",
 			"userdocker_interface_discovery",
 			"userdocker_touch_creator",
 		},
 		Meta: map[string]string{
-			"default_image":               defaultImage,
+			"default_image":             defaultImage,
 			"default_network":           defaultNet,
-			"contract_version":            "userdocker.v1",
-			"userdocker_temp_ttl_sec":     strconv.Itoa(tempTTLSec),
+			"contract_version":          "userdocker.v1",
+			"userdocker_temp_ttl_sec":   strconv.Itoa(tempTTLSec),
 			"userdocker_idle_check_sec": strconv.Itoa(idleCheckValue),
 		},
 	})

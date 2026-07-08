@@ -51,18 +51,29 @@ func TestParsePlanGateResponse_invalid(t *testing.T) {
 	}
 }
 
-func TestIsMutatingDockerAction(t *testing.T) {
+func TestIsHighRiskDockerAction(t *testing.T) {
 	t.Parallel()
-	readonly := []string{"list_images", "list", "get_interface", "list_files", "read_file", "touch"}
-	for _, a := range readonly {
-		if isMutatingDockerAction(a) {
-			t.Fatalf("%q should not be mutating", a)
+	// Always high-risk regardless of args.
+	for _, a := range []string{"remove", "delete_file", "pull_image"} {
+		if !isHighRiskDockerAction(a, `{}`) {
+			t.Fatalf("%q should be high risk", a)
 		}
 	}
-	mut := []string{"create", "exec", "write_file", "remove", "export_artifact", ""}
-	for _, a := range mut {
-		if !isMutatingDockerAction(a) {
-			t.Fatalf("%q should be mutating", a)
+	// create with framework/default image is low risk (fluid).
+	if isHighRiskDockerAction("create", `{"image":"whalebot/userdocker-golang:latest"}`) {
+		t.Fatal("framework image create should not be high risk")
+	}
+	if isHighRiskDockerAction("create", `{}`) {
+		t.Fatal("default image create should not be high risk")
+	}
+	// create with external image is high risk.
+	if !isHighRiskDockerAction("create", `{"image":"python:3.12"}`) {
+		t.Fatal("external image create should be high risk")
+	}
+	// Routine mutations stay fluid.
+	for _, a := range []string{"exec", "write_file", "start", "export_artifact"} {
+		if isHighRiskDockerAction(a, `{}`) {
+			t.Fatalf("%q should not be high risk", a)
 		}
 	}
 }

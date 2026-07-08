@@ -79,9 +79,11 @@ error_behavior: standard_http_status
 ### Endpoint Group: Workspace command and file APIs
 ```yaml
 exec: POST /api/v1/userdocker/exec
+exec_note: body accepts async=true -> returns {job_id}; sync path clamps timeout to 300s, async caps at 7200s
+exec_status: GET /api/v1/userdocker/exec/status?job_id=<id>
 files_list: GET /api/v1/userdocker/files?path=.
 file_read: GET /api/v1/userdocker/file?path=...
-file_write: PUT /api/v1/userdocker/file
+file_write: PUT /api/v1/userdocker/file (body: content_base64 OR plain content)
 file_delete: DELETE /api/v1/userdocker/file?path=...
 mkdir: POST /api/v1/userdocker/files/mkdir
 move: POST /api/v1/userdocker/files/move

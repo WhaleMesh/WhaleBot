@@ -70,7 +70,8 @@ Read this first, then read only the referenced source-of-truth files.
   - note: defaults `REACT_MAX_STEPS` to 16 and forces a final text-only completion attempt at the last step
   - note: truncates oversized tool payload fields (for example `content_base64`/large stdout) before feeding tool outputs back to model context
   - note: emits structured runtime + tool trace events (`runtime_run_*`, `react_*`, `tool_call_*`) and writes to `logger` when available; when `stats` (`stats_ingest`) is healthy, also posts batched overview metrics to `stats` `POST /events` (messages on successful session append, `tool_call` per tool start, `tokens` on `runtime_run_completed` when usage is present)
-  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `llm-openai` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; mutating `manage_user_docker` actions are blocked until the user message matches plan confirmation (`isPlanConfirmationMessage`) when restriction is on
+  - note: each `/run` does a low-`max_tokens` structured **plan_gate** call to `llm-openai` (unless `RUNTIME_PLAN_GATE=legacy_keyword`) to set `inject_plan_only` + `restrict_mutating_tools`; when restriction is on, only **high-risk** `manage_user_docker` actions are hard-blocked until plan confirmation (`isPlanConfirmationMessage`): `remove`, `delete_file`, `pull_image`, and `create` with a non-framework image. Routine mutations (framework-image create, exec, writes) stay fluid
+ - note: `manage_user_docker` container-selection guidance in the system prompt is a decision ladder — reuse an existing container (matched by its `purpose` from `action=list`) before creating from a framework image, and only pull external images after `estimate_image_pull` + explicit user approval; agents record installed environments in each container's `/workspace/.whalebot/NOTES.md`. Long installs/builds use `action=exec` `async=true` + `action=exec_status` polling
   - note: successful `export_artifact` tool results can be returned as chat attachments (`filename`, `content_base64`)
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
@@ -123,6 +124,10 @@ Read this first, then read only the referenced source-of-truth files.
   - note: session-scoped container names append a sanitized `session_id` suffix to reduce naming conflicts across runs
   - note: `session_scoped` containers store `whalebot.userdocker.creator_session_id` (same as create-time `session_id`); **any** request that supplies `session_id` may operate them (no per-container session ownership check); temporary removal TTL from `USERDOCKER_TEMP_TTL_SEC` (or `USERDOCKER_IDLE_HOURS*3600`); `POST /api/v1/user-dockers/touch-creator-session` touches all temp dockers for a creator `session_id`
   - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for `session_scoped` containers; `global_service` is not subject to this sweeper
+ - note: `create` accepts a `purpose` string stored as label `whalebot.userdocker.purpose` and echoed in `GET /api/v1/user-dockers` (`purpose` field) so agents can decide whether to reuse a container
+ - note: `POST /api/v1/user-dockers/pull` starts an **async** image pull (background, 30m cap) returning `job_id`; poll `GET …/pull/status`. `GET …/images/estimate?ref=` returns an upper-bound compressed download size from the registry manifest (docker.io anonymous only; other registries return a note). External refs require `external_image_approved_by_user=true`
+ - note: `GET /api/v1/user-dockers/{name}/logs?tail=N` returns demuxed container stdout/stderr; `POST …/exec` accepts `async=true` (returns `job_id`, poll `GET …/exec/status`) for long installs/builds
+ - note: capabilities add `userdocker_images_estimate`, `userdocker_pull`, `userdocker_logs`
 - `logger`
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`
@@ -175,7 +180,7 @@ Read this first, then read only the referenced source-of-truth files.
   - entry: `userdocker-base/main.go`
   - compose behavior: `sleep infinity` placeholder container
   - note: exposes public descriptor `GET /api/v1/userdocker/interface` (contract `userdocker.v1`)
-  - note: implements workspace APIs (`/exec`, `/files`, `/file`, `/files/mkdir`, `/files/move`, `/artifacts/export`)
+  - note: implements workspace APIs (`/exec`, `/exec/status`, `/files`, `/file`, `/files/mkdir`, `/files/move`, `/artifacts/export`); `/exec` supports `async=true` (job id + `/exec/status` polling); `/file` PUT accepts `content_base64` or plain `content`
 - `userdocker-golang`
   - purpose: Go toolchain image for spawned `userdocker` compile/build tasks
   - build source: `userdocker-base/Dockerfile` with Go final base image
@@ -234,8 +239,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `type=tool` + capabilities `userdocker_*` -> tool `manage_user_docker` (endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
-- `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, and artifact export.
-- `manage_user_docker` should query available framework images via `action=list_images` before `action=create`.
+- `manage_user_docker` runtime actions include lifecycle (`start/stop/touch/switch_scope`), workspace commands/files, artifact export, plus `estimate_image_pull`, `pull_image`, `pull_status`, `exec_status`, `logs`.
+- container-selection ladder: `action=list` (reuse a container matched by its `purpose`) → `action=list_images` + `create` from a framework image → external image only after `estimate_image_pull` + user approval. `create` passes a `purpose`; agents keep `/workspace/.whalebot/NOTES.md` per container to record installed envs.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
 - runtime no longer relies on `environment`-type execution capability; build/run flows use `manage_user_docker`.
 - Degrade behavior:

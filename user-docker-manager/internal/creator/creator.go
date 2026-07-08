@@ -25,6 +25,7 @@ const (
 type CreateRequest struct {
 	Name                        string            `json:"name"`
 	Image                       string            `json:"image"`
+	Purpose                     string            `json:"purpose,omitempty"`
 	Cmd                         []string          `json:"cmd"`
 	Env                         map[string]string `json:"env"`
 	Labels                      map[string]string `json:"labels"`
@@ -55,6 +56,7 @@ type ContainerSummary struct {
 	Scope        string            `json:"scope,omitempty"`
 	SessionID    string            `json:"session_id,omitempty"`
 	Workspace    string            `json:"workspace,omitempty"`
+	Purpose      string            `json:"purpose,omitempty"`
 	LastActiveAt string            `json:"last_active_at,omitempty"`
 }
 
@@ -102,6 +104,14 @@ var requiredInterface = InterfaceDescriptor{
 	},
 }
 
+// PullJob tracks the state of an asynchronous image pull.
+type PullJob struct {
+	Ref       string    `json:"ref"`
+	Done      bool      `json:"done"`
+	Err       string    `json:"error,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+}
+
 // Creator talks to the Docker Engine HTTP API over a Unix socket. Using raw
 // HTTP avoids pulling in the heavyweight docker SDK and its transitive Go
 // version constraints.
@@ -116,6 +126,8 @@ type Creator struct {
 	AllowedImages   map[string]struct{}
 	mu              sync.RWMutex
 	lastActive      map[string]time.Time
+	pullMu          sync.Mutex
+	pullJobs        map[string]*PullJob
 }
 
 func New(defaultImage, defaultNetwork, orchestratorURL string, allowedImages []string) (*Creator, error) {
@@ -147,6 +159,7 @@ func New(defaultImage, defaultNetwork, orchestratorURL string, allowedImages []s
 		OrchestratorURL: orchestratorURL,
 		AllowedImages:   allowed,
 		lastActive:      map[string]time.Time{},
+		pullJobs:        map[string]*PullJob{},
 	}, nil
 }
 
@@ -289,6 +302,9 @@ func (c *Creator) Create(ctx context.Context, req CreateRequest) (CreateResult, 
 	labels["whalebot.userdocker.scope"] = scope
 	labels["whalebot.userdocker.workspace"] = workspace
 	labels["whalebot.userdocker.last_active_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if p := strings.TrimSpace(req.Purpose); p != "" {
+		labels["whalebot.userdocker.purpose"] = truncateLabel(p, 400)
+	}
 	if scope == ScopeSessionScoped {
 		labels["whalebot.userdocker.session_id"] = req.SessionID
 		labels["whalebot.userdocker.creator_session_id"] = req.SessionID
@@ -517,6 +533,7 @@ func (c *Creator) List(ctx context.Context, includeStopped bool) ([]ContainerSum
 			Scope:        scope,
 			SessionID:    item.Labels["whalebot.userdocker.session_id"],
 			Workspace:    item.Labels["whalebot.userdocker.workspace"],
+			Purpose:      item.Labels["whalebot.userdocker.purpose"],
 			LastActiveAt: lastActive,
 		})
 	}
@@ -546,6 +563,64 @@ func (c *Creator) Remove(ctx context.Context, name string, force bool) error {
 	}
 	c.clearLastActive(name)
 	return nil
+}
+
+// Logs returns the most recent container stdout/stderr. Docker multiplexes the
+// two streams with an 8-byte header per frame when the container has no TTY;
+// we strip those headers so callers get readable text.
+func (c *Creator) Logs(ctx context.Context, name string, tail int) (string, error) {
+	if name == "" {
+		return "", errors.New("name is required")
+	}
+	if _, err := c.inspectManaged(ctx, name); err != nil {
+		return "", err
+	}
+	if tail <= 0 || tail > 2000 {
+		tail = 200
+	}
+	logsURL := fmt.Sprintf("%s/containers/%s/logs?stdout=1&stderr=1&tail=%d",
+		c.baseURL, url.PathEscape(name), tail)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logsURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return "", dockerAPIError("container logs", resp.StatusCode, body)
+	}
+	return demuxDockerStream(body), nil
+}
+
+// demuxDockerStream strips Docker's 8-byte multiplexing headers. If the payload
+// doesn't look framed (e.g. TTY containers), it is returned unchanged.
+func demuxDockerStream(raw []byte) string {
+	var b strings.Builder
+	i := 0
+	for i+8 <= len(raw) {
+		streamType := raw[i]
+		if streamType > 2 {
+			// Not a valid frame header; treat the rest as plain text.
+			b.Write(raw[i:])
+			return b.String()
+		}
+		size := int(raw[i+4])<<24 | int(raw[i+5])<<16 | int(raw[i+6])<<8 | int(raw[i+7])
+		i += 8
+		if size < 0 || i+size > len(raw) {
+			b.Write(raw[i:])
+			break
+		}
+		b.Write(raw[i : i+size])
+		i += size
+	}
+	if b.Len() == 0 {
+		return string(raw)
+	}
+	return b.String()
 }
 
 func (c *Creator) Restart(ctx context.Context, name string, timeoutSec int) error {
@@ -712,6 +787,7 @@ func (c *Creator) SwitchScope(ctx context.Context, name, targetScope, sessionID 
 	createReq := CreateRequest{
 		Name:         name,
 		Image:        meta.Config.Image,
+		Purpose:      meta.Config.Labels["whalebot.userdocker.purpose"],
 		Cmd:          meta.Config.Cmd,
 		Env:          envMap,
 		Labels:       labels,
@@ -967,6 +1043,221 @@ func (c *Creator) ensureImage(ctx context.Context, ref string) error {
 	return nil
 }
 
+// ImageExistsLocally reports whether the image tag is already present, so the
+// caller can skip pull/estimate flows.
+func (c *Creator) ImageExistsLocally(ctx context.Context, ref string) bool {
+	inspectURL := c.baseURL + "/images/" + url.PathEscape(ref) + "/json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, inspectURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
+}
+
+// PullEstimate is the download-size estimate for an external image.
+type PullEstimate struct {
+	Ref             string `json:"ref"`
+	AlreadyLocal    bool   `json:"already_local"`
+	CompressedBytes int64  `json:"compressed_bytes"`
+	LayerCount      int    `json:"layer_count"`
+	Note            string `json:"note"`
+}
+
+type manifestLayer struct {
+	Size int64 `json:"size"`
+}
+
+type imageManifest struct {
+	Config    manifestLayer   `json:"config"`
+	Layers    []manifestLayer `json:"layers"`
+	Manifests []struct {
+		Digest   string `json:"digest"`
+		Platform struct {
+			OS           string `json:"os"`
+			Architecture string `json:"architecture"`
+		} `json:"platform"`
+	} `json:"manifests"`
+}
+
+// EstimateImagePull queries the registry manifest for an image and sums the
+// compressed layer sizes. ponytail: reports the full manifest size as an UPPER
+// BOUND — it does not subtract layers already cached locally (registry
+// compressed digests don't map cleanly to Docker's local uncompressed DiffIDs).
+// Only Docker Hub / registry-1.docker.io anonymous pulls are supported; other
+// registries return a note instead of a number.
+func (c *Creator) EstimateImagePull(ctx context.Context, ref string) (PullEstimate, error) {
+	est := PullEstimate{Ref: ref}
+	if c.ImageExistsLocally(ctx, ref) {
+		est.AlreadyLocal = true
+		est.Note = "image already present locally; no download required"
+		return est, nil
+	}
+	registry, repo, tag := parseImageRef(ref)
+	if registry != "docker.io" {
+		est.Note = fmt.Sprintf("size estimate unsupported for registry %q; proceed only with explicit user approval", registry)
+		return est, nil
+	}
+	token, err := dockerHubToken(ctx, c.directHTTP, repo)
+	if err != nil {
+		est.Note = "could not fetch registry token: " + err.Error()
+		return est, nil
+	}
+	manifest, err := fetchManifest(ctx, c.directHTTP, repo, tag, token, "")
+	if err != nil {
+		est.Note = "could not fetch manifest: " + err.Error()
+		return est, nil
+	}
+	// If we got a manifest list (fat manifest), pick linux/amd64 and refetch.
+	if len(manifest.Layers) == 0 && len(manifest.Manifests) > 0 {
+		digest := ""
+		for _, m := range manifest.Manifests {
+			if m.Platform.OS == "linux" && m.Platform.Architecture == "amd64" {
+				digest = m.Digest
+				break
+			}
+		}
+		if digest == "" {
+			digest = manifest.Manifests[0].Digest
+		}
+		manifest, err = fetchManifest(ctx, c.directHTTP, repo, tag, token, digest)
+		if err != nil {
+			est.Note = "could not fetch platform manifest: " + err.Error()
+			return est, nil
+		}
+	}
+	var total int64 = manifest.Config.Size
+	for _, l := range manifest.Layers {
+		total += l.Size
+	}
+	est.CompressedBytes = total
+	est.LayerCount = len(manifest.Layers)
+	est.Note = "upper bound; layers already cached locally are not subtracted"
+	return est, nil
+}
+
+func dockerHubToken(ctx context.Context, cli *http.Client, repo string) (string, error) {
+	tokenURL := fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("token endpoint returned %d", resp.StatusCode)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Token, nil
+}
+
+func fetchManifest(ctx context.Context, cli *http.Client, repo, tag, token, digest string) (imageManifest, error) {
+	ref := tag
+	if digest != "" {
+		ref = digest
+	}
+	manURL := fmt.Sprintf("https://registry-1.docker.io/v2/%s/manifests/%s", repo, ref)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manURL, nil)
+	if err != nil {
+		return imageManifest{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", strings.Join([]string{
+		"application/vnd.docker.distribution.manifest.v2+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json",
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.oci.image.index.v1+json",
+	}, ", "))
+	resp, err := cli.Do(req)
+	if err != nil {
+		return imageManifest{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return imageManifest{}, fmt.Errorf("manifest endpoint returned %d", resp.StatusCode)
+	}
+	var m imageManifest
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return imageManifest{}, err
+	}
+	return m, nil
+}
+
+// parseImageRef splits a docker reference into registry host, repository and
+// tag, normalizing Docker Hub short names (e.g. "python:3.12" -> docker.io,
+// "library/python", "3.12").
+func parseImageRef(ref string) (registry, repo, tag string) {
+	registry = "docker.io"
+	tag = "latest"
+	remainder := ref
+	if i := strings.Index(ref, "/"); i >= 0 {
+		first := ref[:i]
+		if strings.ContainsAny(first, ".:") || first == "localhost" {
+			registry = first
+			remainder = ref[i+1:]
+		}
+	}
+	if i := strings.LastIndex(remainder, ":"); i >= 0 && !strings.Contains(remainder[i:], "/") {
+		tag = remainder[i+1:]
+		remainder = remainder[:i]
+	}
+	repo = remainder
+	if registry == "docker.io" && !strings.Contains(repo, "/") {
+		repo = "library/" + repo
+	}
+	return registry, repo, tag
+}
+
+// StartPull begins an asynchronous image pull and returns a job id to poll.
+func (c *Creator) StartPull(ref string) string {
+	id := "pull-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	job := &PullJob{Ref: ref, StartedAt: time.Now().UTC()}
+	c.pullMu.Lock()
+	// Sweep finished jobs older than 1h.
+	for k, j := range c.pullJobs {
+		if j.Done && time.Since(j.StartedAt) > time.Hour {
+			delete(c.pullJobs, k)
+		}
+	}
+	c.pullJobs[id] = job
+	c.pullMu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		err := c.ensureImage(ctx, ref)
+		c.pullMu.Lock()
+		job.Done = true
+		if err != nil {
+			job.Err = err.Error()
+		}
+		c.pullMu.Unlock()
+	}()
+	return id
+}
+
+// PullStatus returns a snapshot of an async pull job.
+func (c *Creator) PullStatus(id string) (PullJob, bool) {
+	c.pullMu.Lock()
+	defer c.pullMu.Unlock()
+	j, ok := c.pullJobs[id]
+	if !ok {
+		return PullJob{}, false
+	}
+	return *j, true
+}
+
 func parseRef(ref string) (image, tag string) {
 	image = ref
 	tag = "latest"
@@ -999,6 +1290,13 @@ func isLocalImage(ref string) bool {
 
 func isFrameworkImage(ref string) bool {
 	return strings.HasPrefix(ref, "whalebot/")
+}
+
+func truncateLabel(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 
 func (c *Creator) AllowedImageList() []string {

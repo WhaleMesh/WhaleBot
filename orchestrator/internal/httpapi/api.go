@@ -80,7 +80,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/adapter-components/{name}/config", s.handleAdapterGetConfig)
 		r.Put("/adapter-components/{name}/config", s.handleAdapterPutConfig)
 		r.Get("/tools/user-dockers/interface-contract", s.handleUserDockerInterfaceContract)
+		r.Get("/tools/user-dockers/images/estimate", s.handleUserDockerImageEstimate)
 		r.Get("/tools/user-dockers/images", s.handleUserDockerImages)
+		r.Post("/tools/user-dockers/pull", s.handleUserDockerPull)
+		r.Get("/tools/user-dockers/pull/status", s.handleUserDockerPullStatus)
 		r.Get("/tools/user-dockers", s.handleUserDockerList)
 		r.Post("/tools/user-dockers", s.handleUserDockerCreate)
 		r.Get("/tools/user-dockers/{name}/interface", s.handleUserDockerInterface)
@@ -92,6 +95,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/tools/user-dockers/touch-creator-session", s.handleUserDockerTouchCreatorSession)
 		r.Post("/tools/user-dockers/{name}/switch-scope", s.handleUserDockerSwitchScope)
 		r.Post("/tools/user-dockers/{name}/exec", s.handleUserDockerExec)
+		r.Get("/tools/user-dockers/{name}/exec/status", s.handleUserDockerExecStatus)
+		r.Get("/tools/user-dockers/{name}/logs", s.handleUserDockerLogs)
 		r.Get("/tools/user-dockers/{name}/files", s.handleUserDockerFilesList)
 		r.Get("/tools/user-dockers/{name}/file", s.handleUserDockerFileRead)
 		r.Put("/tools/user-dockers/{name}/file", s.handleUserDockerFileWrite)
@@ -290,6 +295,69 @@ func (s *Server) handleUserDockerImages(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.proxyGet(w, r, tool.Endpoint+"/api/v1/user-dockers/images")
+}
+
+func (s *Server) handleUserDockerImageEstimate(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_images_estimate")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	target := tool.Endpoint + "/api/v1/user-dockers/images/estimate"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerPull(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_pull")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	s.proxyPost(w, r, tool.Endpoint+"/api/v1/user-dockers/pull")
+}
+
+func (s *Server) handleUserDockerPullStatus(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_pull")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	target := tool.Endpoint + "/api/v1/user-dockers/pull/status"
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerExecStatus(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_exec")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/exec/status", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
+}
+
+func (s *Server) handleUserDockerLogs(w http.ResponseWriter, r *http.Request) {
+	tool := s.Registry.FirstReadyByCapability("userdocker_logs")
+	if tool == nil {
+		writeError(w, 503, "no healthy user-docker-manager service")
+		return
+	}
+	name := chi.URLParam(r, "name")
+	target := fmt.Sprintf("%s/api/v1/user-dockers/%s/logs", tool.Endpoint, name)
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	s.proxyGet(w, r, target)
 }
 
 func (s *Server) handleUserDockerList(w http.ResponseWriter, r *http.Request) {
