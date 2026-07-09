@@ -251,28 +251,28 @@
       <div class="skeleton h-4 w-2/3 max-w-lg"></div>
     </div>
     <h2 class="wb-section-title">{$_('llm.modelProfiles')}</h2>
-    <div class="mt-3 overflow-x-auto rounded-xl border border-base-300/40">
-      <table class="table wb-table table-list text-base">
-        <thead>
-          <tr>
-            <th class="w-12"></th>
-            <th>{$_('llm.thName')}</th>
-            <th>{$_('llm.thBaseUrl')}</th>
-            <th>{$_('llm.thModelId')}</th>
-            <th>{$_('llm.thApiKey')}</th>
-            <th>{$_('llm.thActions')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each [1, 2, 3, 4, 5] as _}
-            <tr>
-              {#each [1, 2, 3, 4, 5, 6] as __}
-                <td><div class="skeleton my-1 h-8 w-full min-w-[4rem]"></div></td>
-              {/each}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+    <div class="llm-profiles mt-3">
+      {#each [1, 2, 3] as _}
+        <div class="llm-profile">
+          <div class="llm-profile-inner">
+            <div class="skeleton llm-active-toggle rounded"></div>
+            <div class="llm-profile-body">
+              <div class="llm-profile-row-fields">
+                <div class="skeleton h-7 w-full rounded"></div>
+                <div class="skeleton h-7 w-full rounded"></div>
+              </div>
+              <div class="llm-profile-row-fields">
+                <div class="skeleton h-7 w-full rounded"></div>
+                <div class="skeleton h-7 w-full rounded"></div>
+              </div>
+            </div>
+            <div class="llm-profile-actions">
+              <div class="skeleton h-7 w-full rounded"></div>
+              <div class="skeleton h-7 w-full rounded"></div>
+            </div>
+          </div>
+        </div>
+      {/each}
     </div>
   {:else if !detail}
     <p class="mt-2 text-base-content/70">{$_('llm.notFound', { name: llmName })}</p>
@@ -298,151 +298,140 @@
     {/if}
 
     <p class="hint-html mt-2 text-base text-base-content/70">{@html $_('llm.hintActive')}</p>
+    <details class="llm-hint-local mt-1">
+      <summary class="text-sm text-base-content/55">{$_('llm.hintLocalHostSummary')}</summary>
+      <p class="hint-html mt-1 text-sm text-base-content/65">{@html $_('llm.hintLocalHost')}</p>
+    </details>
 
-    <div class="mt-3 overflow-x-auto rounded-xl border border-base-300/40">
-      <table class="table wb-table table-list text-base">
-        <thead>
-          <tr>
-            <th class="w-12 align-middle text-center">{$_('llm.thActive')}</th>
-            <th class="min-w-[11rem] align-middle">{$_('llm.thName')}</th>
-            <th class="min-w-[12rem] align-middle">{$_('llm.thBaseUrl')}</th>
-            <th class="min-w-[9rem] align-middle">{$_('llm.thModelId')}</th>
-            <th class="min-w-[11rem] align-middle">{$_('llm.thApiKey')}</th>
-            <th class="w-[1%] whitespace-nowrap align-middle">{$_('llm.thActions')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="align-middle">
-              <div class="flex justify-center py-1">
-                <input
-                  type="radio"
-                  class="radio"
-                  name="llm-active-{llmName}"
-                  value=""
-                  checked={activeModelId === ''}
-                  disabled={testInProgress}
-                  on:change={(e) => {
-                    if (e.currentTarget.checked) applyActiveChange('');
-                  }}
-                />
-              </div>
-            </td>
-            <td class="align-middle" colspan="5">
-              <span class="text-base text-base-content/60">{$_('llm.noActiveModel')}</span>
-            </td>
-          </tr>
-          {#each editModels as m, i}
-            <tr>
-              <td class="align-middle">
-                <div class="flex justify-center py-1">
+    <div class="llm-profiles mt-3">
+      <div class="llm-profile llm-profile--none" class:llm-profile--active={activeModelId === ''}>
+        <div class="llm-profile-inner">
+          <button
+            type="button"
+            class="llm-active-toggle"
+            class:llm-active-toggle--on={activeModelId === ''}
+            disabled={testInProgress}
+            aria-pressed={activeModelId === ''}
+            aria-label={$_('llm.thActive')}
+            on:click={() => applyActiveChange('')}
+          ></button>
+          <div class="llm-profile-body llm-profile-body--single">
+            <span class="text-sm text-base-content/60">{$_('llm.noActiveModel')}</span>
+          </div>
+        </div>
+      </div>
+
+      {#each editModels as m, i}
+        <div class="llm-profile" class:llm-profile--active={activeModelId === m.id}>
+          <div class="llm-profile-inner">
+            <button
+              type="button"
+              class="llm-active-toggle"
+              class:llm-active-toggle--on={activeModelId === m.id}
+              disabled={!m.persisted || testInProgress}
+              aria-pressed={activeModelId === m.id}
+              aria-label={$_('llm.thActive')}
+              on:click={() => {
+                if (m.persisted) applyActiveChange(m.id);
+              }}
+            ></button>
+
+            <div class="llm-profile-body">
+              <div class="llm-profile-row-fields">
+                <label class="llm-field">
+                  <span class="llm-field-label">{$_('llm.thName')}</span>
                   <input
-                    type="radio"
-                    class="radio"
-                    name="llm-active-{llmName}"
-                    value={m.id}
-                    checked={activeModelId === m.id}
-                    disabled={!m.persisted || testInProgress}
-                    on:change={(e) => {
-                      if (e.currentTarget.checked && m.persisted) applyActiveChange(m.id);
-                    }}
-                  />
-                </div>
-              </td>
-              <td class="align-middle">
-                <div class="flex min-w-0 items-center gap-2 py-1">
-                  <input
-                    class="input input-bordered min-w-0 flex-1"
+                    class="input input-bordered input-sm min-w-0 w-full"
                     bind:value={m.name}
                     placeholder={$_('llm.displayNamePh')}
                   />
-                  <div
-                    class="tooltip tooltip-top shrink-0 before:max-w-[min(100vw-2rem,28rem)] before:break-all before:text-left"
-                    data-tip={m.id}
-                  >
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-sm h-9 min-h-9 w-9 shrink-0 px-0 font-mono text-xs"
-                      aria-label={$_('llm.tipModelId')}
-                    >ID</button>
-                  </div>
-                </div>
-              </td>
-              <td class="align-middle">
-                <input class="input input-bordered wb-mono my-0 w-full min-w-0" bind:value={m.base_url} />
-              </td>
-              <td class="align-middle">
-                <input class="input input-bordered wb-mono my-0 w-full min-w-0" bind:value={m.model} />
-              </td>
-              <td class="align-middle">
-                <div class="flex min-w-0 items-center gap-2 py-1">
+                </label>
+                <label class="llm-field">
+                  <span class="llm-field-label">{$_('llm.thBaseUrl')}</span>
                   <input
-                    type="password"
-                    class="input input-bordered min-w-0 flex-1"
-                    bind:value={m.apiKeyInput}
-                    placeholder={m.has_api_key ? $_('llm.apiKeyUnchanged') : $_('llm.apiKeyRequired')}
+                    class="input input-bordered input-sm wb-mono min-w-0 w-full"
+                    bind:value={m.base_url}
                   />
-                  {#if m.has_api_key && m.api_key_hint}
-                    <div
-                      class="tooltip tooltip-top shrink-0 before:max-w-[min(100vw-2rem,28rem)] before:break-all before:text-left"
-                      data-tip={`${$_('llm.storedPrefix')} ${m.api_key_hint}`}
-                    >
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm h-9 min-h-9 w-9 shrink-0 px-0 text-xs"
-                        aria-label={$_('llm.tipStoredKey')}
-                      >ⓘ</button>
-                    </div>
-                  {/if}
-                </div>
-              </td>
-              <td class="align-middle">
-                <div class="flex min-w-0 flex-row flex-wrap items-center justify-end gap-2 py-1">
-                  {#if m.persisted}
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline btn-error shrink-0"
-                      disabled={testInProgress}
-                      on:click={() => removeRow(i)}
-                    >
-                      {$_('llm.remove')}
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline shrink-0"
-                      disabled={testInProgress}
-                      on:click={() => runTest(m.id)}
-                    >
-                      {$_('llm.test')}
-                    </button>
-                  {:else}
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-primary shrink-0"
-                      disabled={testInProgress}
-                      on:click={() => saveRow(i)}
-                    >
-                      {$_('llm.save')}
-                    </button>
-                  {/if}
-                </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+                </label>
+              </div>
+              <div class="llm-profile-row-fields">
+                <label class="llm-field">
+                  <span class="llm-field-label">{$_('llm.thModelId')}</span>
+                  <input
+                    class="input input-bordered input-sm wb-mono min-w-0 w-full"
+                    bind:value={m.model}
+                  />
+                </label>
+                <label class="llm-field">
+                  <span class="llm-field-label">{$_('llm.thApiKey')}</span>
+                  <div class="flex min-w-0 items-center gap-1">
+                    <input
+                      type="password"
+                      class="input input-bordered input-sm min-w-0 flex-1"
+                      bind:value={m.apiKeyInput}
+                      placeholder={m.has_api_key ? $_('llm.apiKeyUnchanged') : $_('llm.apiKeyRequired')}
+                    />
+                    {#if m.has_api_key && m.api_key_hint}
+                      <div
+                        class="tooltip tooltip-top shrink-0 before:max-w-[min(100vw-2rem,28rem)] before:break-all before:text-left"
+                        data-tip={`${$_('llm.storedPrefix')} ${m.api_key_hint}`}
+                      >
+                        <button
+                          type="button"
+                          class="btn btn-ghost btn-xs h-7 min-h-7 w-7 shrink-0 px-0 text-xs"
+                          aria-label={$_('llm.tipStoredKey')}
+                        >ⓘ</button>
+                      </div>
+                    {/if}
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="llm-profile-actions">
+              {#if m.persisted}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline btn-error llm-action-btn"
+                  disabled={testInProgress}
+                  on:click={() => removeRow(i)}
+                >
+                  {$_('llm.remove')}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline llm-action-btn"
+                  disabled={testInProgress}
+                  on:click={() => runTest(m.id)}
+                >
+                  {$_('llm.test')}
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary llm-action-btn llm-action-btn--solo"
+                  disabled={testInProgress}
+                  on:click={() => saveRow(i)}
+                >
+                  {$_('llm.save')}
+                </button>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {/each}
     </div>
 
-    <div class="mt-4 flex flex-wrap gap-2">
-      <button type="button" class="btn" disabled={testInProgress} on:click={newRow}>
+    <div class="llm-toolbar">
+      <button type="button" class="btn llm-toolbar-btn" disabled={testInProgress} on:click={newRow}>
         {$_('llm.addModel')}
       </button>
-      <button type="button" class="btn btn-primary" disabled={testInProgress} on:click={saveAll}>
+      <button type="button" class="btn btn-primary llm-toolbar-btn" disabled={testInProgress} on:click={saveAll}>
         {$_('llm.saveAll')}
       </button>
       <button
         type="button"
-        class="btn btn-outline"
+        class="btn btn-outline llm-toolbar-btn"
         disabled={testInProgress || !activeModelId}
         on:click={() => runTest(null)}
       >
@@ -500,5 +489,180 @@
 <style>
   .hint-html :global(b) {
     font-weight: 600;
+  }
+
+  .llm-hint-local > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+
+  .llm-hint-local > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .llm-hint-local > summary::before {
+    content: '▸ ';
+    display: inline-block;
+    transition: transform 0.15s ease;
+  }
+
+  .llm-hint-local[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
+  .llm-profiles {
+    overflow: hidden;
+    border-radius: var(--radius-box);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 8%, var(--color-base-300));
+  }
+
+  .llm-profile {
+    border-bottom: 1px solid color-mix(in oklab, var(--color-base-content) 6%, var(--color-base-300));
+    padding: 0.5rem 0.75rem;
+    transition: background-color 0.15s ease;
+  }
+
+  .llm-profile:last-child {
+    border-bottom-width: 0;
+  }
+
+  .llm-profile--active {
+    background: color-mix(in oklab, var(--color-primary) 16%, var(--color-base-200));
+  }
+
+  .llm-profile-inner {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.625rem;
+    align-items: stretch;
+  }
+
+  .llm-active-toggle {
+    display: flex;
+    width: 1.375rem;
+    min-width: 1.375rem;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-field);
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 16%, var(--color-base-300));
+    background: color-mix(in oklab, var(--color-base-300) 25%, transparent);
+    cursor: pointer;
+    padding: 0;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .llm-active-toggle:hover:not(:disabled) {
+    border-color: color-mix(in oklab, var(--color-primary) 45%, var(--color-base-300));
+  }
+
+  .llm-active-toggle--on {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-primary) 35%, transparent);
+  }
+
+  .llm-active-toggle--on::after {
+    content: '';
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 9999px;
+    background: var(--color-primary-content);
+  }
+
+  .llm-active-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .llm-profile-body {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .llm-profile-body--single {
+    justify-content: center;
+    min-height: 1.75rem;
+    padding-top: 0.125rem;
+  }
+
+  .llm-profile-row-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+    gap: 0.5rem;
+  }
+
+  .llm-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .llm-field-label {
+    font-size: var(--text-xs);
+    line-height: 1.2;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  }
+
+  .llm-profile-actions {
+    display: flex;
+    width: 5.25rem;
+    flex-direction: column;
+    gap: 0.375rem;
+    align-self: center;
+  }
+
+  .llm-action-btn {
+    width: 100%;
+    min-height: 1.75rem;
+    height: 1.75rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    font-size: var(--text-xs);
+  }
+
+  .llm-action-btn--solo {
+    min-height: 3.875rem;
+    height: 3.875rem;
+  }
+
+  .llm-toolbar {
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .llm-toolbar-btn {
+    width: 100%;
+  }
+
+  @media (max-width: 640px) {
+    .llm-profile-inner {
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto auto;
+    }
+
+    .llm-profile-actions {
+      grid-column: 1 / -1;
+      width: 100%;
+      flex-direction: row;
+    }
+
+    .llm-profile-row-fields {
+      grid-template-columns: 1fr;
+    }
+
+    .llm-action-btn--solo {
+      min-height: 1.75rem;
+      height: 1.75rem;
+    }
   }
 </style>
