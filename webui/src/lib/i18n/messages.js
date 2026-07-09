@@ -354,6 +354,9 @@ const en = {
     loadingCfg: 'Loading configuration…',
     hintActive:
       'Choose <b>Active</b> in the table for the profile used at runtime. Leave <b>API key</b> blank on saved rows to keep the stored key. New rows need a key before saving.',
+    hintLocalHost:
+      'For a model on this machine, use <code>http://127.0.0.1:&lt;port&gt;</code> or <code>http://localhost:&lt;port&gt;</code> (rewritten to <code>host.docker.internal</code> inside Docker). The model process must listen on <b>0.0.0.0</b>, not only 127.0.0.1, or containers cannot reach it.',
+    hintLocalHostSummary: 'Local model on this machine?',
     thActive: 'Active',
     thName: 'Name',
     thBaseUrl: 'Base URL',
@@ -684,6 +687,9 @@ const zhPart = {
     loadingCfg: '正在加载配置…',
     hintActive:
       '在表格中选择 <b>活动</b> 以指定运行时使用的配置。已保存行将 <b>API 密钥</b> 留空可保留原密钥。新行保存前需要提供密钥。',
+    hintLocalHost:
+      '本机模型请填 <code>http://127.0.0.1:&lt;端口&gt;</code> 或 <code>http://localhost:&lt;端口&gt;</code>（容器内会改写为 <code>host.docker.internal</code>）。模型进程须监听 <b>0.0.0.0</b>，不能只绑 127.0.0.1，否则容器无法访问。',
+    hintLocalHostSummary: '本机部署模型？',
     thActive: '活动',
     thName: '名称',
     thBaseUrl: 'Base URL',
@@ -1013,6 +1019,9 @@ const jaPart = {
     loadingCfg: '設定を読み込み中…',
     hintActive:
       'ランタイムで使うプロファイルは表で <b>アクティブ</b> を選びます。保存済み行の <b>API キー</b> は空のままで既存キーを保持します。新規行は保存前にキーが必要です。',
+    hintLocalHost:
+      '同一ホスト上のモデルは <code>http://127.0.0.1:&lt;port&gt;</code> または <code>http://localhost:&lt;port&gt;</code>（Docker 内では <code>host.docker.internal</code> に書き換え）。モデルは <b>0.0.0.0</b> で待ち受けする必要があり、127.0.0.1 のみではコンテナから到達できません。',
+    hintLocalHostSummary: '同一ホスト上のモデル？',
     thActive: 'アクティブ',
     thName: '名前',
     thBaseUrl: 'Base URL',

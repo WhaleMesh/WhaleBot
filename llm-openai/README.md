@@ -156,3 +156,7 @@ query_to_endpoint:
 - Keep `/invoke` schema backward compatible (`messages`, `params`, `tools`) for worker and orchestrator callers.
 - Preserve echo fallback behavior for local development without API keys.
 - Ensure tool-call message fields remain aligned with OpenAI-compatible format.
+
+## Local upstream (host machine)
+- `base_url` values using `localhost`, `127.0.0.1`, or `::1` are rewritten to `host.docker.internal` before outbound calls (compose sets `extra_hosts: host.docker.internal:host-gateway` on Linux).
+- The upstream process on the host must listen on **`0.0.0.0:<port>`**, not only `127.0.0.1`. Containers reach the host via the Docker bridge (`172.17.0.1`), which cannot connect to a loopback-only listener.

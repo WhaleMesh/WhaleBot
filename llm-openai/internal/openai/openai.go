@@ -211,7 +211,7 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, p
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return Message{}, nil, err
+		return Message{}, nil, wrapUpstreamDialErr(url, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -252,6 +252,20 @@ func echoFallback(messages []Message, tools []Tool) Message {
 		Role:    "assistant",
 		Content: msg,
 	}
+}
+
+func wrapUpstreamDialErr(requestURL string, err error) error {
+	if err == nil || !strings.Contains(requestURL, "host.docker.internal") {
+		return err
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "dial tcp") {
+		return fmt.Errorf(
+			"%w — local model on the host must listen on 0.0.0.0 (not only 127.0.0.1); llm-openai reaches the host via host.docker.internal (docker bridge), not the container loopback",
+			err,
+		)
+	}
+	return err
 }
 
 func truncate(s string, n int) string {
