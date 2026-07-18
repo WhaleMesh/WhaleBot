@@ -15,11 +15,8 @@ func chatStackDetailForType(r *registry.Registry, typeKey, label string) string 
 		if c.Status != registry.StatusHealthy {
 			return fmt.Sprintf("%s is not healthy (status: %s)", label, c.Status)
 		}
-		if strings.TrimSpace(c.StatusEndpoint) != "" && strings.TrimSpace(c.OperationalState) != "" && c.OperationalState != "normal" {
-			return fmt.Sprintf("%s is live but not operationally ready (operational_state: %s)", label, c.OperationalState)
-		}
-		if strings.TrimSpace(c.StatusEndpoint) != "" && strings.TrimSpace(c.OperationalState) == "" {
-			return fmt.Sprintf("%s is live but operational status has not been reported yet", label)
+		if state := strings.TrimSpace(c.OperationalState); state != "" && state != "normal" {
+			return fmt.Sprintf("%s is live but not operationally ready (operational_state: %s)", label, state)
 		}
 		return fmt.Sprintf("%s is not operationally ready", label)
 	}

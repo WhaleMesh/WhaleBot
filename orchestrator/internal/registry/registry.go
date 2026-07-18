@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -11,42 +10,51 @@ import (
 type Status string
 
 const (
-	StatusHealthy   Status = "healthy"
-	StatusUnhealthy Status = "unhealthy"
-	StatusRemoved   Status = "removed"
+	StatusHealthy Status = "healthy"
+	StatusRemoved Status = "removed"
 )
 
+// Component liveness is heartbeat-based: components POST /components/register
+// periodically; a component is healthy while its last heartbeat is within TTL.
+// Tunnel components (userdocker nodes) are healthy while their tunnel session
+// is connected; the nodes hub upserts on connect and deletes on disconnect.
 type Component struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Type           string            `json:"type"`
-	Version        string            `json:"version"`
-	Endpoint       string            `json:"endpoint"`
-	HealthEndpoint string            `json:"health_endpoint"`
-	StatusEndpoint string            `json:"status_endpoint,omitempty"`
-	Capabilities   []string          `json:"capabilities"`
-	Meta           map[string]string `json:"meta"`
-	Status         Status            `json:"status"`
-	FailureCount   int               `json:"failure_count"`
-	LastCheckedAt  time.Time         `json:"last_checked_at"`
-	RegisteredAt   time.Time         `json:"registered_at"`
-	// OperationalState is set from optional /status polls (English snake_case). Empty when no status_endpoint.
-	OperationalState     string    `json:"operational_state,omitempty"`
-	OperationalCheckedAt time.Time `json:"operational_checked_at,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	Version      string            `json:"version"`
+	Endpoint     string            `json:"endpoint"`
+	Capabilities []string          `json:"capabilities"`
+	Meta         map[string]string `json:"meta"`
+	// Tunnel marks components reached via the orchestrator node tunnel
+	// instead of a dialable endpoint. Presence implies liveness.
+	Tunnel bool `json:"tunnel,omitempty"`
+	// OperationalState is business readiness self-reported in each heartbeat
+	// (English snake_case, e.g. "normal", "no_valid_configuration"). Empty
+	// means the component does not report one and liveness alone decides.
+	OperationalState string    `json:"operational_state,omitempty"`
+	Status           Status    `json:"status"`
+	LastSeenAt       time.Time `json:"last_seen_at"`
+	RegisteredAt     time.Time `json:"registered_at"`
 }
 
 type Registry struct {
 	mu         sync.RWMutex
 	components map[string]*Component
+	ttl        time.Duration
 }
 
-func New() *Registry {
-	return &Registry{components: map[string]*Component{}}
+// New creates a registry with the given heartbeat TTL. A component whose last
+// heartbeat is older than ttl is reported as removed (and eventually purged).
+func New(ttl time.Duration) *Registry {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	return &Registry{components: map[string]*Component{}, ttl: ttl}
 }
 
-// Upsert inserts a new component or updates an existing one keyed by Name.
-// Re-registering resets FailureCount and marks it healthy (the next
-// health-check tick will re-verify).
+// Upsert records a heartbeat: inserts a new component or refreshes an
+// existing one keyed by Name.
 func (r *Registry) Upsert(c *Component) *Component {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -56,57 +64,67 @@ func (r *Registry) Upsert(c *Component) *Component {
 	if c.Meta == nil {
 		c.Meta = map[string]string{}
 	}
+	now := time.Now()
 	if existing, ok := r.components[c.Name]; ok {
 		existing.Type = c.Type
 		existing.Version = c.Version
 		existing.Endpoint = c.Endpoint
-		existing.HealthEndpoint = c.HealthEndpoint
-		existing.StatusEndpoint = c.StatusEndpoint
-		if c.StatusEndpoint == "" {
-			existing.OperationalState = ""
-			existing.OperationalCheckedAt = time.Time{}
-		}
 		existing.Capabilities = c.Capabilities
 		existing.Meta = c.Meta
-		existing.FailureCount = 0
-		existing.Status = StatusHealthy
-		return existing
+		existing.Tunnel = c.Tunnel
+		existing.OperationalState = c.OperationalState
+		existing.LastSeenAt = now
+		cp := *existing
+		cp.Status = r.statusOf(existing, now)
+		return &cp
 	}
 	c.ID = c.Name
-	c.Status = StatusHealthy
-	c.FailureCount = 0
-	c.RegisteredAt = time.Now()
+	c.RegisteredAt = now
+	c.LastSeenAt = now
 	r.components[c.Name] = c
-	return c
+	cp := *c
+	cp.Status = r.statusOf(c, now)
+	return &cp
 }
 
-// List returns a snapshot of all components, sorted by name for stable UI.
-// Removed components are included (the WebUI filters if desired).
+// Delete removes a component by name (used by the nodes hub on disconnect).
+func (r *Registry) Delete(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.components, name)
+}
+
+func (r *Registry) statusOf(c *Component, now time.Time) Status {
+	if c.Tunnel {
+		return StatusHealthy // presence implies a connected tunnel
+	}
+	if now.Sub(c.LastSeenAt) <= r.ttl {
+		return StatusHealthy
+	}
+	return StatusRemoved
+}
+
+// List returns a snapshot of all components with derived status, sorted by
+// name for stable UI. Entries silent for over 10x TTL are purged lazily.
 func (r *Registry) List() []*Component {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
 	out := make([]*Component, 0, len(r.components))
-	for _, c := range r.components {
+	for name, c := range r.components {
+		if !c.Tunnel && now.Sub(c.LastSeenAt) > 10*r.ttl {
+			delete(r.components, name)
+			continue
+		}
 		cp := *c
+		cp.Status = r.statusOf(c, now)
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// ListActive returns healthy + unhealthy components (excluding removed).
-func (r *Registry) ListActive() []*Component {
-	all := r.List()
-	out := make([]*Component, 0, len(all))
-	for _, c := range all {
-		if c.Status != StatusRemoved {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// GetByName returns a component by name (any status). O(1) map lookup.
+// GetByName returns a component by name with derived status.
 func (r *Registry) GetByName(name string) *Component {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -115,154 +133,73 @@ func (r *Registry) GetByName(name string) *Component {
 		return nil
 	}
 	cp := *c
+	cp.Status = r.statusOf(c, time.Now())
 	return &cp
 }
 
-// PurgeRemovedOlderThan removes StatusRemoved components whose LastCheckedAt is older than d seconds ago.
-func (r *Registry) PurgeRemovedOlderThan(d int) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	purged := 0
-	for name, c := range r.components {
-		if c.Status != StatusRemoved {
-			continue
-		}
-		if now.Sub(c.LastCheckedAt) > time.Duration(d)*time.Second {
-			delete(r.components, name)
-			purged++
-		}
-	}
-	return purged
-}
-
-// GetLLMByName returns a registered llm component by name (any status except removed).
-// Used for WebUI admin proxies so configuration can recover when health is degraded.
+// GetLLMByName returns a registered llm component by name (any liveness).
+// Used for WebUI admin proxies so configuration can recover when degraded.
 func (r *Registry) GetLLMByName(name string) *Component {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	c, ok := r.components[name]
-	if !ok || strings.ToLower(c.Type) != "llm" || c.Status == StatusRemoved {
+	c := r.GetByName(name)
+	if c == nil || strings.ToLower(c.Type) != "llm" {
 		return nil
 	}
-	cp := *c
-	return &cp
+	return c
 }
 
-// GetAdapterByName returns a registered adapter component by name (any status except removed).
-// Used for WebUI admin proxies so configuration can recover when health is degraded.
+// GetAdapterByName returns a registered adapter component by name (any liveness).
 func (r *Registry) GetAdapterByName(name string) *Component {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	c, ok := r.components[name]
-	if !ok || strings.ToLower(c.Type) != "adapter" || c.Status == StatusRemoved {
+	c := r.GetByName(name)
+	if c == nil || strings.ToLower(c.Type) != "adapter" {
 		return nil
 	}
-	cp := *c
-	return &cp
+	return c
 }
 
-// All returns a raw reference slice (do not mutate). Used by health loop.
-func (r *Registry) snapshotForHealthcheck() []*Component {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]*Component, 0, len(r.components))
-	for _, c := range r.components {
-		if c.Status == StatusRemoved {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
-func (r *Registry) applyHealthResult(name string, ok bool, threshold int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, exists := r.components[name]
-	if !exists {
-		return
-	}
-	c.LastCheckedAt = time.Now()
-	if ok {
-		c.FailureCount = 0
-		c.Status = StatusHealthy
-		return
-	}
-	c.FailureCount++
-	if c.FailureCount >= threshold {
-		c.Status = StatusRemoved
-	} else {
-		c.Status = StatusUnhealthy
-	}
-}
-
-// ApplyOperationalState updates business readiness from /status (does not touch FailureCount or Status).
-func (r *Registry) ApplyOperationalState(name string, state string, checkedAt time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, exists := r.components[name]
-	if !exists {
-		return
-	}
-	c.OperationalState = state
-	c.OperationalCheckedAt = checkedAt
-}
-
-// ValidStatusEndpoint returns true if u is http(s) and non-empty.
-func ValidStatusEndpoint(u string) bool {
-	u = strings.TrimSpace(u)
-	if u == "" {
+// operationallyReady reports whether the component may serve traffic.
+func operationallyReady(c *Component, st Status) bool {
+	if c == nil || st != StatusHealthy {
 		return false
 	}
-	parsed, err := url.Parse(u)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return false
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	return scheme == "http" || scheme == "https"
+	state := strings.TrimSpace(c.OperationalState)
+	return state == "" || state == "normal"
 }
 
-// operationallyReady reports whether the component may serve traffic that depends on /status semantics.
-func operationallyReady(c *Component) bool {
-	if c == nil || c.Status != StatusHealthy {
-		return false
-	}
-	if strings.TrimSpace(c.StatusEndpoint) == "" {
-		return true
-	}
-	return strings.TrimSpace(c.OperationalState) == "normal"
-}
-
-// FirstReadyByType returns the first component of the given type that is live (healthy) and,
-// when status_endpoint is set, has operational_state == normal.
+// FirstReadyByType returns the first live component of the given type whose
+// self-reported operational_state (if any) is normal.
 func (r *Registry) FirstReadyByType(t string) *Component {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	now := time.Now()
 	for _, c := range r.components {
 		if c.Type != t {
 			continue
 		}
-		if !operationallyReady(c) {
+		st := r.statusOf(c, now)
+		if !operationallyReady(c, st) {
 			continue
 		}
 		cp := *c
+		cp.Status = st
 		return &cp
 	}
 	return nil
 }
 
-// FirstReadyByCapability returns the first component containing the capability that passes readiness.
+// FirstReadyByCapability returns the first ready component containing the capability.
 func (r *Registry) FirstReadyByCapability(capability string) *Component {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	now := time.Now()
 	for _, c := range r.components {
-		if !operationallyReady(c) {
+		st := r.statusOf(c, now)
+		if !operationallyReady(c, st) {
 			continue
 		}
 		for _, cap := range c.Capabilities {
 			if cap == capability {
 				cp := *c
+				cp.Status = st
 				return &cp
 			}
 		}
