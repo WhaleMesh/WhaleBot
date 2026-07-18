@@ -20,8 +20,8 @@ type Profile struct {
 
 // File is the on-disk JSON shape.
 type File struct {
-	Models         []Profile `json:"models"`
-	ActiveModelID  string    `json:"active_model_id"`
+	Models        []Profile `json:"models"`
+	ActiveModelID string    `json:"active_model_id"`
 }
 
 // ProfileInput is used for PUT: empty APIKey means "keep existing" when ID matches.
@@ -35,18 +35,18 @@ type ProfileInput struct {
 
 // PublicProfile masks secrets for GET responses.
 type PublicProfile struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
-	HasAPIKey   bool   `json:"has_api_key"`
-	APIKeyHint  string `json:"api_key_hint,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	HasAPIKey  bool   `json:"has_api_key"`
+	APIKeyHint string `json:"api_key_hint,omitempty"`
 }
 
 // PublicConfig is returned by GET /api/v1/llm/config.
 type PublicConfig struct {
-	Models         []PublicProfile `json:"models"`
-	ActiveModelID  string          `json:"active_model_id"`
+	Models        []PublicProfile `json:"models"`
+	ActiveModelID string          `json:"active_model_id"`
 }
 
 type Store struct {

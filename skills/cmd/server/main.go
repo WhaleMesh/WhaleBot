@@ -276,12 +276,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "skills",
-		Type:           "skills",
-		Version:        "0.2.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"skills_list", "skills_write", "skills_search"},
+		Name:         "skills",
+		Type:         "skills",
+		Version:      "0.2.0",
+		Endpoint:     self,
+		Capabilities: []string{"skills_list", "skills_write", "skills_search"},
 	})
 	rc.Start(ctx)
 

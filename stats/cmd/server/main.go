@@ -46,12 +46,12 @@ func main() {
 	r.Post("/events", func(w http.ResponseWriter, req *http.Request) {
 		var body struct {
 			Events []struct {
-				Kind              string            `json:"kind"`
-				Ts                string            `json:"ts,omitempty"`
-				PromptTokens      int64             `json:"prompt_tokens"`
-				CompletionTokens  int64             `json:"completion_tokens"`
-				TotalTokens       int64             `json:"total_tokens"`
-				Meta              map[string]string `json:"meta"`
+				Kind             string            `json:"kind"`
+				Ts               string            `json:"ts,omitempty"`
+				PromptTokens     int64             `json:"prompt_tokens"`
+				CompletionTokens int64             `json:"completion_tokens"`
+				TotalTokens      int64             `json:"total_tokens"`
+				Meta             map[string]string `json:"meta"`
 			} `json:"events"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -104,12 +104,11 @@ func main() {
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "stats",
-		Type:           "stats",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"stats_overview", "stats_ingest"},
+		Name:         "stats",
+		Type:         "stats",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"stats_overview", "stats_ingest"},
 	})
 	rc.Start(ctx)
 

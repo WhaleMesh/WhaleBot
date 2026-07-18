@@ -45,12 +45,12 @@ func Open(dbPath string) (*DB, error) {
 func (d *DB) Close() error { return d.sql.Close() }
 
 type IngestEvent struct {
-	Kind              string
-	Ts                time.Time
-	PromptTokens      int64
-	CompletionTokens  int64
-	TotalTokens       int64
-	Meta              map[string]string
+	Kind             string
+	Ts               time.Time
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	Meta             map[string]string
 }
 
 func (d *DB) InsertEvents(events []IngestEvent) error {

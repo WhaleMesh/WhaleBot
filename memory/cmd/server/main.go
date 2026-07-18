@@ -96,12 +96,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "memory",
-		Type:           "memory",
-		Version:        "0.2.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"notes_get", "notes_put", "secrets_get", "secrets_put", "secrets_list", "secrets_delete"},
+		Name:         "memory",
+		Type:         "memory",
+		Version:      "0.2.0",
+		Endpoint:     self,
+		Capabilities: []string{"notes_get", "notes_put", "secrets_get", "secrets_put", "secrets_list", "secrets_delete"},
 	})
 	rc.Start(ctx)
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
@@ -179,10 +178,10 @@ func (s *memoryService) handleSecretsList(w http.ResponseWriter, _ *http.Request
 	defer rows.Close()
 
 	type entry struct {
-		Key        string `json:"key"`
-		Note       string `json:"note"`
+		Key         string `json:"key"`
+		Note        string `json:"note"`
 		ValueMasked string `json:"value_masked"`
-		UpdatedAt  string `json:"updated_at"`
+		UpdatedAt   string `json:"updated_at"`
 	}
 	var results []entry
 	for rows.Next() {
@@ -223,13 +222,13 @@ func (s *memoryService) handleSecretsGet(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"success":       true,
-		"found":         true,
-		"key":           key,
-		"value":         string(val),
-		"value_masked":  maskValue(string(val)),
-		"note":          note,
-		"updated_at":    updated,
+		"success":      true,
+		"found":        true,
+		"key":          key,
+		"value":        string(val),
+		"value_masked": maskValue(string(val)),
+		"note":         note,
+		"updated_at":   updated,
 	})
 }
 
