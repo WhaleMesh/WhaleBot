@@ -5,20 +5,35 @@ Read this first, then read only the referenced source-of-truth files.
 
 ## 1) Project Snapshot
 
-- Goal: single-host, Docker Compose based AI orchestration (`Go + Svelte`).
+- Goal: Docker Compose based AI orchestration (`Go + Svelte`). Single host runs the full stack; **userdocker nodes** can additionally run on remote machines (outbound-only, via reverse tunnel to the orchestrator).
 - Network: fixed Docker network `whalebot_net`.
 - Entry runbook:
-  - `cp .env.example .env`
-  - `docker compose up --build`
-  - WebUI: sign in → LLM page + Adapters → `adapter-telegram` (bot token from @BotFather) for Telegram bot chat
+ - `cp .env.example .env`
+ - `docker compose up --build`
+ - WebUI: sign in → LLM page + Adapters → `adapter-telegram` (bot token from @BotFather) for Telegram bot chat
+ - optional remote userdocker node: `ORCHESTRATOR_PUBLIC_URL=… NODE_NAME=… NODE_TOKEN=… docker compose -f docker-compose.node.yml up --build`
 - Host URLs:
-  - WebUI: `http://localhost:18000`
-  - Orchestrator API: `http://localhost:18080`
-  - Adapter WebUI (chat): `http://localhost:18083`
+ - WebUI: `http://localhost:18000`
+ - Orchestrator API: `http://localhost:18080`
+ - Adapter WebUI (chat): `http://localhost:18083`
 - Source of truth priority:
-  1. `docker-compose.yml`
-  2. `.env.example`
-  3. `README.md`
+ 1. `docker-compose.yml` (+ `docker-compose.node.yml` for remote nodes)
+ 2. `.env.example`
+ 3. `README.md`
+
+## 1.5) Control Plane (heartbeat model)
+
+- Registration IS the heartbeat: every component POSTs `/api/v1/components/register` every **10s** (`internal/registerclient` copy per service, identical file). Payload: `name/type/version/endpoint/capabilities/meta` + optional `operational_state`.
+- Liveness is derived: healthy while last heartbeat is within `HEARTBEAT_TTL_SEC` (default 30); stale → `removed`; entries silent >10x TTL are purged. **The orchestrator never probes components** (no `health_endpoint`/`status_endpoint` in the registry; the old pull health-check loop is gone). `/health` routes still exist per service for compose healthchecks only.
+- Readiness: a non-empty `operational_state` other than `normal` keeps the component live but excluded from `FirstReadyByType/Capability` (e.g. `llm-openai` reports `no_valid_configuration` in its heartbeat; its former `GET /status` endpoint is removed).
+- `user-docker-manager` is the exception: it does not use registerclient at all — its tunnel connection is its registration and liveness (see 1.6).
+
+## 1.6) Userdocker Nodes (distributed data plane)
+
+- Only `userdocker` supports distributed deployment. Each `user-docker-manager` is a **node**: it dials `POST /api/v1/nodes/connect` on the orchestrator with header `X-Node-Token: $NODE_TOKEN` + JSON hello `{node, version, capabilities, meta}`, the connection upgrades (101) to **yamux** (orchestrator=client, manager=server), and the manager serves its normal HTTP API over tunnel streams. Reconnect with backoff; orchestrator side registers component `user-docker-manager@<node>` (type `tool`, `tunnel:true`) on connect and deletes it on disconnect.
+- Container identity everywhere above the manager is the composite name **`"<node>/<container>"`**: orchestrator `list` fans out to all nodes and rewrites names (+`node` field, per-node failures in `node_errors`); `create`/`pull` accept an optional `node` (default: first node by name); pull `job_id` is composite `"<node>/<job>"`; `touch-creator-session` broadcasts to all nodes; container-scoped routes `/{node}/{cname}[/…]` pass through verbatim to that node.
+- Remote machines need only outbound access to the orchestrator port; spawned userdockers self-register through the same public URL (`ORCHESTRATOR_URL` env is injected by the manager).
+- Key files: `orchestrator/internal/nodes/hub.go` (accept/registry), `orchestrator/internal/httpapi/userdocker.go` (routing), `user-docker-manager/internal/tunnel/tunnel.go` (dialer).
 
 ## 2) Architecture At A Glance
 
@@ -40,14 +55,13 @@ Read this first, then read only the referenced source-of-truth files.
 ## 3) Service Map (compose-aligned)
 
 - `orchestrator`
-  - purpose: registry + health loop + API gateway + chat orchestration
-  - entry: `orchestrator/cmd/server/main.go`
+ - purpose: registry (heartbeat liveness) + node tunnel hub + API gateway + chat orchestration
+ - entry: `orchestrator/cmd/server/main.go`
  - host exposed: yes (`${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}`)
-  - note: proxies `POST /api/v1/tools/user-dockers/touch-creator-session` to user-docker-manager (capability `userdocker_touch_creator`)
-  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
-  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (`status=healthy` from `health_endpoint` probes) **and** operationally ready when they register an optional `status_endpoint` (`operational_state` from `GET status_endpoint` must be `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
-  - note: periodic health loop: **liveness** uses each component’s `health_endpoint` only (2xx resets failure counter; failures can mark `removed` after `HEALTHCHECK_FAIL_THRESHOLD`). If `status_endpoint` is set, the loop also `GET`s it (JSON `operational_state`, English snake_case) and stores `operational_state` / `operational_checked_at` on the registry row **without** affecting removal.
-  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
+ - note: userdocker API is node-scoped (see §1.6): `GET/POST /api/v1/tools/user-dockers` (list fan-out / create with node pick), `GET …/nodes`, `…/images` (fan-out), `…/images/estimate?node=`, `…/pull` + `…/pull/status` (composite job id), `…/touch-creator-session` (broadcast), `…/{node}/{cname}[/action]` generic pass-through
+ - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
+ - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (fresh heartbeat) **and** operationally ready (heartbeat `operational_state` empty or `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
+ - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
   - note: reverse-proxies `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` to the healthy `type=skills` component (`503` when none)
 - `session`
   - purpose: SQLite conversation store
@@ -60,8 +74,8 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: OpenAI-compatible chat completions client
   - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
-  - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
-  - note: `GET /health` is **liveness-only** (always HTTP 200 when the process is up). `GET /status` returns JSON `{"service":"llm-openai","operational_state":"normal"|"no_valid_configuration"}` (HTTP 200); orchestrator ingests `operational_state` for readiness/chat gating. Without an active model, `POST /invoke` still returns `success=false` with an explanatory `error`.
+ - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
+ - note: `GET /health` is **liveness-only** (compose healthcheck). Business readiness rides on the register heartbeat as `operational_state` (`normal` | `no_valid_configuration`); there is no `GET /status` endpoint. Without an active model, `POST /invoke` still returns `success=false` with an explanatory `error`.
 - `runtime`
   - purpose: ReAct loop execution engine
   - entry: `runtime/cmd/server/main.go`
@@ -114,11 +128,11 @@ Read this first, then read only the referenced source-of-truth files.
  - note: config endpoint `GET|PUT /api/v1/adapter/config` exposed for orchestrator WebUI Adapters page proxy; returns/updates `username` + `has_password` for admin credential management (password is write-only)
   - note: `ADAPTER_WEBUI_CHAT_TIMEOUT_SEC` controls the HTTP client timeout for orchestrator chat calls (default 240s)
 - `user-docker-manager`
-  - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations)
-  - entry: `user-docker-manager/cmd/server/main.go`
-  - host exposed: no
-  - note: registers to orchestrator as component name `user-docker-manager`
-  - note: enforces `userdocker.v1` interface contract and only manages containers labeled as manager-owned `userdocker`
+ - purpose: system-level `userdocker` manager (dual-scope lifecycle + workspace operations); one instance per **node** machine
+ - entry: `user-docker-manager/cmd/server/main.go`
+ - host exposed: no
+ - note: connects to orchestrator via outbound tunnel (`NODE_NAME`/`NODE_TOKEN`, §1.6); appears as component `user-docker-manager@<node>`; the local HTTP listener remains for the compose healthcheck only
+ - note: enforces `userdocker.v1` interface contract and only manages containers labeled as manager-owned `userdocker`
   - note: raw language images (for example official `golang:*`) are rejected unless they expose `/api/v1/userdocker/interface`
   - note: pulling non-framework images requires explicit user approval flag (`external_image_approved_by_user=true`)
   - note: supports `session_scoped` and `global_service` container scopes with `switch-scope`
@@ -202,7 +216,11 @@ Read this first, then read only the referenced source-of-truth files.
 - IM/session sync:
   - `SESSION_URL` (for `adapter-telegram` optional artifact append to session)
 - Orchestrator request timeout:
-  - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
+ - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
+- Distributed userdocker nodes:
+ - `NODE_TOKEN` (shared secret for `/api/v1/nodes/connect`; empty on orchestrator disables the tunnel endpoint)
+ - `NODE_NAME` (unique per machine, lowercase `[a-z0-9_.-]`; default hostname)
+ - `ORCHESTRATOR_PUBLIC_URL` (only in `docker-compose.node.yml`; hub URL a remote node dials)
 - Telegram adapter chat timeout:
   - `ADAPTER_TELEGRAM_CHAT_TIMEOUT_SEC`
 - WebUI adapter chat timeout:
@@ -212,14 +230,14 @@ Read this first, then read only the referenced source-of-truth files.
 - Userdocker manager lifecycle:
   - `USERDOCKER_TEMP_TTL_SEC` (optional; temp `session_scoped` removal idle; default `USERDOCKER_IDLE_HOURS*3600`)
   - `USERDOCKER_IDLE_HOURS`, `USERDOCKER_IDLE_CHECK_SEC`, `USERDOCKER_ALLOWED_IMAGES`
-- Health loop:
-  - `HEALTHCHECK_INTERVAL_SEC`, `HEALTHCHECK_FAIL_THRESHOLD`
+- Heartbeat liveness:
+ - `HEARTBEAT_TTL_SEC` (component healthy while last heartbeat within TTL; default 30, heartbeats every 10s)
 - Session:
   - `SESSION_MAX_MESSAGES`, `SESSION_IDLE_SEC` (idle expiry window in seconds, default 86400)
 
 ## 5) Current State / Drift Notes
 
-- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `memory`, `adapter-webui`.
+- `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `memory`, `adapter-webui`; `docker-compose.node.yml` is the standalone remote-node stack (`user-docker-manager` + userdocker images only).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes `orchestrator`, `webui`, and `adapter-webui` ports to host.
 - Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`, `memory_data`.
@@ -236,12 +254,13 @@ Read this first, then read only the referenced source-of-truth files.
 ## 7) Runtime Capability Injection
 
 - Runtime discovers capabilities per chat run from `GET /api/v1/components` on orchestrator.
-- Only components that pass **readiness** are considered: `status=healthy` from liveness, and when `status_endpoint` is registered, `operational_state` must be `normal` (or omit `status_endpoint` to rely on liveness only).
+- Only components that pass **readiness** are considered: `status=healthy` (fresh heartbeat, or connected tunnel for userdocker nodes) and heartbeat `operational_state` empty or `normal`.
 - Tool mapping:
   - `type=tool` + capabilities `userdocker_*` -> model-facing tools `docker_lifecycle` / `docker_exec` / `docker_files` / `export_artifact` (all normalize to internal `manage_user_docker` dispatch, endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
 - docker tool actions: `docker_lifecycle` covers lifecycle/images (`list/list_images/create/start/stop/restart/remove/touch/switch_scope/get_interface/estimate_image_pull/pull_image/pull_status`), `docker_exec` covers `exec/exec_status/logs`, `docker_files` covers workspace file CRUD, `export_artifact` exports artifacts.
+- node awareness: container names surfaced to the model are composite `"<node>/<name>"` (from list/create); `create`/`pull_image`/`estimate_image_pull` accept optional `node` (default: first node).
 - container-selection ladder: `action=list` (reuse a container matched by its `purpose`) → `action=list_images` + `create` from a framework image → external image only after `estimate_image_pull` + user approval. `create` passes a `purpose`; agents keep `/workspace/.whalebot/NOTES.md` per container to record installed envs.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
 - runtime no longer relies on `environment`-type execution capability; build/run flows use the docker tools.
@@ -254,8 +273,9 @@ Read this first, then read only the referenced source-of-truth files.
   - check persistent logger events: `curl -s http://localhost:18080/api/v1/logger/events/recent?limit=20`
   - check stats overview (when stats service running): `curl -s http://localhost:18080/api/v1/stats/overview`
   - check userdocker manager contract: `curl -s http://localhost:18080/api/v1/tools/user-dockers/interface-contract`
-  - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
-  - check userdocker list: `curl -s http://localhost:18080/api/v1/tools/user-dockers`
+ - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
+ - check connected userdocker nodes: `curl -s http://localhost:18080/api/v1/tools/user-dockers/nodes`
+ - check userdocker list (composite `"<node>/<name>"`): `curl -s http://localhost:18080/api/v1/tools/user-dockers`
   - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
   - check secrets list (when memory service running): `curl -s http://localhost:18080/api/v1/secrets`
   - ask runtime via chat to list tool names and confirm the `docker_*` tools are visible.

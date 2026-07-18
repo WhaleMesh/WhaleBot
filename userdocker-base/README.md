@@ -160,6 +160,6 @@ used_by:
 ```
 
 ## Change Safety
-- Keep self-registration payload keys (`name`, `type`, `endpoint`, `health_endpoint`, `capabilities`, `meta`) stable across all userdocker implementations.
+- Keep self-registration payload keys (`name`, `type`, `endpoint`, `capabilities`, `meta`) stable across all userdocker implementations (registration doubles as a 10s heartbeat).
 - Compose helper behavior (`sleep infinity`) should not be mistaken for production spawned container behavior.
 - Endpoint host is built from `COMPONENT_NAME`; changing this affects discoverability.
