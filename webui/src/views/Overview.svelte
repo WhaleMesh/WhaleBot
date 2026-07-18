@@ -349,10 +349,8 @@
               <span class="text-sm">{$_('common.emDash')}</span>
             {/if}
           </dd>
-          <dt class="text-base-content/60">{$_('overview.rowFailures')}</dt>
-          <dd class="text-right">{Number.isFinite(c.failure_count) ? c.failure_count : $_('common.emDash')}</dd>
-          <dt class="text-base-content/60">{$_('overview.rowLastCheck')}</dt>
-          <dd class="wb-mono text-right text-sm">{formatDateTime24(c.last_checked_at)}</dd>
+          <dt class="text-base-content/60">{$_('overview.rowLastSeen')}</dt>
+          <dd class="wb-mono text-right text-sm">{c.last_seen_at ? formatDateTime24(c.last_seen_at) : $_('common.emDash')}</dd>
         </dl>
       </div>
     {:else}

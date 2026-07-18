@@ -1,9 +1,12 @@
 <script>
+  import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
   import { goto } from '../lib/route.js';
   import { _, t } from '../lib/i18n.js';
 
   let name = 'user-task-001';
+  let node = '';
+  let nodes = [];
   let image = '';
   let cmd = '';
   let envText = 'TASK_NAME=demo';
@@ -40,6 +43,7 @@
     try {
       const body = {
         name,
+        node: node || undefined,
         image: image || undefined,
         cmd: cmd ? cmd.split('\n').map((s) => s).filter(Boolean) : undefined,
         env: parseKV(envText),
@@ -108,6 +112,15 @@
     running = false;
   }
 
+  onMount(async () => {
+    try {
+      const res = await api.userDockerNodes();
+      nodes = res.nodes || [];
+    } catch {
+      nodes = [];
+    }
+  });
+
   async function restartContainer() {
     if (!targetName) {
       error = t('toolDocker.targetRequired');
@@ -142,6 +155,18 @@
       <label class="form-control w-full">
         <span class="label label-text text-sm">{$_('toolDocker.name')}</span>
         <input class="input input-bordered w-full" bind:value={name} required />
+      </label>
+      <label class="form-control w-full">
+        <span class="label label-text text-sm">
+          {$_('toolDocker.node')}
+          <span class="label-text-alt font-normal text-base-content/50">{$_('toolDocker.nodeHint')}</span>
+        </span>
+        <select class="select select-bordered w-full" bind:value={node}>
+          <option value="">—</option>
+          {#each nodes as n}
+            <option value={n.node}>{n.node}</option>
+          {/each}
+        </select>
       </label>
       <label class="form-control w-full">
         <span class="label label-text text-sm">

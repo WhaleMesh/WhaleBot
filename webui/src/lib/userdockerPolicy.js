@@ -33,7 +33,10 @@ export function typeBadgeStyle(type) {
  */
 export function parseUserDockerManagerMeta(components) {
   const list = Array.isArray(components) ? components : [];
-  const c = list.find((x) => String(x?.name || '') === 'user-docker-manager');
+  // Managers register per node as "user-docker-manager@<node>".
+  // ponytail: TTL policy is read from the first node; per-node policy display
+  // is the upgrade path if nodes ever diverge.
+  const c = list.find((x) => String(x?.name || '').startsWith('user-docker-manager'));
   const m = c?.meta && typeof c.meta === 'object' ? c.meta : {};
   const ttl = parseInt(String(m.userdocker_temp_ttl_sec || ''), 10);
   const tick = parseInt(String(m.userdocker_idle_check_sec || ''), 10);
