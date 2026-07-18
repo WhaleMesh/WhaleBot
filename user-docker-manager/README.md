@@ -10,10 +10,11 @@ build_context: ./user-docker-manager
 owner: tbd
 runtime: go_http_service_with_docker_socket_access
 default_port: 18082
-health_endpoint: GET /health
+health_endpoint: GET /health (local listener; compose healthcheck + node-side debugging only)
 component_registration:
   enabled: true
-  name: user-docker-manager
+  mechanism: outbound node tunnel (POST {ORCHESTRATOR_URL}/api/v1/nodes/connect + yamux); no registerclient heartbeat
+  name: user-docker-manager@<NODE_NAME> (assigned by orchestrator nodes hub)
   type: tool
   capabilities:
     - userdocker_list
@@ -45,6 +46,8 @@ last_verified_from:
 
 ## Purpose
 - Full user docker lifecycle management via Docker Engine API.
+- Runs as a **node**: dials the orchestrator (`/api/v1/nodes/connect`, header `X-Node-Token`) and serves this whole HTTP API back over the yamux tunnel, reconnecting with backoff. Only outbound connectivity is required, so the node machine needs no public address (see root `docker-compose.node.yml` for standalone node deployment). Tunnel presence is the manager's liveness.
+- Multiple nodes may connect; the orchestrator addresses containers as `"<node>/<name>"` and routes each request to its node (this service itself only ever sees bare container names).
 - Supports dual-scope containers (`session_scoped` / `global_service`) with scope switching.
 - For `session_scoped` creation, container runtime name appends a sanitized `session_id` suffix to reduce naming conflicts across sessions.
 - Supports list/create/start/stop/touch/remove/restart and interface-discovery operations.
@@ -268,7 +271,7 @@ response:
 
 ## Internal Calls
 - Docker Engine API over Unix socket `/var/run/docker.sock`.
-- `POST ${ORCHESTRATOR_URL}/api/v1/components/register` for service registration.
+- `POST ${ORCHESTRATOR_URL}/api/v1/nodes/connect` outbound tunnel (registration + liveness + API transport).
 - Pulls image when not detected as local image tag.
 - Calls spawned container `GET /api/v1/userdocker/interface` to enforce interface contract.
 
@@ -286,15 +289,23 @@ effect: bind_port_for_http_server
 name: ORCHESTRATOR_URL
 default: http://orchestrator:18080
 required: false
-effect: registration_target_and_env_injection_source_for_spawned_containers
+effect: tunnel_dial_target_and_env_injection_source_for_spawned_containers (use the public orchestrator URL on remote nodes)
 ```
 
-### SERVICE_HOST
+### NODE_NAME
 ```yaml
-name: SERVICE_HOST
-default: user-docker-manager
+name: NODE_NAME
+default: container hostname
 required: false
-effect: advertised_endpoint_host_for_registration
+effect: node_identity_for_tunnel_and_composite_container_names (unique per machine; lowercase [a-z0-9_.-])
+```
+
+### NODE_TOKEN
+```yaml
+name: NODE_TOKEN
+default: ""
+required: true_for_tunnel
+effect: shared_secret_presented_to_orchestrator_on_connect
 ```
 
 ### USERDOCKER_DEFAULT_IMAGE
