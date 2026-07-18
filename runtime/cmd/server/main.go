@@ -105,6 +105,7 @@ type usage struct {
 }
 
 type userDockerCreateBody struct {
+	Node                        string            `json:"node,omitempty"`
 	Name                        string            `json:"name"`
 	Image                       string            `json:"image"`
 	Purpose                     string            `json:"purpose,omitempty"`
@@ -229,12 +230,11 @@ func main() {
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "runtime",
-		Type:           "runtime",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"react_chat", "run", "tool_manifest_consumer"},
+		Name:         "runtime",
+		Type:         "runtime",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"react_chat", "run", "tool_manifest_consumer"},
 	})
 	rc.Start(ctx)
 
@@ -586,13 +586,14 @@ func intProp(desc string) map[string]any {
 func userDockerToolDefinitions() []map[string]any {
 	return []map[string]any{
 		fnTool("docker_lifecycle",
-			"Manage workspace containers. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. create returns the real container `name` (may include a session suffix) — always use that returned name in later calls. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
+			"Manage workspace containers. Containers live on nodes: names returned by list/create look like \"nodeA/container-1\" — always pass that full returned name in later calls. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
 			map[string]any{
 				"action": actionProp("Operation to perform.", []string{
 					"list", "list_images", "create", "start", "stop", "restart", "remove",
 					"touch", "switch_scope", "get_interface", "estimate_image_pull", "pull_image", "pull_status",
 				}),
-				"name":                            strProp("Container name (required for most actions except list/list_images)."),
+				"node":                            strProp("Node for create/pull_image/estimate_image_pull. Omit to use the default node; see nodes in list/list_images output."),
+				"name":                            strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\" (required for most actions except list/list_images)."),
 				"image":                           strProp("Docker image reference for create. Prefer framework whalebot/* images."),
 				"purpose":                         strProp("Required for create: one-line description of what this container is for and what will be installed, so future runs can decide whether to reuse it."),
 				"ref":                             strProp("Image reference for estimate_image_pull / pull_image (falls back to `image`)."),
@@ -609,7 +610,7 @@ func userDockerToolDefinitions() []map[string]any {
 			"Run shell commands inside a container. Long commands (dependency installs, builds, downloads >~1min) MUST use async=true, then poll with action=exec_status and the returned job_id. action=logs tails container logs for debugging services. Example: {\"action\":\"exec\",\"name\":\"c1\",\"command_sh\":\"go build ./...\",\"async\":true}",
 			map[string]any{
 				"action":     actionProp("exec runs a command; exec_status polls an async job; logs tails container logs.", []string{"exec", "exec_status", "logs"}),
-				"name":       strProp("Container name."),
+				"name":       strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\"."),
 				"command_sh": strProp("Shell command for exec. May contain {{secret:key}} placeholders."),
 				"cwd":        strProp("Working directory for exec."),
 				"env":        map[string]any{"type": "object", "description": "Optional env key/value map for exec. Values may contain {{secret:key}} placeholders."},
@@ -622,7 +623,7 @@ func userDockerToolDefinitions() []map[string]any {
 			"Read and write files under a container's /workspace. Before reusing a container, read /workspace/.whalebot/NOTES.md (if present) to learn what is installed; after installing new tooling, append an update to NOTES.md via write_file. Example: {\"action\":\"write_file\",\"name\":\"c1\",\"path\":\"/workspace/main.go\",\"content\":\"package main...\"}",
 			map[string]any{
 				"action":         actionProp("File operation.", []string{"list_files", "read_file", "write_file", "delete_file", "mkdir", "move"}),
-				"name":           strProp("Container name."),
+				"name":           strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\"."),
 				"path":           strProp("Target path for list_files/read_file/write_file/delete_file/mkdir."),
 				"from":           strProp("Source path for move."),
 				"to":             strProp("Destination path for move."),
@@ -633,7 +634,7 @@ func userDockerToolDefinitions() []map[string]any {
 		fnTool("export_artifact",
 			"Export a file or directory from a container as a downloadable artifact delivered to the user. Call at most once per artifact — do not re-export after success.",
 			map[string]any{
-				"name": strProp("Container name."),
+				"name": strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\"."),
 				"path": strProp("Path inside the container to export."),
 			},
 			[]string{"name", "path"}),
@@ -1072,6 +1073,7 @@ func redactSecretValues(text string, cache map[string]string) string {
 func (s *reactService) manageUserDocker(ctx context.Context, routes availableRoutes, argsJSON, runtimeSessionID string) (string, error) {
 	var args struct {
 		Action                      string            `json:"action"`
+		Node                        string            `json:"node"`
 		Name                        string            `json:"name"`
 		Image                       string            `json:"image"`
 		Purpose                     string            `json:"purpose"`
@@ -1136,6 +1138,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			auto = *args.AutoRegister
 		}
 		body := userDockerCreateBody{
+			Node:         args.Node,
 			Name:         args.Name,
 			Image:        args.Image,
 			Purpose:      args.Purpose,
@@ -1263,7 +1266,7 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		if ref == "" {
 			return toolJSON(false, nil, "ref (or image) is required for action=estimate_image_pull"), nil
 		}
-		return s.userDockerGetGlobal(ctx, "images/estimate", map[string]string{"ref": ref})
+		return s.userDockerGetGlobal(ctx, "images/estimate", map[string]string{"ref": ref, "node": args.Node})
 	case "pull_image":
 		if !routes.CanUserDockerPull {
 			return toolJSON(false, nil, "pull_image unavailable: manager capability missing"), nil
@@ -1276,6 +1279,9 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			return toolJSON(false, nil, "ref (or image) is required for action=pull_image"), nil
 		}
 		body := map[string]any{"ref": ref}
+		if args.Node != "" {
+			body["node"] = args.Node
+		}
 		if args.ExternalImageApprovedByUser != nil {
 			body["external_image_approved_by_user"] = *args.ExternalImageApprovedByUser
 		}
@@ -1326,6 +1332,16 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 	default:
 		return toolJSON(false, nil, "unsupported action"), nil
 	}
+}
+
+// escapeContainerName escapes a composite "<node>/<container>" name per path
+// segment so the "/" keeps routing node-scoped requests at the orchestrator.
+func escapeContainerName(name string) string {
+	parts := strings.Split(name, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (s *reactService) userDockerList(ctx context.Context, includeStopped bool, sessionID string) (string, error) {
@@ -1397,7 +1413,7 @@ func (s *reactService) userDockerCreate(ctx context.Context, body userDockerCrea
 }
 
 func (s *reactService) userDockerRemove(ctx context.Context, name string, force bool, sessionID string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s?force=%t", s.orchURL, url.PathEscape(name), force)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s?force=%t", s.orchURL, escapeContainerName(name), force)
 	if sessionID != "" {
 		target += "&session_id=" + url.QueryEscape(sessionID)
 	}
@@ -1428,7 +1444,7 @@ func (s *reactService) userDockerRemove(ctx context.Context, name string, force 
 }
 
 func (s *reactService) userDockerRestart(ctx context.Context, name string, timeoutSec int, sessionID string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/restart?timeout_sec=%d", s.orchURL, url.PathEscape(name), timeoutSec)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/restart?timeout_sec=%d", s.orchURL, escapeContainerName(name), timeoutSec)
 	if sessionID != "" {
 		target += "&session_id=" + url.QueryEscape(sessionID)
 	}
@@ -1459,7 +1475,7 @@ func (s *reactService) userDockerRestart(ctx context.Context, name string, timeo
 }
 
 func (s *reactService) userDockerGetInterface(ctx context.Context, name string, port int, sessionID string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/interface", s.orchURL, url.PathEscape(name))
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/interface", s.orchURL, escapeContainerName(name))
 	params := make([]string, 0, 2)
 	if port > 0 {
 		params = append(params, fmt.Sprintf("port=%d", port))
@@ -1504,7 +1520,7 @@ func (s *reactService) userDockerStart(ctx context.Context, name, sessionID stri
 }
 
 func (s *reactService) userDockerStop(ctx context.Context, name string, timeoutSec int, sessionID string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/stop?timeout_sec=%d", s.orchURL, url.PathEscape(name), timeoutSec)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/stop?timeout_sec=%d", s.orchURL, escapeContainerName(name), timeoutSec)
 	if sessionID != "" {
 		target += "&session_id=" + url.QueryEscape(sessionID)
 	}
@@ -1520,7 +1536,7 @@ func (s *reactService) userDockerSwitchScope(ctx context.Context, name, targetSc
 }
 
 func (s *reactService) userDockerPost(ctx context.Context, name, action string, payload map[string]any) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, escapeContainerName(name), action)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -1534,7 +1550,7 @@ func (s *reactService) userDockerPost(ctx context.Context, name, action string, 
 }
 
 func (s *reactService) userDockerPut(ctx context.Context, name, action string, payload map[string]any) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, escapeContainerName(name), action)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
@@ -1548,7 +1564,7 @@ func (s *reactService) userDockerPut(ctx context.Context, name, action string, p
 }
 
 func (s *reactService) userDockerGet(ctx context.Context, name, action string, query map[string]string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, escapeContainerName(name), action)
 	q := url.Values{}
 	for k, v := range query {
 		if v != "" {
@@ -1566,7 +1582,7 @@ func (s *reactService) userDockerGet(ctx context.Context, name, action string, q
 }
 
 func (s *reactService) userDockerDelete(ctx context.Context, name, action string, query map[string]string) (string, error) {
-	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, url.PathEscape(name), action)
+	target := fmt.Sprintf("%s/api/v1/tools/user-dockers/%s/%s", s.orchURL, escapeContainerName(name), action)
 	q := url.Values{}
 	for k, v := range query {
 		if v != "" {
