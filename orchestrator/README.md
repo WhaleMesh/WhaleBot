@@ -27,7 +27,8 @@ last_verified_from:
 ```
 
 ## Purpose
-- Owns the component registry and health lifecycle.
+- Owns the component registry. Liveness is **heartbeat-based**: components re-register every 10s; a component is healthy while its last heartbeat is within `HEARTBEAT_TTL_SEC`. The orchestrator never probes components back (no pull health checks), so components only need outbound connectivity.
+- Accepts **userdocker node tunnels** (`POST /api/v1/nodes/connect`): remote `user-docker-manager` instances dial in with `NODE_TOKEN`, get upgraded to a yamux session, and serve their API back over that connection. Connection presence doubles as their liveness. This lets machines without a public address host userdockers while the orchestrator is the only public server.
 - Exposes the stable northbound API used by `webui` and `adapter-telegram`.
 - `POST /api/v1/chat` requires healthy `runtime`, `session`, and `llm` in the registry; if not, returns `success=false` with an English `error`. Otherwise proxies the request to `runtime` `POST /run` (no orchestrator-local session+llm-openai path).
 
@@ -60,15 +61,35 @@ request:
     type: string (required)
     version: string
     endpoint: string (required)
-    health_endpoint: string (required)
     capabilities: string[]
     meta: object<string,string>
+    operational_state: string (optional; "normal" or a snake_case reason like "no_valid_configuration")
 response:
   success: boolean
   component: registry_component
+notes:
+  - registration IS the heartbeat; components must re-register every ~10s
+  - liveness = last heartbeat within HEARTBEAT_TTL_SEC (default 30)
+  - non-normal operational_state keeps the component live but not ready (excluded from FirstReadyByType/Capability)
 error_behavior:
   transport_errors: http_4xx_or_5xx
   logical_errors: http_400_with_error_field
+```
+
+### Endpoint: POST /api/v1/nodes/connect
+```yaml
+method: POST
+path: /api/v1/nodes/connect
+request:
+  headers:
+    X-Node-Token: shared secret (orchestrator env NODE_TOKEN)
+  content_type: application/json
+  body: { node: string, version: string, capabilities: string[], meta: object }
+response: HTTP 101 upgrade, then yamux (orchestrator=client, node=server)
+notes:
+  - the connected manager appears in the registry as component "user-docker-manager@<node>" (type tool, tunnel=true)
+  - disconnect removes the component; reconnect replaces a stale session
+  - empty NODE_TOKEN disables the endpoint (503)
 ```
 
 ### Endpoint: GET /api/v1/components
@@ -188,118 +209,35 @@ When a healthy `type=skills` component is registered, the orchestrator reverse-p
 
 If no healthy skills component: **503** with `success: false` and an English `error` message.
 
-### Endpoint: GET /api/v1/tools/user-dockers
+### Userdocker API (node-scoped)
+
+Userdockers are managed per **node** (every connected `user-docker-manager` tunnel). Container identity is the composite name `"<node>/<container>"` everywhere on this API.
+
 ```yaml
-method: GET
-path: /api/v1/tools/user-dockers?all=true|false
-request: none
-response: proxied_from_user_docker_manager
+nodes: GET /api/v1/tools/user-dockers/nodes            # connected nodes (name, version, capabilities, meta, connected_at)
+list: GET /api/v1/tools/user-dockers?all=true|false    # fan-out to all nodes; containers get name="<node>/<name>" + node field; per-node failures in node_errors
+create: POST /api/v1/tools/user-dockers                # body may carry "node"; empty -> first node; response name rewritten to "<node>/<name>"
+images: GET /api/v1/tools/user-dockers/images          # fan-out; response { success, nodes: [{node, default_image, allowed_images, profiles}] }
+estimate: GET /api/v1/tools/user-dockers/images/estimate?ref=<image>&node=<node>   # node optional (defaults to first)
+pull: POST /api/v1/tools/user-dockers/pull             # body may carry "node"; returned job_id is composite "<node>/<job>"
+pull_status: GET /api/v1/tools/user-dockers/pull/status?job_id=<node>/<job>
+touch_creator_session: POST /api/v1/tools/user-dockers/touch-creator-session       # broadcast to all nodes, sums touched
+interface_contract: GET /api/v1/tools/user-dockers/interface-contract              # any node (contract is uniform userdocker.v1)
+container_scoped: <METHOD> /api/v1/tools/user-dockers/{node}/{cname}[/action...]   # generic pass-through to that node's manager
 error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
+  no_nodes_connected: http_503 "no userdocker nodes connected"
+  unknown_or_offline_node: http_503 with guidance to use "<node>/<name>" from list
+  node_transport_failure: http_502
 ```
 
-### Endpoint: GET /api/v1/tools/user-dockers/images
-```yaml
-method: GET
-path: /api/v1/tools/user-dockers/images
-request: none
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
-
-### Endpoint Group: image pull + estimate (proxied to user-docker-manager)
-```yaml
-estimate: GET /api/v1/tools/user-dockers/images/estimate?ref=<image>   # capability userdocker_images_estimate
-pull: POST /api/v1/tools/user-dockers/pull                             # capability userdocker_pull (async job)
-pull_status: GET /api/v1/tools/user-dockers/pull/status?job_id=<id>    # capability userdocker_pull
-error_behavior:
-  no_userdocker_manager_component: http_503
-```
-
-### Endpoint Group: async exec + logs (proxied to user-docker-manager)
-```yaml
-exec_status: GET /api/v1/tools/user-dockers/{name}/exec/status?job_id=<id>  # capability userdocker_exec
-logs: GET /api/v1/tools/user-dockers/{name}/logs?tail=200                   # capability userdocker_logs
-error_behavior:
-  no_userdocker_manager_component: http_503
-```
-
-### Endpoint: POST /api/v1/tools/user-dockers
-```yaml
-method: POST
-path: /api/v1/tools/user-dockers
-request:
-  content_type: application/json
-  body:
-    name: string
-    image: string
-    cmd: string[]
-    env: object<string,string>
-    labels: object<string,string>
-    network: string
-    auto_register: boolean
-    port: int
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
-
-### Endpoint: DELETE /api/v1/tools/user-dockers/{name}
-```yaml
-method: DELETE
-path: /api/v1/tools/user-dockers/{name}?force=true|false
-request: none
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
-
-### Endpoint: POST /api/v1/tools/user-dockers/{name}/restart
-```yaml
-method: POST
-path: /api/v1/tools/user-dockers/{name}/restart?timeout_sec=10
-request: none
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
-
-### Endpoint: GET /api/v1/tools/user-dockers/interface-contract
-```yaml
-method: GET
-path: /api/v1/tools/user-dockers/interface-contract
-request: none
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
-
-### Endpoint: GET /api/v1/tools/user-dockers/{name}/interface
-```yaml
-method: GET
-path: /api/v1/tools/user-dockers/{name}/interface?port=9000
-request: none
-response: proxied_from_user_docker_manager
-error_behavior:
-  no_userdocker_manager_component: http_503
-  upstream_failure: propagated_or_502
-```
+Container-scoped actions (`start/stop/restart/remove/touch/switch-scope/exec/exec/status/logs/files/file/files/mkdir/files/move/artifacts/export/interface`) are proxied verbatim (method, body, query) to the node's manager, which validates them.
 
 ## Internal Calls
 - `session`: `/get_context`, `/append_messages`, `/sessions`, `/sessions/{id}`.
 - `llm` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/llm-components/{name}/config`, `POST /api/v1/llm-components/{name}/active`, `POST /api/v1/llm-components/{name}/test` to `{endpoint}/api/v1/llm/*` (WebUI model admin).
 - `adapter` components (by registry `name`): reverse-proxy `GET|PUT /api/v1/adapter-components/{name}/config` to `{endpoint}/api/v1/adapter/config` (WebUI adapter admin, e.g. Telegram token + whitelist).
-- `llm-openai` (typical): `/invoke` at the service root (not under `/api/v1/llm`).
-- `worker`: `/run` when a healthy worker exists.
-- Generic proxy to `tool` components by capability lookup.
-- User docker operations route by capability lookup (`userdocker_*`) to the manager component.
+- `runtime`: `/run` (chat proxy).
+- User docker operations route by node over the yamux tunnels (see Userdocker API above); other proxies dial component endpoints directly.
 
 ## Environment Variables
 ### ORCHESTRATOR_PORT
@@ -310,20 +248,20 @@ required: false
 effect: bind_port_for_http_server
 ```
 
-### HEALTHCHECK_INTERVAL_SEC
+### HEARTBEAT_TTL_SEC
 ```yaml
-name: HEALTHCHECK_INTERVAL_SEC
-default: "5"
+name: HEARTBEAT_TTL_SEC
+default: "30"
 required: false
-effect: registry_component_health_poll_interval_seconds
+effect: component_is_healthy_while_last_heartbeat_is_within_this_many_seconds
 ```
 
-### HEALTHCHECK_FAIL_THRESHOLD
+### NODE_TOKEN
 ```yaml
-name: HEALTHCHECK_FAIL_THRESHOLD
-default: "3"
+name: NODE_TOKEN
+default: "" (tunnel disabled)
 required: false
-effect: consecutive_failures_before_component_removed
+effect: shared_secret_for_userdocker_node_tunnel_connections
 ```
 
 ### ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC

@@ -103,29 +103,24 @@ func main() {
 	}
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:             "llm-openai",
-		Type:             "llm",
-		Version:          "0.1.0",
-		Endpoint:         self,
-		HealthEndpoint:   self + "/health",
-		StatusEndpoint:   self + "/status",
-		Capabilities:     []string{"invoke", "llm_config"},
-		Meta:             metaFromStore(st),
+		Name:         "llm-openai",
+		Type:         "llm",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"invoke", "llm_config"},
+		Meta:         metaFromStore(st),
 	})
+	// Business readiness rides on every heartbeat; no /status polling needed.
+	rc.OperationalStateFn = func() string {
+		if st.HasActive() {
+			return "normal"
+		}
+		return "no_valid_configuration"
+	}
 
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "service": "llm-openai"})
-	})
-	r.Get("/status", func(w http.ResponseWriter, _ *http.Request) {
-		state := "normal"
-		if !st.HasActive() {
-			state = "no_valid_configuration"
-		}
-		writeJSON(w, 200, map[string]any{
-			"service":             "llm-openai",
-			"operational_state":   state,
-		})
 	})
 
 	r.Post("/invoke", func(w http.ResponseWriter, req *http.Request) {

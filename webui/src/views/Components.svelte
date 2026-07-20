@@ -26,7 +26,9 @@
   }
 
   function containerByName(name) {
-    return containers.find((d) => d.name === name) || null;
+    // Userdocker components self-register with their bare container name,
+    // while the containers list uses composite "<node>/<name>".
+    return containers.find((d) => d.name === name || String(d.name).split('/').pop() === name) || null;
   }
 
   /** @param {string | undefined} status */
@@ -152,8 +154,7 @@
           <th>{$_('components.thEndpoint')}</th>
           <th>{$_('components.thStatus')}</th>
           <th>{$_('components.thVersion')}</th>
-          <th>{$_('components.thFailures')}</th>
-          <th>{$_('components.thLastCheck')}</th>
+          <th>{$_('components.thLastSeen')}</th>
         </tr>
       </thead>
       <tbody>
@@ -169,14 +170,13 @@
               >
             </td>
             <td>{c.version}</td>
-            <td>{c.failure_count}</td>
             <td class="wb-mono whitespace-nowrap text-sm">
-              {c.last_checked_at ? formatDateTime24(c.last_checked_at) : $_('common.emDash')}
+              {c.last_seen_at ? formatDateTime24(c.last_seen_at) : $_('common.emDash')}
             </td>
           </tr>
         {:else}
           <tr>
-            <td colspan="8" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
+            <td colspan="7" class="text-center text-base-content/60">{$_('components.emptyUd')}</td>
           </tr>
         {/each}
       </tbody>
@@ -201,8 +201,7 @@
           <th>{$_('components.thEndpoint')}</th>
           <th>{$_('components.thStatus')}</th>
           <th>{$_('components.thVersion')}</th>
-          <th>{$_('components.thFailures')}</th>
-          <th>{$_('components.thLastCheck')}</th>
+          <th>{$_('components.thLastSeen')}</th>
         </tr>
       </thead>
       <tbody>
@@ -222,14 +221,13 @@
               >
             </td>
             <td>{c.version}</td>
-            <td>{c.failure_count}</td>
             <td class="wb-mono whitespace-nowrap text-sm">
-              {c.last_checked_at ? formatDateTime24(c.last_checked_at) : $_('common.emDash')}
+              {c.last_seen_at ? formatDateTime24(c.last_seen_at) : $_('common.emDash')}
             </td>
           </tr>
         {:else}
           <tr>
-            <td colspan="7" class="text-center text-base-content/60">{$_('components.emptyOther')}</td>
+            <td colspan="6" class="text-center text-base-content/60">{$_('components.emptyOther')}</td>
           </tr>
         {/each}
       </tbody>

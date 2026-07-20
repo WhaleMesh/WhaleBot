@@ -12,21 +12,21 @@ import (
 
 // File is the on-disk JSON shape.
 type File struct {
-	BotToken         string  `json:"bot_token"`
-	AllowedUserIDs   []int64 `json:"allowed_user_ids"`
+	BotToken       string  `json:"bot_token"`
+	AllowedUserIDs []int64 `json:"allowed_user_ids"`
 }
 
 // PublicConfig is safe to return to browsers (GET).
 type PublicConfig struct {
-	HasBotToken      bool    `json:"has_bot_token"`
-	BotTokenHint     string  `json:"bot_token_hint,omitempty"`
-	AllowedUserIDs   []int64 `json:"allowed_user_ids"`
+	HasBotToken    bool    `json:"has_bot_token"`
+	BotTokenHint   string  `json:"bot_token_hint,omitempty"`
+	AllowedUserIDs []int64 `json:"allowed_user_ids"`
 }
 
 // PutBody is the JSON body for PUT /config.
 type PutBody struct {
-	BotToken         string  `json:"bot_token"`
-	AllowedUserIDs   []int64 `json:"allowed_user_ids"`
+	BotToken       string  `json:"bot_token"`
+	AllowedUserIDs []int64 `json:"allowed_user_ids"`
 }
 
 type Store struct {

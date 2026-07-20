@@ -7,7 +7,7 @@
 
 Default root documentation is Chinese. Chinese version: [`README.md`](README.md).
 
-WhaleBot is a single-host, Docker Compose based multi-service AI orchestration system.
+WhaleBot is a Docker Compose based multi-service AI orchestration system. A single host runs the full stack; `userdocker` work containers can additionally be distributed across machines — remote nodes only need outbound access to the orchestrator (no public address required, see `docker-compose.node.yml`).
 The design goal is not to put every capability into one process, but to keep capabilities
 as independent services and expose a unified entry through the orchestrator.
 

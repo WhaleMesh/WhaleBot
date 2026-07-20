@@ -75,14 +75,12 @@ func (s *jobStore) update(id string, fn func(*execJob)) {
 }
 
 type registerRequest struct {
-	Name           string            `json:"name"`
-	Type           string            `json:"type"`
-	Version        string            `json:"version"`
-	Endpoint       string            `json:"endpoint"`
-	HealthEndpoint string            `json:"health_endpoint"`
-	StatusEndpoint string            `json:"status_endpoint,omitempty"`
-	Capabilities   []string          `json:"capabilities"`
-	Meta           map[string]string `json:"meta"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	Version      string            `json:"version"`
+	Endpoint     string            `json:"endpoint"`
+	Capabilities []string          `json:"capabilities"`
+	Meta         map[string]string `json:"meta"`
 }
 
 type interfaceEndpoint struct {
@@ -462,12 +460,11 @@ func main() {
 
 	if orchURL != "" {
 		go registerLoop(ctx, orchURL, registerRequest{
-			Name:           name,
-			Type:           ctype,
-			Version:        "0.1.0",
-			Endpoint:       self,
-			HealthEndpoint: self + "/health",
-			Capabilities:   []string{"long_running", "introspection", "userdocker.v1"},
+			Name:         name,
+			Type:         ctype,
+			Version:      "0.1.0",
+			Endpoint:     self,
+			Capabilities: []string{"long_running", "introspection", "userdocker.v1"},
 			Meta: map[string]string{
 				"origin":             "user-docker-manager",
 				"interface_version":  intf.InterfaceVersion,
@@ -659,7 +656,8 @@ func registerLoop(ctx context.Context, orchURL string, req registerRequest) {
 		slog.Info("registered", "name", req.Name)
 		break
 	}
-	t := time.NewTicker(60 * time.Second)
+	// Registration doubles as heartbeat; must stay under orchestrator HEARTBEAT_TTL_SEC.
+	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	for {
 		select {
@@ -667,7 +665,7 @@ func registerLoop(ctx context.Context, orchURL string, req registerRequest) {
 			return
 		case <-t.C:
 			if err := do(); err != nil {
-				slog.Warn("periodic register failed", "err", err)
+				slog.Warn("heartbeat failed", "err", err)
 			}
 		}
 	}

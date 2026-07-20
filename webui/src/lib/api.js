@@ -8,6 +8,11 @@ export function getOrchestratorBase() {
   return base();
 }
 
+/** Container names are composite "<node>/<name>"; keep the "/" for routing. */
+function encodeDockerName(name) {
+  return String(name).split("/").map(encodeURIComponent).join("/");
+}
+
 async function req(path, opts = {}) {
   const res = await fetch(base() + path, {
     cache: "no-store",
@@ -57,6 +62,7 @@ export const api = {
   chat: (body) =>
     req("/api/v1/chat", { method: "POST", body: JSON.stringify(body) }),
   userDockerContract: () => req("/api/v1/tools/user-dockers/interface-contract"),
+  userDockerNodes: () => req("/api/v1/tools/user-dockers/nodes"),
   userDockerList: (includeStopped = false) =>
     req(`/api/v1/tools/user-dockers?all=${includeStopped ? "true" : "false"}`),
   userDockerCreate: (body) =>
@@ -65,16 +71,16 @@ export const api = {
       body: JSON.stringify(body),
     }),
   userDockerRemove: (name, force = false) =>
-    req(`/api/v1/tools/user-dockers/${encodeURIComponent(name)}?force=${force ? "true" : "false"}`, {
+    req(`/api/v1/tools/user-dockers/${encodeDockerName(name)}?force=${force ? "true" : "false"}`, {
       method: "DELETE",
     }),
   userDockerRestart: (name, timeoutSec = 10) =>
-    req(`/api/v1/tools/user-dockers/${encodeURIComponent(name)}/restart?timeout_sec=${timeoutSec}`, {
+    req(`/api/v1/tools/user-dockers/${encodeDockerName(name)}/restart?timeout_sec=${timeoutSec}`, {
       method: "POST",
     }),
   userDockerInterface: (name, port = undefined) => {
     const suffix = port ? `?port=${encodeURIComponent(port)}` : "";
-    return req(`/api/v1/tools/user-dockers/${encodeURIComponent(name)}/interface${suffix}`);
+    return req(`/api/v1/tools/user-dockers/${encodeDockerName(name)}/interface${suffix}`);
   },
   llmConfigGet: (name) =>
     req(`/api/v1/llm-components/${encodeURIComponent(name)}/config`),

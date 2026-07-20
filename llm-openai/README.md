@@ -10,8 +10,7 @@ build_context: ./llm-openai
 owner: tbd
 runtime: go_http_service
 default_port: 18081
-health_endpoint: GET /health
-status_endpoint: GET /status
+health_endpoint: GET /health (liveness only; registration heartbeat carries operational_state)
 component_registration:
   enabled: true
   name: llm-openai
@@ -46,17 +45,11 @@ response:
 notes: Liveness only; does not reflect model configuration.
 ```
 
-### Endpoint: GET /status
+### Operational state (heartbeat field, no /status endpoint)
 ```yaml
-method: GET
-path: /status
-request: none
-response:
-  http_status: 200
-  body:
-    service: llm-openai
-    operational_state: normal | no_valid_configuration
-notes: English snake_case operational_state for orchestrator + WebUI i18n. Used for chat readiness when registered with orchestrator.
+mechanism: every register heartbeat carries operational_state
+values: normal | no_valid_configuration
+notes: English snake_case for orchestrator + WebUI i18n. Non-normal keeps the component live but not chat-ready. The former GET /status endpoint was removed with the pull health checks.
 ```
 
 ### Endpoint: POST /invoke

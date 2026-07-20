@@ -105,21 +105,21 @@ func normalizeBaseURL(raw string) string {
 }
 
 type chatCompletionsRequest struct {
-	Model          string         `json:"model"`
-	Messages       []any          `json:"messages"`
-	Temperature    *float64       `json:"temperature,omitempty"`
-	MaxTokens      *int           `json:"max_tokens,omitempty"`
-	Tools          []Tool         `json:"tools,omitempty"`
-	ToolChoice     any            `json:"tool_choice,omitempty"`
-	ParallelToolCalls *bool      `json:"parallel_tool_calls,omitempty"`
+	Model             string   `json:"model"`
+	Messages          []any    `json:"messages"`
+	Temperature       *float64 `json:"temperature,omitempty"`
+	MaxTokens         *int     `json:"max_tokens,omitempty"`
+	Tools             []Tool   `json:"tools,omitempty"`
+	ToolChoice        any      `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool    `json:"parallel_tool_calls,omitempty"`
 }
 
 type chatCompletionsResponse struct {
 	Choices []struct {
 		Message struct {
-			Role        string          `json:"role"`
-			Content     json.RawMessage `json:"content"`
-			ToolCalls   []ToolCall      `json:"tool_calls"`
+			Role      string          `json:"role"`
+			Content   json.RawMessage `json:"content"`
+			ToolCalls []ToolCall      `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *Usage `json:"usage,omitempty"`

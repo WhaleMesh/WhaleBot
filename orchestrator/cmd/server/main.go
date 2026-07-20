@@ -12,6 +12,7 @@ import (
 
 	"github.com/whalebot/orchestrator/internal/httpapi"
 	"github.com/whalebot/orchestrator/internal/logs"
+	"github.com/whalebot/orchestrator/internal/nodes"
 	"github.com/whalebot/orchestrator/internal/registry"
 )
 
@@ -36,34 +37,43 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	port := getenv("ORCHESTRATOR_PORT", "18080")
-	interval := time.Duration(getenvInt("HEALTHCHECK_INTERVAL_SEC", 5)) * time.Second
-	threshold := getenvInt("HEALTHCHECK_FAIL_THRESHOLD", 3)
+	heartbeatTTL := time.Duration(getenvInt("HEARTBEAT_TTL_SEC", 30)) * time.Second
 	upstreamTimeout := time.Duration(getenvInt("ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC", 240)) * time.Second
+	nodeToken := os.Getenv("NODE_TOKEN")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	reg := registry.New()
+	reg := registry.New(heartbeatTTL)
 	ring := logs.NewRing(200)
 	ring.Append(logs.Entry{Time: time.Now(), Level: "info", Message: "orchestrator starting",
 		Fields: map[string]string{"port": port}})
 
-	hc := registry.NewHealthChecker(reg, interval, threshold, func(event string, c *registry.Component) {
-		ring.Append(logs.Entry{
-			Time:    time.Now(),
-			Level:   "info",
-			Message: event,
-			Fields: map[string]string{
-				"component":     c.Name,
-				"type":          c.Type,
-				"status":        string(c.Status),
-				"failure_count": strconv.Itoa(c.FailureCount),
-			},
+	hub := nodes.NewHub(nodeToken, upstreamTimeout)
+	hub.OnConnect = func(h nodes.Hello) {
+		meta := map[string]string{"node": h.Node}
+		for k, v := range h.Meta {
+			meta[k] = v
+		}
+		reg.Upsert(&registry.Component{
+			Name:         nodes.ComponentName(h.Node),
+			Type:         "tool",
+			Version:      h.Version,
+			Endpoint:     "tunnel://" + h.Node,
+			Capabilities: h.Capabilities,
+			Meta:         meta,
+			Tunnel:       true,
 		})
-	})
-	hc.Start(ctx)
+		ring.Append(logs.Entry{Time: time.Now(), Level: "info", Message: "userdocker node connected",
+			Fields: map[string]string{"node": h.Node, "version": h.Version}})
+	}
+	hub.OnDisconnect = func(node string) {
+		reg.Delete(nodes.ComponentName(node))
+		ring.Append(logs.Entry{Time: time.Now(), Level: "warn", Message: "userdocker node disconnected",
+			Fields: map[string]string{"node": node}})
+	}
 
-	srv := httpapi.NewServer(reg, ring, upstreamTimeout)
+	srv := httpapi.NewServer(reg, ring, hub, upstreamTimeout)
 	httpServer := &http.Server{
 		Addr:              ":" + port,
 		Handler:           srv.Router(),
@@ -71,7 +81,7 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("orchestrator listening", "port", port, "interval", interval.String(), "threshold", threshold, "upstream_timeout", upstreamTimeout.String())
+		slog.Info("orchestrator listening", "port", port, "heartbeat_ttl", heartbeatTTL.String(), "upstream_timeout", upstreamTimeout.String(), "node_tunnel_enabled", nodeToken != "")
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server failed", "err", err)
 			os.Exit(1)

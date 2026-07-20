@@ -154,12 +154,11 @@ func main() {
 	}()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "session",
-		Type:           "session",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"get_context", "append_messages", "clear_context"},
+		Name:         "session",
+		Type:         "session",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"get_context", "append_messages", "clear_context"},
 	})
 	rc.Start(ctx)
 

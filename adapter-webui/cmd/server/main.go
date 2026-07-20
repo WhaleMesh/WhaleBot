@@ -261,13 +261,12 @@ type loggerEventsResponse struct {
 // --- Register client ---
 
 type registerRequest struct {
-	Name           string            `json:"name"`
-	Type           string            `json:"type"`
-	Version        string            `json:"version"`
-	Endpoint       string            `json:"endpoint"`
-	HealthEndpoint string            `json:"health_endpoint"`
-	Capabilities   []string          `json:"capabilities"`
-	Meta           map[string]string `json:"meta"`
+	Name         string            `json:"name"`
+	Type         string            `json:"type"`
+	Version      string            `json:"version"`
+	Endpoint     string            `json:"endpoint"`
+	Capabilities []string          `json:"capabilities"`
+	Meta         map[string]string `json:"meta"`
 }
 
 func registerLoop(ctx context.Context, orchURL string, req registerRequest) {
@@ -309,7 +308,8 @@ func registerLoop(ctx context.Context, orchURL string, req registerRequest) {
 		break
 	}
 
-	ticker := time.NewTicker(60 * time.Second)
+	// Registration doubles as heartbeat; must stay under orchestrator HEARTBEAT_TTL_SEC.
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -317,7 +317,7 @@ func registerLoop(ctx context.Context, orchURL string, req registerRequest) {
 			return
 		case <-ticker.C:
 			if err := doRegister(); err != nil {
-				slog.Warn("periodic re-register failed", "service", req.Name, "err", err)
+				slog.Warn("heartbeat failed", "service", req.Name, "err", err)
 			}
 		}
 	}
@@ -1079,13 +1079,12 @@ func main() {
 
 	// Orchestrator registration (runs in background goroutine)
 	go registerLoop(appCtx, orchURL, registerRequest{
-		Name:           "adapter-webui",
-		Type:           "adapter",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"webui_chat"},
-		Meta:           map[string]string{},
+		Name:         "adapter-webui",
+		Type:         "adapter",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"webui_chat"},
+		Meta:         map[string]string{},
 	})
 
 	<-appCtx.Done()

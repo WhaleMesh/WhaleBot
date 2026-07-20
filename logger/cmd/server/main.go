@@ -119,7 +119,7 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	rc := registerclient.New(orchURL, registerclient.RegisterRequest{Name: "logger", Type: "logger", Version: "0.1.0", Endpoint: self, HealthEndpoint: self + "/health", Capabilities: []string{"events_write", "events_recent"}})
+	rc := registerclient.New(orchURL, registerclient.RegisterRequest{Name: "logger", Type: "logger", Version: "0.1.0", Endpoint: self, Capabilities: []string{"events_write", "events_recent"}})
 	rc.Start(ctx)
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {

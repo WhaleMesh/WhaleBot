@@ -390,12 +390,11 @@ func main() {
 	})
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "adapter-telegram",
-		Type:           "adapter",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"telegram_text"},
+		Name:         "adapter-telegram",
+		Type:         "adapter",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"telegram_text"},
 	})
 	rc.Start(appCtx)
 

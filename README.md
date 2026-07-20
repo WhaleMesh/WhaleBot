@@ -7,7 +7,7 @@
 
 默认文档语言为中文。English version: [`README.en.md`](README.en.md)。
 
-WhaleBot 是一个运行在单机 Docker Compose 上的多组件 AI 编排系统。  
+WhaleBot 是一个以 Docker Compose 为核心的多组件 AI 编排系统：单机即可完整运行；`userdocker` 工作容器还可分布到多台机器（远端节点只需能出站连接编排器，无需公网地址）。  
 它的目标不是把所有能力塞进一个进程，而是让各能力作为独立服务协作，并由编排层统一对外提供入口。
 
 本项目**面向开发者**：希望为构建智能体的人提供尽可能高的组合与替换自由。你可以把仓库里自带的服务当作起点，用自建镜像替换或并行扩展其中任意一环，而不必 fork 单体应用后再改天换地。
@@ -84,6 +84,17 @@ docker compose up -d --build
 6. **API 入口（可选）**
 
 编排层 HTTP：`http://localhost:18080`
+
+7. **扩展 userdocker 节点（可选，分布式）**
+
+任何能出站访问编排器的机器都可以成为 userdocker 节点：`user-docker-manager` 主动拨号 `POST /api/v1/nodes/connect`（凭 `NODE_TOKEN`），随后通过该反向隧道对编排器提供完整 API，机器本身无需公网地址。容器统一以 `"<节点>/<容器名>"` 复合名寻址。
+
+```bash
+# 在远端机器上（先改好 NODE_TOKEN，与主机 .env 保持一致）
+ORCHESTRATOR_PUBLIC_URL=http://your-hub-host:18080 \
+NODE_NAME=gpu-box-1 NODE_TOKEN=<shared-token> \
+docker compose -f docker-compose.node.yml up -d --build
+```
 
 **关于当前内置示例**：仓库目前只内置**一个**用户侧适配器（Telegram）与**一条** LLM 路径（`llm-openai`），用于构成最小可运行闭环。更多适配器与模型后端将随组件 **schema** 与 **AGENT** 文档完善后更易扩展。
 

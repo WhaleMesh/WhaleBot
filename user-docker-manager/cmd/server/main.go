@@ -21,7 +21,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/whalebot/userdockermanager/internal/creator"
-	"github.com/whalebot/userdockermanager/internal/registerclient"
+	"github.com/whalebot/userdockermanager/internal/tunnel"
 )
 
 func getenv(k, def string) string {
@@ -58,8 +58,10 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	port := getenv("USER_DOCKER_MANAGER_PORT", "18082")
 	orchURL := getenv("ORCHESTRATOR_URL", "http://orchestrator:18080")
-	selfHost := getenv("SERVICE_HOST", "user-docker-manager")
-	self := "http://" + selfHost + ":" + port
+	nodeName := getenv("NODE_NAME", "")
+	if nodeName == "" {
+		nodeName, _ = os.Hostname()
+	}
 	defaultImage := getenv("USERDOCKER_DEFAULT_IMAGE", "whalebot/userdocker-base:latest")
 	defaultNet := getenv("DOCKER_NETWORK", "whalebot_net")
 	allowedImages := parseCSV(getenv("USERDOCKER_ALLOWED_IMAGES", defaultImage))
@@ -590,46 +592,51 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "user-docker-manager",
-		Type:           "tool",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities: []string{
-			"userdocker_list",
-			"userdocker_create",
-			"userdocker_start",
-			"userdocker_stop",
-			"userdocker_touch",
-			"userdocker_switch_scope",
-			"userdocker_remove",
-			"userdocker_restart",
-			"userdocker_exec",
-			"userdocker_files",
-			"userdocker_artifact_export",
-			"userdocker_interface_contract",
-			"userdocker_images",
-			"userdocker_images_estimate",
-			"userdocker_pull",
-			"userdocker_logs",
-			"userdocker_interface_discovery",
-			"userdocker_touch_creator",
-		},
-		Meta: map[string]string{
-			"default_image":             defaultImage,
-			"default_network":           defaultNet,
-			"contract_version":          "userdocker.v1",
-			"userdocker_temp_ttl_sec":   strconv.Itoa(tempTTLSec),
-			"userdocker_idle_check_sec": strconv.Itoa(idleCheckValue),
+	// The manager is a node: it dials the orchestrator and serves its API over
+	// the tunnel, so machines without a public address can host userdockers.
+	// Connection presence is the manager's liveness; no register heartbeat.
+	go tunnel.Run(ctx, tunnel.Config{
+		OrchestratorURL: orchURL,
+		Token:           getenv("NODE_TOKEN", ""),
+		Handler:         r,
+		Hello: tunnel.Hello{
+			Node:    nodeName,
+			Version: "0.1.0",
+			Capabilities: []string{
+				"userdocker_list",
+				"userdocker_create",
+				"userdocker_start",
+				"userdocker_stop",
+				"userdocker_touch",
+				"userdocker_switch_scope",
+				"userdocker_remove",
+				"userdocker_restart",
+				"userdocker_exec",
+				"userdocker_files",
+				"userdocker_artifact_export",
+				"userdocker_interface_contract",
+				"userdocker_images",
+				"userdocker_images_estimate",
+				"userdocker_pull",
+				"userdocker_logs",
+				"userdocker_interface_discovery",
+				"userdocker_touch_creator",
+			},
+			Meta: map[string]string{
+				"default_image":             defaultImage,
+				"default_network":           defaultNet,
+				"contract_version":          "userdocker.v1",
+				"userdocker_temp_ttl_sec":   strconv.Itoa(tempTTLSec),
+				"userdocker_idle_check_sec": strconv.Itoa(idleCheckValue),
+			},
 		},
 	})
-	rc.Start(ctx)
 	go runIdleSweeper(ctx, cr, tempIdle, time.Duration(idleCheckValue)*time.Second)
 
+	// Local listener stays for the compose healthcheck and node-side debugging.
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		slog.Info("user-docker-manager listening", "port", port, "default_image", defaultImage, "default_network", defaultNet, "temp_ttl", tempIdle.String())
+		slog.Info("user-docker-manager listening", "node", nodeName, "port", port, "default_image", defaultImage, "default_network", defaultNet, "temp_ttl", tempIdle.String())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("listen failed", "err", err)
 			os.Exit(1)

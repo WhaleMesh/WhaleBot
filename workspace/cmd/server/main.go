@@ -60,7 +60,7 @@ func main() {
 	})
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	rc := registerclient.New(orchURL, registerclient.RegisterRequest{Name: "workspace", Type: "workspace", Version: "0.1.0", Endpoint: self, HealthEndpoint: self + "/health", Capabilities: []string{"workspace_list", "workspace_create"}})
+	rc := registerclient.New(orchURL, registerclient.RegisterRequest{Name: "workspace", Type: "workspace", Version: "0.1.0", Endpoint: self, Capabilities: []string{"workspace_list", "workspace_create"}})
 	rc.Start(ctx)
 	srv := &http.Server{Addr: ":" + port, Handler: r, ReadHeaderTimeout: 5 * time.Second}
 	go srv.ListenAndServe()

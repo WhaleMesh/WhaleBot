@@ -83,12 +83,11 @@ func main() {
 	defer cancel()
 
 	rc := registerclient.New(orchURL, registerclient.RegisterRequest{
-		Name:           "env-golang",
-		Type:           "environment",
-		Version:        "0.1.0",
-		Endpoint:       self,
-		HealthEndpoint: self + "/health",
-		Capabilities:   []string{"run_go"},
+		Name:         "env-golang",
+		Type:         "environment",
+		Version:      "0.1.0",
+		Endpoint:     self,
+		Capabilities: []string{"run_go"},
 	})
 	rc.Start(ctx)
 

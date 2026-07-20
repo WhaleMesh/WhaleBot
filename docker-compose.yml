@@ -9,8 +9,8 @@ services:
     container_name: orchestrator
     environment:
       ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-18080}
-      HEALTHCHECK_INTERVAL_SEC: ${HEALTHCHECK_INTERVAL_SEC:-5}
-      HEALTHCHECK_FAIL_THRESHOLD: ${HEALTHCHECK_FAIL_THRESHOLD:-3}
+      HEARTBEAT_TTL_SEC: ${HEARTBEAT_TTL_SEC:-30}
+      NODE_TOKEN: ${NODE_TOKEN:-whalebot-node-token}
       ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC: ${ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC:-240}
     ports:
       - "${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}"
@@ -132,7 +132,8 @@ services:
     environment:
       USER_DOCKER_MANAGER_PORT: ${USER_DOCKER_MANAGER_PORT:-18082}
       ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
-      SERVICE_HOST: user-docker-manager
+      NODE_NAME: ${NODE_NAME:-local}
+      NODE_TOKEN: ${NODE_TOKEN:-whalebot-node-token}
       USERDOCKER_DEFAULT_IMAGE: whalebot/userdocker-base:latest
       USERDOCKER_ALLOWED_IMAGES: ${USERDOCKER_ALLOWED_IMAGES:-whalebot/userdocker-base:latest,whalebot/userdocker-golang:latest}
       DOCKER_NETWORK: whalebot_net
