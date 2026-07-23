@@ -27,6 +27,7 @@ component_registration:
     - userdocker_restart
     - userdocker_exec
     - userdocker_files
+    - userdocker_copy
     - userdocker_artifact_export
     - userdocker_interface_contract
     - userdocker_images
@@ -169,6 +170,23 @@ response:
     done: boolean
     error: string
     started_at: string
+```
+
+### Endpoint: POST /api/v1/user-dockers/copy
+```yaml
+method: POST
+path: /api/v1/user-dockers/copy
+body:
+  from_name: string (source container, required)
+  from_path: string (required)
+  to_name: string (target container, required)
+  to_path: string (required)
+  session_id: string
+response:
+  success: boolean
+  size: integer   # bytes copied
+  error: string
+note: cross-container binary-safe file copy on this node (manager fetches base64 from the source file API and PUTs to the target; 64MB cap). Both containers are session-authorized; file bytes never enter LLM context.
 ```
 
 ### Endpoint: GET /api/v1/user-dockers/{name}/logs
@@ -366,6 +384,7 @@ query_to_endpoint:
   estimate_image_pull: GET /api/v1/user-dockers/images/estimate
   pull_image: POST /api/v1/user-dockers/pull
   pull_status: GET /api/v1/user-dockers/pull/status
+  copy_file: POST /api/v1/user-dockers/copy
   list_userdockers: GET /api/v1/user-dockers
   create_userdocker: POST /api/v1/user-dockers
   userdocker_logs: GET /api/v1/user-dockers/{name}/logs

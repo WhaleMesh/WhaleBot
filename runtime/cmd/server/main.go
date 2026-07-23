@@ -586,7 +586,7 @@ func intProp(desc string) map[string]any {
 func userDockerToolDefinitions() []map[string]any {
 	return []map[string]any{
 		fnTool("docker_lifecycle",
-			"Manage workspace containers. Containers live on nodes: names returned by list/create look like \"nodeA/container-1\" — always pass that full returned name in later calls. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
+			"Manage workspace containers. start/stop only change the container run state; they never execute commands — use docker_exec to run anything. Containers live on nodes: names returned by list/create look like \"nodeA/container-1\" — always pass that full returned name in later calls. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); if the user explicitly names a framework whalebot/* image, create directly with that image; 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
 			map[string]any{
 				"action": actionProp("Operation to perform.", []string{
 					"list", "list_images", "create", "start", "stop", "restart", "remove",
@@ -620,13 +620,15 @@ func userDockerToolDefinitions() []map[string]any {
 			},
 			[]string{"action", "name"}),
 		fnTool("docker_files",
-			"Read and write files under a container's /workspace. Before reusing a container, read /workspace/.whalebot/NOTES.md (if present) to learn what is installed; after installing new tooling, append an update to NOTES.md via write_file. Example: {\"action\":\"write_file\",\"name\":\"c1\",\"path\":\"/workspace/main.go\",\"content\":\"package main...\"}",
+			"Read and write files under a container's /workspace. action=copy_file copies any file (including binaries) from one container to another on the same node — use it instead of shell pipelines to move build outputs, e.g. {\"action\":\"copy_file\",\"name\":\"nodeA/build-1\",\"path\":\"/workspace/app\",\"to_name\":\"nodeA/run-1\",\"to_path\":\"/workspace/app\"}. Before reusing a container, read /workspace/.whalebot/NOTES.md (if present) to learn what is installed; after installing new tooling, append an update to NOTES.md via write_file. Example: {\"action\":\"write_file\",\"name\":\"c1\",\"path\":\"/workspace/main.go\",\"content\":\"package main...\"}",
 			map[string]any{
-				"action":         actionProp("File operation.", []string{"list_files", "read_file", "write_file", "delete_file", "mkdir", "move"}),
-				"name":           strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\"."),
-				"path":           strProp("Target path for list_files/read_file/write_file/delete_file/mkdir."),
+				"action":         actionProp("File operation.", []string{"list_files", "read_file", "write_file", "delete_file", "mkdir", "move", "copy_file"}),
+				"name":           strProp("Full container name as returned by list/create, e.g. \"nodeA/container-1\". For copy_file this is the SOURCE container."),
+				"path":           strProp("Target path for list_files/read_file/write_file/delete_file/mkdir. For copy_file this is the SOURCE path."),
 				"from":           strProp("Source path for move."),
 				"to":             strProp("Destination path for move."),
+				"to_name":        strProp("For copy_file: destination container (full name, same node as source)."),
+				"to_path":        strProp("For copy_file: destination path inside the destination container."),
 				"content":        strProp("Plain-text content for write_file. Prefer this for source/config files."),
 				"content_base64": strProp("Base64 content for write_file (binary files only)."),
 			},
@@ -1095,6 +1097,8 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 		Path                        string            `json:"path"`
 		From                        string            `json:"from"`
 		To                          string            `json:"to"`
+		ToName                      string            `json:"to_name"`
+		ToPath                      string            `json:"to_path"`
 		ContentB64                  string            `json:"content_base64"`
 		Content                     string            `json:"content"`
 		Command                     []string          `json:"command"`
@@ -1324,6 +1328,14 @@ func (s *reactService) manageUserDocker(ctx context.Context, routes availableRou
 			return toolJSON(false, nil, "move unavailable: manager capability missing"), nil
 		}
 		return s.userDockerPost(ctx, args.Name, "files/move", map[string]any{"from": args.From, "to": args.To, "session_id": sessionID})
+	case "copy_file":
+		if !routes.CanUserDockerFiles {
+			return toolJSON(false, nil, "copy_file unavailable: manager capability missing"), nil
+		}
+		if args.Name == "" || args.Path == "" || args.ToName == "" || args.ToPath == "" {
+			return toolJSON(false, nil, "name (source container), path (source path), to_name and to_path are required for action=copy_file"), nil
+		}
+		return s.userDockerCopyFile(ctx, args.Name, args.Path, args.ToName, args.ToPath, sessionID)
 	case "export_artifact":
 		if !routes.CanUserDockerExport {
 			return toolJSON(false, nil, "export_artifact unavailable: manager capability missing"), nil
@@ -1616,6 +1628,28 @@ func (s *reactService) userDockerGetGlobal(ctx context.Context, action string, q
 	if err != nil {
 		return toolJSON(false, nil, err.Error()), nil
 	}
+	return s.userDockerDoRequest(req)
+}
+
+// userDockerCopyFile copies a file between two containers on the same node via
+// the orchestrator copy route — binary-safe, bytes never enter model context.
+func (s *reactService) userDockerCopyFile(ctx context.Context, fromName, fromPath, toName, toPath, sessionID string) (string, error) {
+	raw, err := json.Marshal(map[string]any{
+		"from_name":  fromName,
+		"from_path":  fromPath,
+		"to_name":    toName,
+		"to_path":    toPath,
+		"session_id": sessionID,
+	})
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.orchURL+"/api/v1/tools/user-dockers/copy", bytes.NewReader(raw))
+	if err != nil {
+		return toolJSON(false, nil, err.Error()), nil
+	}
+	req.Header.Set("Content-Type", "application/json")
 	return s.userDockerDoRequest(req)
 }
 

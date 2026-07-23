@@ -91,6 +91,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/images/estimate", s.handleUserDockerImageEstimate)
 			r.Post("/pull", s.handleUserDockerPull)
 			r.Get("/pull/status", s.handleUserDockerPullStatus)
+			r.Post("/copy", s.handleUserDockerCopy)
 			r.Post("/touch-creator-session", s.handleUserDockerTouchCreatorSession)
 			// Everything container-scoped: {node}/{cname}[/action...] passes
 			// through to the node's manager, which validates the action.
