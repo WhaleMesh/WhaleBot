@@ -80,6 +80,7 @@ error_behavior: standard_http_status
 ```yaml
 exec: POST /api/v1/userdocker/exec
 exec_note: body accepts async=true -> returns {job_id}; sync path clamps timeout to 300s, async caps at 7200s
+exec_shell: command_sh runs via `sh -c` (non-login) so image-provided PATH entries (e.g. /usr/local/go/bin in userdocker-golang) are preserved
 exec_status: GET /api/v1/userdocker/exec/status?job_id=<id>
 files_list: GET /api/v1/userdocker/files?path=.
 file_read: GET /api/v1/userdocker/file?path=...
@@ -88,7 +89,7 @@ file_delete: DELETE /api/v1/userdocker/file?path=...
 mkdir: POST /api/v1/userdocker/files/mkdir
 move: POST /api/v1/userdocker/files/move
 artifact_export: GET /api/v1/userdocker/artifacts/export?path=...
-path_policy: all paths are constrained under WORKSPACE_ROOT
+path_policy: all paths are constrained under WORKSPACE_ROOT; absolute paths already under the root are taken as-is ("/workspace/main.go" -> "/workspace/main.go", NOT doubled), other inputs are rooted at WORKSPACE_ROOT
 ```
 
 ## Internal Calls
