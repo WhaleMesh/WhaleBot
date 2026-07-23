@@ -107,6 +107,28 @@
     return Math.round(v);
   }
 
+  // Long local-model names blow up the table width. First keep only the
+  // initial of every dash segment after the first, then hard-truncate:
+  // "Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-GGUF" -> "Gemma4-1-Q-U-H-B-G".
+  // Full name stays available via the cell's title attribute.
+  function abbrevModel(name, max = 22) {
+    if (!name) return '—';
+    if (name.length <= max) return name;
+    const parts = name.split('-');
+    let out = parts.length > 1 ? parts[0] + '-' + parts.slice(1).map((p) => p.charAt(0)).join('-') : name;
+    if (out.length > max) out = out.slice(0, max - 1) + '…';
+    return out;
+  }
+
+  /** Short local wall time MM-DD HH:mm; full timestamp goes in title. */
+  function fmtShortDate(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return '—';
+    const p = (/** @type {number} */ n) => String(n).padStart(2, '0');
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
   function fmtLatency(ms) {
     if (!ms) return '—';
     if (ms < 1000) return ms + 'ms';
@@ -204,19 +226,23 @@
       {/each}
     </div>
   {:else}
-    <table class="table wb-table table-list text-base">
+    <table class="table table-sm wb-table table-list">
       <thead>
         <tr>
           <th>{$_('benchmark.thModel')}</th>
-          <th>{$_('benchmark.thDate')}</th>
-          <th>{$_('benchmark.thStatus')}</th>
+          <th>
+            <div class="leading-tight">{$_('benchmark.thStatus')}</div>
+            <div class="leading-tight">{$_('benchmark.thDate')}</div>
+          </th>
           <th>{$_('benchmark.thTotal')}</th>
           <th>{$_('benchmark.thPlanGate')}</th>
           <th>{$_('benchmark.thToolCall')}</th>
           <th>{$_('benchmark.thReact')}</th>
           <th>{$_('benchmark.thE2E')}</th>
-          <th>{$_('benchmark.thLatency')}</th>
-          <th>{$_('benchmark.thTokens')}</th>
+          <th>
+            <div class="leading-tight">{$_('benchmark.thLatency')}</div>
+            <div class="leading-tight">{$_('benchmark.thTokens')}</div>
+          </th>
           <th class="w-1 whitespace-nowrap">{$_('benchmark.thActions')}</th>
         </tr>
       </thead>
@@ -229,27 +255,34 @@
             role="button"
             tabindex="0"
           >
-            <td class="whitespace-nowrap">
-              <span class="font-medium">{r.model_name || '—'}</span>
-              <span class="wb-mono ml-1 text-xs text-base-content/50">{r.model}</span>
-              {#if r.id === bestId}
-                <span class="badge badge-success badge-sm ml-1">{$_('benchmark.best')}</span>
-              {/if}
-            </td>
-            <td class="whitespace-nowrap font-mono text-xs tabular-nums text-base-content/70">
-              {r.started_at ? formatDateTime24(r.started_at) : '—'}
+            <td>
+              <div class="flex max-w-56 items-center gap-1">
+                <span class="truncate font-medium" title={r.model_name || ''}>{abbrevModel(r.model_name)}</span>
+                {#if r.id === bestId}
+                  <span class="badge badge-success badge-sm shrink-0">{$_('benchmark.best')}</span>
+                {/if}
+              </div>
+              <div class="wb-mono max-w-56 truncate text-xs text-base-content/50" title={r.model || ''}>
+                {abbrevModel(r.model)}
+              </div>
             </td>
             <td class="whitespace-nowrap">
               {#if r.status === 'running'}
-                <span class="flex items-center gap-1 text-info">
-                  <span class="loading loading-spinner loading-xs"></span>
-                  <span class="text-xs">{r.progress || $_('benchmark.statusRunning')}</span>
+                <span class="flex max-w-40 items-center gap-1 text-info">
+                  <span class="loading loading-spinner loading-xs shrink-0"></span>
+                  <span class="truncate text-xs" title={r.progress || ''}>{r.progress || $_('benchmark.statusRunning')}</span>
                 </span>
               {:else if r.status === 'failed'}
                 <span class="badge badge-error badge-sm">{$_('benchmark.statusFailed')}</span>
               {:else}
                 <span class="badge badge-ghost badge-sm">{$_('benchmark.statusCompleted')}</span>
               {/if}
+              <div
+                class="mt-0.5 font-mono text-xs tabular-nums text-base-content/70"
+                title={r.started_at ? formatDateTime24(r.started_at) : ''}
+              >
+                {fmtShortDate(r.started_at)}
+              </div>
             </td>
             <td class="wb-mono text-base font-semibold {scoreClass(r.scores?.total)}">
               {r.status === 'completed' ? fmtScore(r.scores?.total) : '—'}
@@ -264,29 +297,43 @@
                 —
               {/if}
             </td>
-            <td class="wb-mono text-sm">{fmtLatency(r.metrics?.avg_latency_ms)}</td>
-            <td class="wb-mono text-sm">{fmtTokens(r.metrics?.total_tokens)}</td>
+            <td class="wb-mono whitespace-nowrap text-xs">
+              <div>{fmtLatency(r.metrics?.avg_latency_ms)}</div>
+              <div class="text-base-content/60">{fmtTokens(r.metrics?.total_tokens)}</div>
+            </td>
             <td class="whitespace-nowrap">
               <button
                 type="button"
-                class="btn btn-xs btn-outline"
+                class="btn btn-ghost btn-xs btn-square"
+                aria-label={$_('benchmark.download')}
+                title={$_('benchmark.download')}
                 on:click={(event) => downloadRun(r, event)}
               >
-                {$_('benchmark.download')}
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
               </button>
               <button
                 type="button"
-                class="btn btn-xs btn-outline btn-error"
+                class="btn btn-ghost btn-xs btn-square text-error"
                 disabled={deletingId === r.id || r.status === 'running'}
+                aria-label={$_('benchmark.delete')}
+                title={deletingId === r.id ? $_('benchmark.deleting') : $_('benchmark.delete')}
                 on:click={(event) => remove(r, event)}
               >
-                {deletingId === r.id ? $_('benchmark.deleting') : $_('benchmark.delete')}
+                {#if deletingId === r.id}
+                  <span class="loading loading-spinner loading-xs"></span>
+                {:else}
+                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                  </svg>
+                {/if}
               </button>
             </td>
           </tr>
           {#if expandedId === r.id}
             <tr>
-              <td colspan="11" class="bg-base-200/40 p-3">
+              <td colspan="9" class="bg-base-200/40 p-3">
                 {#if r.error}
                   <div role="alert" class="alert alert-soft alert-error mb-3 text-sm">{r.error}</div>
                 {/if}
@@ -373,7 +420,7 @@
           {/if}
         {:else}
           <tr>
-            <td colspan="11" class="text-center text-base-content/60">{$_('benchmark.empty')}</td>
+            <td colspan="9" class="text-center text-base-content/60">{$_('benchmark.empty')}</td>
           </tr>
         {/each}
       </tbody>
