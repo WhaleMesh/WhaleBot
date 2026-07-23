@@ -95,6 +95,10 @@ func main() {
 	selfHost := getenv("SERVICE_HOST", "llm-openai")
 	self := "http://" + selfHost + ":" + port
 	cfgPath := getenv("LLM_CONFIG_PATH", "/data/llm-config.json")
+	invokeTimeout := 60 * time.Second
+	if v, err := strconv.Atoi(getenv("LLM_INVOKE_TIMEOUT_SEC", "60")); err == nil && v > 0 {
+		invokeTimeout = time.Duration(v) * time.Second
+	}
 
 	st, err := configstore.Open(cfgPath)
 	if err != nil {
@@ -135,7 +139,11 @@ func main() {
 			return
 		}
 		client := openai.New(prof.BaseURL, prof.APIKey, prof.Model)
-		ctx, cancel := context.WithTimeout(req.Context(), 60*time.Second)
+		// Local models re-ingesting a long prompt can legitimately exceed 60s;
+		// LLM_INVOKE_TIMEOUT_SEC raises the budget. Client timeout gets a small
+		// margin so the context deadline is the one that fires.
+		client.HTTP.Timeout = invokeTimeout + 5*time.Second
+		ctx, cancel := context.WithTimeout(req.Context(), invokeTimeout)
 		defer cancel()
 		msg, usage, err := client.Invoke(ctx, ir.Messages, ir.Tools, ir.Params)
 		if err != nil {

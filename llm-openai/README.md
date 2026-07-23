@@ -111,6 +111,14 @@ required: false
 effect: JSON file for model profiles and active_model_id (compose mounts llm_openai_data at /data)
 ```
 
+### LLM_INVOKE_TIMEOUT_SEC
+```yaml
+name: LLM_INVOKE_TIMEOUT_SEC
+default: "60"
+required: false
+effect: per-invoke upstream budget in seconds (request context deadline; HTTP client gets +5s margin). Raise for slow local models that re-ingest long prompts.
+```
+
 ### ORCHESTRATOR_URL
 ```yaml
 name: ORCHESTRATOR_URL

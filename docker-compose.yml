@@ -54,6 +54,7 @@ services:
     environment:
       LLM_OPENAI_PORT: ${LLM_OPENAI_PORT:-18081}
       LLM_CONFIG_PATH: /data/llm-config.json
+      LLM_INVOKE_TIMEOUT_SEC: ${LLM_INVOKE_TIMEOUT_SEC:-60}
       ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
       SERVICE_HOST: llm-openai
     # Lets configured base URLs like http://localhost:... reach the host on Linux.
