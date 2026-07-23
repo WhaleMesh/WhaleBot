@@ -226,6 +226,11 @@ func main() {
 	})
 	r.Post("/run", svc.handleRun)
 
+	// Model benchmark harness (see benchmark.go). E2E turns loop back through
+	// this process's own /run so the full production path is exercised.
+	bench := newBenchService(svc, "http://127.0.0.1:"+port+"/run")
+	bench.mount(r)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -234,7 +239,7 @@ func main() {
 		Type:         "runtime",
 		Version:      "0.1.0",
 		Endpoint:     self,
-		Capabilities: []string{"react_chat", "run", "tool_manifest_consumer"},
+		Capabilities: []string{"react_chat", "run", "tool_manifest_consumer", "benchmark"},
 	})
 	rc.Start(ctx)
 

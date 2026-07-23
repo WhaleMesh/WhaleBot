@@ -66,6 +66,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/sessions/{id}", s.handleSessionDetail)
 		r.Delete("/sessions/{id}", s.handleSessionDelete)
 		r.Get("/stats/overview", s.handleStatsOverview)
+		r.Post("/benchmark/run", s.handleBenchmarkRun)
+		r.Get("/benchmark/runs", s.handleBenchmarkRuns)
+		r.Delete("/benchmark/runs/{id}", s.handleBenchmarkDelete)
 		r.Get("/skills/search", s.handleSkillsSearch)
 		r.Post("/skills/import", s.handleSkillsImportZip)
 		r.Put("/skills/{id}/files/*", s.handleSkillsPutFile)
@@ -274,6 +277,39 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// --- Benchmark (proxied to runtime) ---
+
+func (s *Server) benchmarkUpstream() *registry.Component {
+	return s.Registry.FirstReadyByCapability("benchmark")
+}
+
+func (s *Server) handleBenchmarkRun(w http.ResponseWriter, r *http.Request) {
+	rt := s.benchmarkUpstream()
+	if rt == nil {
+		writeError(w, 503, "no healthy runtime with benchmark capability")
+		return
+	}
+	s.proxyPost(w, r, rt.Endpoint+"/benchmark/run")
+}
+
+func (s *Server) handleBenchmarkRuns(w http.ResponseWriter, r *http.Request) {
+	rt := s.benchmarkUpstream()
+	if rt == nil {
+		writeError(w, 503, "no healthy runtime with benchmark capability")
+		return
+	}
+	s.proxyGet(w, r, rt.Endpoint+"/benchmark/runs")
+}
+
+func (s *Server) handleBenchmarkDelete(w http.ResponseWriter, r *http.Request) {
+	rt := s.benchmarkUpstream()
+	if rt == nil {
+		writeError(w, 503, "no healthy runtime with benchmark capability")
+		return
+	}
+	s.proxyDelete(w, r, rt.Endpoint+"/benchmark/runs/"+url.PathEscape(chi.URLParam(r, "id")))
 }
 
 func (s *Server) handleStatsOverview(w http.ResponseWriter, r *http.Request) {

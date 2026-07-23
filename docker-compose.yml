@@ -86,6 +86,8 @@ services:
       SERVICE_HOST: runtime
       RUNTIME_SKILLS_INJECT: ${RUNTIME_SKILLS_INJECT:-1}
       RUNTIME_SKILLS_TOP_K: ${RUNTIME_SKILLS_TOP_K:-5}
+    volumes:
+      - runtime_data:/data
     networks: [whalebot_net]
     depends_on:
       orchestrator: { condition: service_started }
@@ -350,6 +352,7 @@ services:
 
 volumes:
   session_data:
+  runtime_data:
   skills_data:
   logger_data:
   stats_data:
