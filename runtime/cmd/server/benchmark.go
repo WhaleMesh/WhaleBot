@@ -1048,6 +1048,7 @@ func benchE2ETask(nonce string) string {
 		"4. Create a second container from image whalebot/userdocker-base:latest, container name \"whalebench-run\", purpose \"whalebot benchmark runner\".",
 		"5. Copy /workspace/bench-app from the build container into the runner container at /workspace/bench-app using docker_files action=copy_file.",
 		"6. In the runner container run `chmod +x /workspace/bench-app && /workspace/bench-app` and report the program output.",
+		"Leave both containers running afterwards — do NOT stop or remove them; the result is verified externally before cleanup.",
 	}, "\n")
 }
 

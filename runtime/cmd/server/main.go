@@ -451,6 +451,10 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 			msgs = append(msgs, cmMessage{Role: "system", Content: sk})
 		}
 	}
+	// Strict chat templates (e.g. Qwen GGUF) raise "System message must be at
+	// the beginning" when more than one system message is present; collapse
+	// the injected blocks (plan gate, skills) into the leading one.
+	msgs = mergeLeadingSystemMessages(msgs)
 	for _, m := range history {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
@@ -2327,6 +2331,25 @@ func renderToolInventoryReply(c runtimeCatalog) string {
 	}
 	lines = append(lines, "如果你看到我提到未在上面出现的工具名称，那就是错误输出，请直接指出。")
 	return joinLines(lines)
+}
+
+// mergeLeadingSystemMessages collapses consecutive system messages at the
+// head of the list into a single one (joined by blank lines). Strict chat
+// templates reject any system message that is not at index 0.
+func mergeLeadingSystemMessages(msgs []cmMessage) []cmMessage {
+	n := 0
+	for n < len(msgs) && msgs[n].Role == "system" {
+		n++
+	}
+	if n <= 1 {
+		return msgs
+	}
+	parts := make([]string, 0, n)
+	for _, m := range msgs[:n] {
+		parts = append(parts, m.Content)
+	}
+	merged := append([]cmMessage{{Role: "system", Content: strings.Join(parts, "\n\n")}}, msgs[n:]...)
+	return merged
 }
 
 func isPlanConfirmationMessage(message string, history []sessionMessage) bool {
