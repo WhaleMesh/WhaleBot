@@ -252,10 +252,21 @@ Read this first, then read only the referenced source-of-truth files.
 ## 6) Rules For Future Agents (must follow)
 
 - Always read `AGENTS.md` first, then only open files needed for the task.
+- Use the **graphify knowledge graph** before raw file exploration (see §6.5).
 - Treat `docker-compose.yml` + `.env.example` as runtime truth.
 - Do not infer service wiring from stale docs without compose confirmation.
 - Keep changes minimal and consistent with current compose/network model.
 - If you change architecture, service list, env vars, ports, run commands, or status assumptions, you MUST update this file in the same change, and update the relevant per-service `README.md` when that service’s documented behavior or stack changes.
+
+## 6.5) Code Exploration: graphify (mandatory)
+
+- This repo has a code knowledge graph at `graphify-out/` (`graph.json` + manifest). Before exploring the codebase with Read/grep/glob, query the graph first — it surfaces cross-file dependencies that grep cannot:
+ - `graphify query "<question>"` — scoped subgraph for any code/architecture question
+ - `graphify path "<A>" "<B>"` — dependency path between two symbols
+ - `graphify explain "<concept>"` — a node and its neighbors in plain language
+- After modifying code files, run `graphify update .` to keep the graph current (AST-only, no LLM/API cost).
+- **Availability is a hard requirement**: check `command -v graphify` and that `graphify-out/graph.json` exists. If either is missing, STOP and ask the user to install it — `pipx install graphifyy` (CLI name `graphify`), then `graphify update .` to (re)build the graph. Do not silently fall back to grep-only exploration.
+- Include this rule in every subagent prompt that involves code exploration.
 
 ## 7) Runtime Capability Injection
 
