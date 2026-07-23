@@ -157,6 +157,11 @@ export const api = {
     }),
   skillsDelete: (id) =>
     req("/api/v1/skills/" + encodeURIComponent(id), { method: "DELETE" }),
+  benchmarkStart: (body) =>
+    req("/api/v1/benchmark/run", { method: "POST", body: JSON.stringify(body) }),
+  benchmarkRuns: () => req("/api/v1/benchmark/runs"),
+  benchmarkDelete: (id) =>
+    req("/api/v1/benchmark/runs/" + encodeURIComponent(id), { method: "DELETE" }),
   secretsList: () => req("/api/v1/secrets"),
   secretsCreate: (body) =>
     req("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),

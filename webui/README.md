@@ -101,12 +101,14 @@ error_behavior: standard_http_status_from_caddy
   - `GET /api/v1/tools/user-dockers/{name}/interface`
   - `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` (Skills page)
   - `GET|PUT /api/v1/adapter-components/{name}/config` (Adapters page; proxied to each adapter service `/api/v1/adapter/config`)
+  - `POST /api/v1/benchmark/run`, `GET /api/v1/benchmark/runs`, `DELETE /api/v1/benchmark/runs/{id}` (Benchmark page; proxied to runtime)
 
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.
 - `Tools` page is a selector list for tool test pages.
   - Current item: `User Docker Manager`.
 - `Skills` page (`#/skills`, `#/skills/{id}`): CRUD for markdown skills; body defaults to preview with an edit toggle.
+- `Benchmark` page (`#/benchmark`): runs the model benchmark against the **currently active** llm-openai model (one local model loaded at a time — switch on the LLM page between runs) with an optional real-container E2E toggle; shows an accumulating run-history comparison table (total + plan_gate/tool_call/react + E2E scores, avg latency, tokens) with the best completed run highlighted and expandable per-case detail; E2E detail additionally renders collapsed `turn_replies` (per-turn model replies) and `tool_events` (tool-call trace) so failed checkpoints are self-explanatory; each row has a JSON button that downloads the full run record (`benchmark-<model>-<date>.json`) for offline analysis.
 - `Logger` page provides dual-source diagnostics:
   - persistent logger events from `GET /api/v1/logger/events/recent`
   - recent orchestrator ring logs from `GET /api/v1/logs/recent`
