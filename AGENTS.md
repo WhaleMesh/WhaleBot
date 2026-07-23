@@ -58,11 +58,12 @@ Read this first, then read only the referenced source-of-truth files.
  - purpose: registry (heartbeat liveness) + node tunnel hub + API gateway + chat orchestration
  - entry: `orchestrator/cmd/server/main.go`
  - host exposed: yes (`${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}`)
- - note: userdocker API is node-scoped (see §1.6): `GET/POST /api/v1/tools/user-dockers` (list fan-out / create with node pick), `GET …/nodes`, `…/images` (fan-out), `…/images/estimate?node=`, `…/pull` + `…/pull/status` (composite job id), `…/touch-creator-session` (broadcast), `…/{node}/{cname}[/action]` generic pass-through
+ - note: userdocker API is node-scoped (see §1.6): `GET/POST /api/v1/tools/user-dockers` (list fan-out / create with node pick), `GET …/nodes`, `…/images` (fan-out), `…/images/estimate?node=`, `…/pull` + `…/pull/status` (composite job id), `…/copy` (cross-container file copy; composite names, both containers must be on the same node), `…/touch-creator-session` (broadcast), `…/{node}/{cname}[/action]` generic pass-through
  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (fresh heartbeat) **and** operationally ready (heartbeat `operational_state` empty or `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
   - note: reverse-proxies `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` to the healthy `type=skills` component (`503` when none)
+ - note: reverse-proxies `POST /api/v1/benchmark/run`, `GET /api/v1/benchmark/runs`, `DELETE /api/v1/benchmark/runs/{id}` to the healthy runtime with capability `benchmark` (`503` when none)
 - `session`
   - purpose: SQLite conversation store
   - entry: `session/cmd/server/main.go`
@@ -91,6 +92,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: at the start of each `/run`, calls `POST /api/v1/tools/user-dockers/touch-creator-session` so temporary userdockers created under that `session_id` have their idle timer reset; refuses run if `get_context` reports expired
   - note: after tool-inventory short path, main chat path appends the user message to `session` before ReAct begins, then appends the assistant message when the run completes (so WebUI shows the user turn while the agent is still working)
   - note: when a healthy `type=skills` with `skills_search` is registered and `RUNTIME_SKILLS_INJECT` is not `0`, each main `/run` calls `GET {skills_endpoint}/skills/search` (top `RUNTIME_SKILLS_TOP_K` hits, FTS5/BM25) and appends an extra **system** message with excerpts for retrieval-first context (failure is non-fatal)
+ - note: hosts the **model benchmark harness** (`runtime/cmd/server/benchmark.go`, capability `benchmark`): `POST /benchmark/run {include_e2e}` (async, single-flight, always tests the **active** llm-openai profile — one local model loaded at a time), `GET /benchmark/runs`, `DELETE /benchmark/runs/{id}`. Simulated tier scores plan_gate JSON adherence, docker tool-call format, and scripted ReAct discipline with canned tool results (weights 25/35/40 → total 0-100); optional E2E tier drives runtime's own `/run` (session `benchmark_<runid>`) to build a Go binary in `userdocker-golang`, transfer it into `userdocker-base` with `docker_files action=copy_file`, run it, then verifies 5 checkpoints directly via the orchestrator userdocker API and force-cleans containers + session (each chat turn retries once so a transient local-model timeout does not zero the run); E2E results carry `turn_replies` (truncated per-turn assistant replies) and `tool_events` (logger tool_call_start/error events for the benchmark session) so failures are self-explanatory. History persists at `/data/benchmark-runs.json` on volume `runtime_data` (cap 50 runs) so users can swap local models over time and compare; batch automation runbook for agents (llama.cpp swap loop + profile append via PUT config): `docs/benchmark-automation.md`
 - `skills`
   - purpose: filesystem skill packages + SQLite FTS search index (`bm25` ranking)
   - entry: `skills/cmd/server/main.go`
@@ -142,7 +144,8 @@ Read this first, then read only the referenced source-of-truth files.
  - note: `create` accepts a `purpose` string stored as label `whalebot.userdocker.purpose` and echoed in `GET /api/v1/user-dockers` (`purpose` field) so agents can decide whether to reuse a container
  - note: `POST /api/v1/user-dockers/pull` starts an **async** image pull (background, 30m cap) returning `job_id`; poll `GET …/pull/status`. `GET …/images/estimate?ref=` returns an upper-bound compressed download size from the registry manifest (docker.io anonymous only; other registries return a note). External refs require `external_image_approved_by_user=true`
  - note: `GET /api/v1/user-dockers/{name}/logs?tail=N` returns demuxed container stdout/stderr; `POST …/exec` accepts `async=true` (returns `job_id`, poll `GET …/exec/status`) for long installs/builds
- - note: capabilities add `userdocker_images_estimate`, `userdocker_pull`, `userdocker_logs`
+ - note: `POST /api/v1/user-dockers/copy` (`{from_name, from_path, to_name, to_path, session_id}`) copies a file between two containers on the node, binary-safe (base64 fetch from source file API, PUT to target; 64MB cap) — bytes never enter LLM context
+ - note: capabilities add `userdocker_images_estimate`, `userdocker_pull`, `userdocker_logs`, `userdocker_copy`
 - `logger`
   - purpose: event logs (SQLite)
   - entry: `logger/cmd/server/main.go`
@@ -189,13 +192,14 @@ Read this first, then read only the referenced source-of-truth files.
   - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{slug}` edits a **directory package** (metadata + file tree: `SKILL.md`, `references/*`); **Import ZIP** uploads a package archive via `POST /api/v1/skills/import`
   - note: sidebar **Secrets** opens `#/secrets` (CRUD via orchestrator `/api/v1/secrets*`), `#/secrets/{id}` edits one entry; values are masked in the UI, full values only accessible by runtime internally
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
+ - note: sidebar **Benchmark** opens `#/benchmark`: runs the model benchmark against the current active model (`POST /api/v1/benchmark/run`, optional E2E toggle), polls `GET /api/v1/benchmark/runs` for live progress, and shows an accumulating run-history comparison table (best completed total highlighted, expandable per-case + E2E checkpoint detail, per-run JSON download, row delete)
  - note: sidebar **Adapters** opens `#/adapter` (lists `type=adapter`); `#/adapter/{name}` edits adapter-specific config via orchestrator `GET|PUT /api/v1/adapter-components/{name}/config` (proxied to adapter `/api/v1/adapter/config`) — `adapter-telegram`: bot token + whitelist; `adapter-webui`: username/password
 - `userdocker-base`
   - purpose: base image for spawned `userdocker` instances
   - entry: `userdocker-base/main.go`
   - compose behavior: `sleep infinity` placeholder container
   - note: exposes public descriptor `GET /api/v1/userdocker/interface` (contract `userdocker.v1`)
-  - note: implements workspace APIs (`/exec`, `/exec/status`, `/files`, `/file`, `/files/mkdir`, `/files/move`, `/artifacts/export`); `/exec` supports `async=true` (job id + `/exec/status` polling); `/file` PUT accepts `content_base64` or plain `content`
+  - note: implements workspace APIs (`/exec`, `/exec/status`, `/files`, `/file`, `/files/mkdir`, `/files/move`, `/artifacts/export`); `/exec` supports `async=true` (job id + `/exec/status` polling) and runs `command_sh` via non-login `sh -c` (image PATH preserved); `/file` PUT accepts `content_base64` or plain `content`; paths are workspace-rooted and absolute `/workspace/...` inputs are taken as-is (no doubling)
 - `userdocker-golang`
   - purpose: Go toolchain image for spawned `userdocker` compile/build tasks
   - build source: `userdocker-base/Dockerfile` with Go final base image
@@ -217,6 +221,8 @@ Read this first, then read only the referenced source-of-truth files.
   - `SESSION_URL` (for `adapter-telegram` optional artifact append to session)
 - Orchestrator request timeout:
  - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
+- LLM invoke timeout:
+ - `LLM_INVOKE_TIMEOUT_SEC` (llm-openai per-invoke upstream budget, default 60; raise for slow local models)
 - Distributed userdocker nodes:
  - `NODE_TOKEN` (shared secret for `/api/v1/nodes/connect`; empty on orchestrator disables the tunnel endpoint)
  - `NODE_NAME` (unique per machine, lowercase `[a-z0-9_.-]`; default hostname)
@@ -240,7 +246,7 @@ Read this first, then read only the referenced source-of-truth files.
 - `docker-compose.yml` contains 14 services including `runtime`, `skills`, `logger`, `stats`, `workspace`, `memory`, `adapter-webui`; `docker-compose.node.yml` is the standalone remote-node stack (`user-docker-manager` + userdocker images only).
 - `README.md` contains broad alignment, but some sections can lag behind compose details; verify against compose first.
 - Compose currently exposes `orchestrator`, `webui`, and `adapter-webui` ports to host.
-- Named volumes in use: `session_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`, `memory_data`.
+- Named volumes in use: `session_data`, `runtime_data`, `skills_data`, `logger_data`, `stats_data`, `workspace_data`, `llm_openai_data`, `adapter_telegram_data`, `adapter_webui_data`, `webui_data`, `memory_data`.
 - Current repository scan does not find a `worker/` directory; if present locally in another branch/untracked state, treat it as non-compose unless compose is updated.
 
 ## 6) Rules For Future Agents (must follow)
@@ -259,7 +265,7 @@ Read this first, then read only the referenced source-of-truth files.
   - `type=tool` + capabilities `userdocker_*` -> model-facing tools `docker_lifecycle` / `docker_exec` / `docker_files` / `export_artifact` (all normalize to internal `manage_user_docker` dispatch, endpoint `/api/v1/tools/user-dockers`)
 - Skills retrieval (not a tool call): `type=skills` + `skills_search` -> runtime may `GET {endpoint}/skills/search` before the main ReAct messages and inject a system block (see `RUNTIME_SKILLS_*` in §4).
 - Secrets retrieval (not a tool call): `type=memory` + `secrets_get` -> runtime exposes `list_secrets` tool (returns key+note only); agent uses `{{secret:key_name}}` placeholders in exec env/command_sh; runtime resolves transparently before forwarding to userdocker-manager.
-- docker tool actions: `docker_lifecycle` covers lifecycle/images (`list/list_images/create/start/stop/restart/remove/touch/switch_scope/get_interface/estimate_image_pull/pull_image/pull_status`), `docker_exec` covers `exec/exec_status/logs`, `docker_files` covers workspace file CRUD, `export_artifact` exports artifacts.
+- docker tool actions: `docker_lifecycle` covers lifecycle/images (`list/list_images/create/start/stop/restart/remove/touch/switch_scope/get_interface/estimate_image_pull/pull_image/pull_status`), `docker_exec` covers `exec/exec_status/logs`, `docker_files` covers workspace file CRUD plus `copy_file` (cross-container file copy on the same node, via orchestrator `POST …/copy` — the way to move build outputs between containers), `export_artifact` exports artifacts.
 - node awareness: container names surfaced to the model are composite `"<node>/<name>"` (from list/create); `create`/`pull_image`/`estimate_image_pull` accept optional `node` (default: first node).
 - container-selection ladder: `action=list` (reuse a container matched by its `purpose`) → `action=list_images` + `create` from a framework image → external image only after `estimate_image_pull` + user approval. `create` passes a `purpose`; agents keep `/workspace/.whalebot/NOTES.md` per container to record installed envs.
 - for Go compile tasks, prefer `whalebot/userdocker-golang:latest` when listed in `action=list_images`.
@@ -278,6 +284,7 @@ Read this first, then read only the referenced source-of-truth files.
  - check userdocker list (composite `"<node>/<name>"`): `curl -s http://localhost:18080/api/v1/tools/user-dockers`
   - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`
   - check secrets list (when memory service running): `curl -s http://localhost:18080/api/v1/secrets`
+ - check model benchmark history: `curl -s http://localhost:18080/api/v1/benchmark/runs`
   - ask runtime via chat to list tool names and confirm the `docker_*` tools are visible.
 
 ## 8) Mandatory Update Policy
