@@ -14,6 +14,7 @@
   let includeE2E = false;
   let starting = false;
   let deletingId = '';
+  let clearingAll = false;
   let expandedId = '';
   let initialLoad = true;
   /** @type {ReturnType<typeof setInterval> | undefined} */
@@ -85,8 +86,54 @@
     }
   }
 
+  async function clearAll() {
+    if (!window.confirm(t('benchmark.confirmClearAll'))) return;
+    clearingAll = true;
+    try {
+      await api.benchmarkDeleteAll();
+      expandedId = '';
+      await refresh();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      clearingAll = false;
+    }
+  }
+
   function toggle(id) {
     expandedId = expandedId === id ? '' : id;
+  }
+
+  function csvCell(v) {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function downloadCsv() {
+    const cols = [
+      'model_name', 'model', 'started_at', 'status', 'case_set',
+      'total', 'plan_gate', 'tool_call', 'react', 'e2e_status', 'e2e_score',
+      'llm_calls', 'avg_latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens',
+      'e2e_turns', 'e2e_wall_ms',
+    ];
+    const lines = [cols.join(',')];
+    for (const r of runs) {
+      lines.push([
+        r.model_name, r.model, r.started_at, r.status, r.case_set,
+        r.scores?.total, r.scores?.plan_gate, r.scores?.tool_call, r.scores?.react,
+        r.e2e?.status, r.e2e?.score,
+        r.metrics?.llm_calls, r.metrics?.avg_latency_ms,
+        r.metrics?.prompt_tokens, r.metrics?.completion_tokens, r.metrics?.total_tokens,
+        r.e2e?.turns, r.e2e?.wall_ms,
+      ].map(csvCell).join(','));
+    }
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `benchmark-runs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function downloadRun(run, event) {
@@ -217,7 +264,28 @@
   {/if}
 </div>
 
-<h2 class="mt-6 text-lg font-semibold">{$_('benchmark.historyTitle')}</h2>
+<div class="mt-6 flex items-center gap-2">
+  <h2 class="text-lg font-semibold">{$_('benchmark.historyTitle')}</h2>
+  <div class="ml-auto flex items-center gap-2">
+    <button type="button" class="btn btn-ghost btn-sm" disabled={!runs.length} on:click={downloadCsv}>
+      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+      </svg>
+      {$_('benchmark.downloadCsv')}
+    </button>
+    <button
+      type="button"
+      class="btn btn-ghost btn-sm text-error"
+      disabled={clearingAll || !runs.some((r) => r.status !== 'running')}
+      on:click={clearAll}
+    >
+      {#if clearingAll}
+        <span class="loading loading-spinner loading-xs"></span>
+      {/if}
+      {$_('benchmark.clearAll')}
+    </button>
+  </div>
+</div>
 <div class="mt-2 min-w-0 w-full max-w-full overflow-x-auto rounded-lg border border-base-300">
   {#if initialLoad}
     <div class="p-4">

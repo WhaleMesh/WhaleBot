@@ -35,7 +35,7 @@ last_verified_from:
 - Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.
 - For execution-oriented requests, first returns an execution plan and asks user confirmation before running tools.
 - `export_artifact` tool outputs can be returned as chat attachments (`filename` + base64 payload) for IM delivery.
-- Hosts the **model benchmark harness** (`benchmark.go`): scores the currently active llm-openai model against the framework's real demands — plan_gate JSON adherence, docker tool-call format, scripted ReAct discipline (canned tool results) — plus an optional E2E scenario that drives runtime's own `/run` against real userdockers (build a Go binary in `userdocker-golang`, transfer it into `userdocker-base` with `docker_files action=copy_file`, run it, verify output via orchestrator userdocker API, then clean up; each chat turn retries once on transient failure). E2E results include `turn_replies` (truncated assistant reply per turn) and `tool_events` (logger `tool_call_start`/`tool_call_error` events filtered to the benchmark session) for failure diagnosis. Run history persists to `/data/benchmark-runs.json` (volume `runtime_data`), capped at 50 runs.
+- Hosts the **model benchmark harness** (`benchmark.go`): scores the currently active llm-openai model against the framework's real demands — plan_gate JSON adherence, docker tool-call format, scripted ReAct discipline (canned tool results) — plus an optional E2E scenario that drives runtime's own `/run` against real userdockers (build a Go binary in `userdocker-golang`, transfer it into `userdocker-base` with `docker_files action=copy_file`, run it, verify output via orchestrator userdocker API, then clean up; each chat turn retries once on transient failure). E2E verification resolves container ownership by nonce (only the build container whose `main.go` embeds this run's nonce, and run containers sharing its session suffix, count — stale containers from crashed runs cannot cause false negatives), and cleanup force-removes **all** `whalebench-*` containers, not just one pair. E2E results include `turn_replies` (truncated assistant reply per turn) and `tool_events` (logger `tool_call_start`/`tool_call_error` events filtered to the benchmark session) for failure diagnosis. Run history persists to `/data/benchmark-runs.json` (volume `runtime_data`), capped at 50 runs. The simulated tiers include hard cases (mixed/pushy destructive plan_gate intents, answer-from-context-without-a-tool-call, remove-409 recovery, compile-error fix-and-rebuild, async build polled to completion); destructive-op tool cases carry a scripted-approval retry (`confirmReply`): a model that cautiously asks for confirmation first is granted one auto-approved follow-up turn and scored on it at full credit. Runs are stamped with `case_set` (currently `v2.1`) so scores from different case sets are not compared blindly.
 
 ## External API
 ### Endpoint: GET /health
@@ -96,6 +96,14 @@ path: /benchmark/runs
 response:
   success: boolean
   runs: array (newest first; status running|completed|failed, scores {plan_gate,tool_call,react,total 0-100}, metrics, per-case results, optional e2e {status,score,checkpoints,...})
+```
+
+### Endpoint: DELETE /benchmark/runs
+```yaml
+method: DELETE
+path: /benchmark/runs
+response: { success: boolean }
+notes: clears all history; runs still in progress are kept.
 ```
 
 ### Endpoint: DELETE /benchmark/runs/{id}

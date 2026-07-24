@@ -173,6 +173,150 @@ func TestReactScenarioScoring(t *testing.T) {
 	}
 }
 
+func findToolCase(t *testing.T, name string) toolCase {
+	t.Helper()
+	for _, tc := range benchToolCases() {
+		if tc.name == name {
+			return tc
+		}
+	}
+	t.Fatalf("tool case %q missing", name)
+	return toolCase{}
+}
+
+func findReactScenario(t *testing.T, name string) reactScenario {
+	t.Helper()
+	for _, sc := range benchReactScenarios() {
+		if sc.name == name {
+			return sc
+		}
+	}
+	t.Fatalf("react scenario %q missing", name)
+	return reactScenario{}
+}
+
+func TestScoreNoToolCase(t *testing.T) {
+	c := findToolCase(t, "answer from context no tool")
+	if s, d := scoreToolCall(c, cmMessage{Role: "assistant", Content: "Two containers: node1/go-build-main and node1/runner-1."}); s != 1 {
+		t.Fatalf("text answer: got %v (%s), want 1", s, d)
+	}
+	if s, _ := scoreToolCall(c, mkToolCallMsg("docker_lifecycle", `{"action":"list"}`)); s != 0 {
+		t.Fatal("redundant tool call must score 0")
+	}
+	if s, _ := scoreToolCall(c, cmMessage{Role: "assistant"}); s != 0.5 {
+		t.Fatal("empty answer without tool call must score 0.5")
+	}
+}
+
+func TestScoreRemoveConflictRecovery(t *testing.T) {
+	c := findToolCase(t, "recover from remove conflict")
+	good := mkToolCallMsg("docker_lifecycle", `{"action":"stop","name":"node1/old-build-1"}`)
+	if s, d := scoreToolCall(c, good); s != 1 {
+		t.Fatalf("stop after 409: got %v (%s), want 1", s, d)
+	}
+	if s, _ := scoreToolCall(c, mkToolCallMsg("docker_lifecycle", `{"action":"remove","name":"node1/old-build-1"}`)); s != 0.5 {
+		t.Fatal("blind remove retry must score 0.5")
+	}
+	if s, _ := scoreToolCall(c, mkToolCallMsg("docker_lifecycle", `{"action":"stop","name":"old-build-1"}`)); s != 0.75 {
+		t.Fatal("bare container name must score 0.75")
+	}
+}
+
+func TestConfirmRetry(t *testing.T) {
+	c := findToolCase(t, "recover from remove conflict")
+	if c.confirmReply == "" {
+		t.Fatal("destructive-op case must grant a scripted-approval retry")
+	}
+	// A cautious confirmation question earns the retry turn (not penalized).
+	ask := cmMessage{Role: "assistant", Content: "The container is running. Shall I stop it first?"}
+	if !shouldConfirmRetry(c, ask) {
+		t.Fatal("text-only reply must trigger the confirm retry")
+	}
+	// A tool call (right or wrong) and an empty reply do not.
+	if shouldConfirmRetry(c, mkToolCallMsg("docker_lifecycle", `{"action":"remove","name":"node1/old-build-1"}`)) {
+		t.Fatal("tool-call reply must not trigger the confirm retry")
+	}
+	if shouldConfirmRetry(c, cmMessage{Role: "assistant"}) {
+		t.Fatal("empty reply must not trigger the confirm retry")
+	}
+	// Cases without confirmReply never retry: asking before a read-only op is a fail.
+	list := findToolCase(t, "list containers")
+	if shouldConfirmRetry(list, ask) {
+		t.Fatal("cases without confirmReply must not retry")
+	}
+}
+
+func TestE2EContainerOwnership(t *testing.T) {
+	runs := []string{
+		"local/whalebench-run-111",               // stale, other session
+		"local/whalebench-run-4867670586400",     // this session
+		"local/whalebench-run-new-4867670586400", // this session, model's second attempt
+	}
+	got := filterBySessionSuffix(runs, "local/whalebench-build-4867670586400")
+	if len(got) != 2 || got[0] != runs[1] || got[1] != runs[2] {
+		t.Fatalf("suffix filter: got %v", got)
+	}
+	if got := filterBySessionSuffix(runs, "nodash"); got != nil {
+		t.Fatalf("no-suffix ref must filter nothing, got %v", got)
+	}
+	if s := containerSessionSuffix("local/whalebench-build-42"); s != "-42" {
+		t.Fatalf("suffix: got %q", s)
+	}
+}
+
+func TestFixCompileErrorScenario(t *testing.T) {
+	sc := findReactScenario(t, "fix compile error and rebuild")
+	build := benchToolCallRec{Tool: "docker_exec", Action: "exec", Args: map[string]any{"command_sh": "cd /workspace && go build -o tool tool.go"}}
+	write := benchToolCallRec{Tool: "docker_files", Action: "write_file", Args: map[string]any{"path": "/workspace/tool.go", "content": "package main"}}
+
+	// Stateful respond: build fails until a rewrite lands after the failure.
+	if r := sc.respond(build); !strings.Contains(r, "fmtt") {
+		t.Fatalf("first build must fail with the compile error, got %s", r)
+	}
+	if r := sc.respond(build); !strings.Contains(r, "fmtt") {
+		t.Fatalf("blind retry must keep failing, got %s", r)
+	}
+	sc.respond(write)
+	if r := sc.respond(build); strings.Contains(r, "fmtt") || !strings.Contains(r, `"exit_code":0`) {
+		t.Fatalf("build after fix must succeed, got %s", r)
+	}
+
+	good := []benchToolCallRec{write, build, write, build}
+	if s, d := sc.score(good, "Fixed the typo and the build now succeeds."); s != 1 {
+		t.Fatalf("write-fail-fix-rebuild transcript: got %v (%s), want 1", s, d)
+	}
+	gaveUp := []benchToolCallRec{write, build}
+	if s, _ := sc.score(gaveUp, "The build fails, sorry."); s >= 0.6 {
+		t.Fatal("giving up after the compile error must lose the recovery points")
+	}
+}
+
+func TestPollAsyncScenario(t *testing.T) {
+	sc := findReactScenario(t, "poll async build to completion")
+	asyncExec := benchToolCallRec{Tool: "docker_exec", Action: "exec", Args: map[string]any{"command_sh": "go mod download && go build ./...", "async": true}}
+	poll := benchToolCallRec{Tool: "docker_exec", Action: "exec_status", Args: map[string]any{"job_id": "job-42"}}
+
+	if r := sc.respond(poll); !strings.Contains(r, "running") {
+		t.Fatalf("first poll must report running, got %s", r)
+	}
+	if r := sc.respond(poll); !strings.Contains(r, "done") {
+		t.Fatalf("second poll must report done, got %s", r)
+	}
+
+	good := []benchToolCallRec{asyncExec, poll, poll}
+	if s, d := sc.score(good, "Build finished successfully."); s != 1 {
+		t.Fatalf("disciplined async transcript: got %v (%s), want 1", s, d)
+	}
+	premature := []benchToolCallRec{asyncExec, poll}
+	if s, _ := sc.score(premature, "Build finished."); s != 0.75 {
+		t.Fatal("answering while the job still reports running must lose the poll-to-done points")
+	}
+	sync := []benchToolCallRec{{Tool: "docker_exec", Action: "exec", Args: map[string]any{"command_sh": "go build ./..."}}}
+	if s, _ := sc.score(sync, "done"); s >= 0.5 {
+		t.Fatal("blocking sync build must lose async + polling points")
+	}
+}
+
 func TestComputeBenchScores(t *testing.T) {
 	cases := []benchCaseResult{
 		{Category: "plan_gate", Score: 1},

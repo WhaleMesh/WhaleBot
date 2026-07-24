@@ -162,6 +162,7 @@ export const api = {
   benchmarkRuns: () => req("/api/v1/benchmark/runs"),
   benchmarkDelete: (id) =>
     req("/api/v1/benchmark/runs/" + encodeURIComponent(id), { method: "DELETE" }),
+  benchmarkDeleteAll: () => req("/api/v1/benchmark/runs", { method: "DELETE" }),
   secretsList: () => req("/api/v1/secrets"),
   secretsCreate: (body) =>
     req("/api/v1/secrets", { method: "POST", body: JSON.stringify(body) }),

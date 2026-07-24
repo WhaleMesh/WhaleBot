@@ -202,6 +202,7 @@ Proxied to the healthy `type=runtime` component with capability `benchmark` (run
 
 - `POST /api/v1/benchmark/run` → `POST {runtime_endpoint}/benchmark/run` (body `{include_e2e}`; 409 when a run is in progress, 503 when llm-openai has no active model)
 - `GET /api/v1/benchmark/runs` → `GET {runtime_endpoint}/benchmark/runs`
+- `DELETE /api/v1/benchmark/runs` → `DELETE {runtime_endpoint}/benchmark/runs` (clear all history; in-progress runs are kept)
 - `DELETE /api/v1/benchmark/runs/{id}` → `DELETE {runtime_endpoint}/benchmark/runs/{id}`
 
 If no runtime with the `benchmark` capability: **503** with `success: false`.

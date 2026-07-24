@@ -68,6 +68,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/stats/overview", s.handleStatsOverview)
 		r.Post("/benchmark/run", s.handleBenchmarkRun)
 		r.Get("/benchmark/runs", s.handleBenchmarkRuns)
+		r.Delete("/benchmark/runs", s.handleBenchmarkDeleteAll)
 		r.Delete("/benchmark/runs/{id}", s.handleBenchmarkDelete)
 		r.Get("/skills/search", s.handleSkillsSearch)
 		r.Post("/skills/import", s.handleSkillsImportZip)
@@ -301,6 +302,15 @@ func (s *Server) handleBenchmarkRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.proxyGet(w, r, rt.Endpoint+"/benchmark/runs")
+}
+
+func (s *Server) handleBenchmarkDeleteAll(w http.ResponseWriter, r *http.Request) {
+	rt := s.benchmarkUpstream()
+	if rt == nil {
+		writeError(w, 503, "no healthy runtime with benchmark capability")
+		return
+	}
+	s.proxyDelete(w, r, rt.Endpoint+"/benchmark/runs")
 }
 
 func (s *Server) handleBenchmarkDelete(w http.ResponseWriter, r *http.Request) {
