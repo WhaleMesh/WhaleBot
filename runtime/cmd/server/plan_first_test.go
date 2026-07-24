@@ -2,6 +2,33 @@ package main
 
 import "testing"
 
+func TestMergeLeadingSystemMessages(t *testing.T) {
+	t.Parallel()
+	msgs := []cmMessage{
+		{Role: "system", Content: "base"},
+		{Role: "system", Content: "plan"},
+		{Role: "system", Content: "skills"},
+	}
+	got := mergeLeadingSystemMessages(msgs)
+	if len(got) != 1 || got[0].Role != "system" || got[0].Content != "base\n\nplan\n\nskills" {
+		t.Fatalf("unexpected merge: %+v", got)
+	}
+	// Single system message untouched; user turn preserved after merge.
+	msgs = []cmMessage{
+		{Role: "system", Content: "base"},
+		{Role: "system", Content: "plan"},
+		{Role: "user", Content: "hi"},
+	}
+	got = mergeLeadingSystemMessages(msgs)
+	if len(got) != 2 || got[0].Content != "base\n\nplan" || got[1].Role != "user" {
+		t.Fatalf("unexpected merge with user: %+v", got)
+	}
+	one := []cmMessage{{Role: "system", Content: "only"}, {Role: "user", Content: "hi"}}
+	if out := mergeLeadingSystemMessages(one); len(out) != 2 || out[0].Content != "only" {
+		t.Fatalf("single system should be untouched: %+v", out)
+	}
+}
+
 func TestParsePlanGateResponse_valid(t *testing.T) {
 	t.Parallel()
 	d, ok := parsePlanGateResponse(`{"inject_plan_only":true,"restrict_mutating_tools":false}`)

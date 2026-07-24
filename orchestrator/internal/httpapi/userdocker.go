@@ -242,6 +242,65 @@ func (s *Server) handleUserDockerImageEstimate(w http.ResponseWriter, r *http.Re
 	s.proxyNodeGet(w, r, n, "/api/v1/user-dockers/images/estimate")
 }
 
+// handleUserDockerCopy proxies a cross-container file copy to the node hosting
+// both containers. Names arrive composite ("<node>/<name>"); both must resolve
+// to the same node (the manager copies within its own Docker network only).
+func (s *Server) handleUserDockerCopy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FromName  string `json:"from_name"`
+		FromPath  string `json:"from_path"`
+		ToName    string `json:"to_name"`
+		ToPath    string `json:"to_path"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, "invalid json: "+err.Error())
+		return
+	}
+	fromNode, fromName, okFrom := strings.Cut(body.FromName, "/")
+	toNode, toName, okTo := strings.Cut(body.ToName, "/")
+	if !okFrom || !okTo {
+		writeError(w, 400, "from_name and to_name must be composite \"<node>/<name>\" as returned by list/create")
+		return
+	}
+	if fromNode != toNode {
+		writeError(w, 400, "cross-node copy is not supported: both containers must be on the same node")
+		return
+	}
+	n := s.Nodes.Get(fromNode)
+	if n == nil {
+		writeError(w, 503, fmt.Sprintf("unknown or offline node %q", fromNode))
+		return
+	}
+	raw, err := json.Marshal(map[string]any{
+		"from_name":  fromName,
+		"from_path":  body.FromPath,
+		"to_name":    toName,
+		"to_path":    body.ToPath,
+		"session_id": body.SessionID,
+	})
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		"http://"+fromNode+"/api/v1/user-dockers/copy", bytes.NewReader(raw))
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := n.Client.Do(req)
+	if err != nil {
+		writeError(w, 502, fmt.Sprintf("node %s error: %s", fromNode, err.Error()))
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (s *Server) handleUserDockerPull(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

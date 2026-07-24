@@ -4,3 +4,5 @@
 **/.svelte-kit
 *.log
 .kilo
+/userdocker-base/userdocker
+/graphify-out/

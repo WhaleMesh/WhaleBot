@@ -54,6 +54,7 @@ services:
     environment:
       LLM_OPENAI_PORT: ${LLM_OPENAI_PORT:-18081}
       LLM_CONFIG_PATH: /data/llm-config.json
+      LLM_INVOKE_TIMEOUT_SEC: ${LLM_INVOKE_TIMEOUT_SEC:-60}
       ORCHESTRATOR_URL: http://orchestrator:${ORCHESTRATOR_PORT:-18080}
       SERVICE_HOST: llm-openai
     # Lets configured base URLs like http://localhost:... reach the host on Linux.
@@ -86,6 +87,8 @@ services:
       SERVICE_HOST: runtime
       RUNTIME_SKILLS_INJECT: ${RUNTIME_SKILLS_INJECT:-1}
       RUNTIME_SKILLS_TOP_K: ${RUNTIME_SKILLS_TOP_K:-5}
+    volumes:
+      - runtime_data:/data
     networks: [whalebot_net]
     depends_on:
       orchestrator: { condition: service_started }
@@ -350,6 +353,7 @@ services:
 
 volumes:
   session_data:
+  runtime_data:
   skills_data:
   logger_data:
   stats_data:

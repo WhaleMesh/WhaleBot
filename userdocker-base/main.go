@@ -498,7 +498,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func runExecCommand(ctx context.Context, dir string, command []string, commandSh string, env map[string]string) (stdout, stderr string, exitCode int, err error) {
 	var cmd *exec.Cmd
 	if strings.TrimSpace(commandSh) != "" {
-		cmd = exec.CommandContext(ctx, "sh", "-lc", commandSh)
+		// Plain (non-login) shell: -l would source /etc/profile, which on alpine
+		// resets PATH and drops image-provided entries like /usr/local/go/bin.
+		cmd = exec.CommandContext(ctx, "sh", "-c", commandSh)
 	} else {
 		cmd = exec.CommandContext(ctx, command[0], command[1:]...)
 	}
@@ -528,6 +530,12 @@ func resolveWorkspacePath(root, in string) (string, error) {
 		return "", fmt.Errorf("workspace root is empty")
 	}
 	cleanIn := filepath.Clean(strings.TrimSpace(in))
+	// Absolute paths already under the workspace root are taken as-is:
+	// "/workspace/main.go" must NOT become "/workspace/workspace/main.go"
+	// (tool descriptions teach models to use /workspace/... paths).
+	if cleanIn == root || strings.HasPrefix(cleanIn, root+string(filepath.Separator)) {
+		cleanIn = strings.TrimPrefix(cleanIn, root)
+	}
 	if cleanIn == "." || cleanIn == "/" || cleanIn == "" {
 		return root, nil
 	}

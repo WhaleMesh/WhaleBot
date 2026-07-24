@@ -15,10 +15,11 @@
   import Llm from './views/Llm.svelte';
   import Adapters from './views/Adapters.svelte';
   import Secrets from './views/Secrets.svelte';
+  import Benchmark from './views/Benchmark.svelte';
   import WbBrandIcon from './lib/WbBrandIcon.svelte';
   import { BRAND_REPO_URL, WHALEMESH_ORG_URL } from './lib/brandUrls.js';
 
-  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'secrets', 'llm', 'adapter'];
+  const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'secrets', 'llm', 'benchmark', 'adapter'];
   const SIDEBAR_LS_KEY = 'whalebot_sidebar_collapsed';
 
   /** @type {'loading' | 'anon' | 'user'} */
@@ -456,6 +457,8 @@
         <Skills />
       {:else if $route.name === 'secrets'}
         <Secrets />
+      {:else if $route.name === 'benchmark'}
+        <Benchmark />
       {:else if $route.name === 'llm'}
         <Llm llmName={$route.params.id || ''} />
       {:else if $route.name === 'adapter'}

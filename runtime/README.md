@@ -19,6 +19,7 @@ component_registration:
     - react_chat
     - run
     - tool_manifest_consumer
+    - benchmark
   meta: {}
 last_verified_from:
   - docker-compose.yml
@@ -34,6 +35,7 @@ last_verified_from:
 - Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.
 - For execution-oriented requests, first returns an execution plan and asks user confirmation before running tools.
 - `export_artifact` tool outputs can be returned as chat attachments (`filename` + base64 payload) for IM delivery.
+- Hosts the **model benchmark harness** (`benchmark.go`): scores the currently active llm-openai model against the framework's real demands — plan_gate JSON adherence, docker tool-call format, scripted ReAct discipline (canned tool results) — plus an optional E2E scenario that drives runtime's own `/run` against real userdockers (build a Go binary in `userdocker-golang`, transfer it into `userdocker-base` with `docker_files action=copy_file`, run it, verify output via orchestrator userdocker API, then clean up; each chat turn retries once on transient failure). E2E verification resolves container ownership by nonce (only the build container whose `main.go` embeds this run's nonce, and run containers sharing its session suffix, count — stale containers from crashed runs cannot cause false negatives), and cleanup force-removes **all** `whalebench-*` containers, not just one pair. E2E results include `turn_replies` (truncated assistant reply per turn) and `tool_events` (logger `tool_call_start`/`tool_call_error` events filtered to the benchmark session) for failure diagnosis. Run history persists to `/data/benchmark-runs.json` (volume `runtime_data`), capped at 50 runs. The simulated tiers include hard cases (mixed/pushy destructive plan_gate intents, answer-from-context-without-a-tool-call, remove-409 recovery, compile-error fix-and-rebuild, async build polled to completion); destructive-op tool cases carry a scripted-approval retry (`confirmReply`): a model that cautiously asks for confirmation first is granted one auto-approved follow-up turn and scored on it at full credit. Runs are stamped with `case_set` (currently `v2.1`) so scores from different case sets are not compared blindly.
 
 ## External API
 ### Endpoint: GET /health
@@ -70,6 +72,49 @@ error_behavior:
   react_or_upstream_error: http_200_with_success_false
 ```
 
+### Endpoint: POST /benchmark/run
+```yaml
+method: POST
+path: /benchmark/run
+request:
+  content_type: application/json
+  body:
+    include_e2e: boolean (optional; run the real-container E2E scenario too)
+response:
+  success: boolean
+  run_id: string
+error_behavior:
+  run_already_in_progress: http_409_success_false
+  no_active_llm_model: http_503_success_false
+notes: async; poll GET /benchmark/runs. Always benchmarks the ACTIVE llm-openai profile (one local model loaded at a time); the run record is stamped with the active model name/id.
+```
+
+### Endpoint: GET /benchmark/runs
+```yaml
+method: GET
+path: /benchmark/runs
+response:
+  success: boolean
+  runs: array (newest first; status running|completed|failed, scores {plan_gate,tool_call,react,total 0-100}, metrics, per-case results, optional e2e {status,score,checkpoints,...})
+```
+
+### Endpoint: DELETE /benchmark/runs
+```yaml
+method: DELETE
+path: /benchmark/runs
+response: { success: boolean }
+notes: clears all history; runs still in progress are kept.
+```
+
+### Endpoint: DELETE /benchmark/runs/{id}
+```yaml
+method: DELETE
+path: /benchmark/runs/{id}
+response: { success: boolean }
+error_behavior:
+  running_or_unknown_id: http_400_success_false
+```
+
 ## Internal Calls
 - `SESSION_URL`:
   - `POST /get_context`
@@ -82,6 +127,7 @@ error_behavior:
   - `GET /api/v1/tools/user-dockers/images/estimate` for `manage_user_docker(action=estimate_image_pull)`
   - `POST /api/v1/tools/user-dockers/pull` for `manage_user_docker(action=pull_image)`
   - `GET /api/v1/tools/user-dockers/pull/status` for `manage_user_docker(action=pull_status)`
+  - `POST /api/v1/tools/user-dockers/copy` for `manage_user_docker(action=copy_file)` (cross-container file copy, same node)
   - `POST /api/v1/tools/user-dockers` for `manage_user_docker(action=create)`
   - `GET /api/v1/tools/user-dockers` for `manage_user_docker(action=list)`
   - `POST /api/v1/tools/user-dockers/{name}/start` for `manage_user_docker(action=start)`
@@ -163,7 +209,7 @@ effect: advertised_endpoint_host_for_registration
 - network: `whalebot_net`.
 - depends_on: `orchestrator`, `session`, `llm-openai`, `user-docker-manager`.
 - healthcheck: `wget http://localhost:${RUNTIME_PORT}/health`.
-- volumes: none.
+- volumes: `runtime_data:/data` (benchmark run history `benchmark-runs.json`).
 - security_notes: executes tool side effects indirectly through orchestrator tool APIs.
 
 ## AI Lookup Hints
@@ -181,6 +227,7 @@ internal_tool_name_map:
     estimate_image_pull: GET /api/v1/tools/user-dockers/images/estimate
     pull_image: POST /api/v1/tools/user-dockers/pull
     pull_status: GET /api/v1/tools/user-dockers/pull/status
+    copy_file: POST /api/v1/tools/user-dockers/copy
     list: GET /api/v1/tools/user-dockers
     create: POST /api/v1/tools/user-dockers
     start: POST /api/v1/tools/user-dockers/{name}/start

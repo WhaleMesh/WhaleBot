@@ -171,6 +171,82 @@ func main() {
 		writeJSON(w, 200, map[string]any{"success": true, "job": job})
 	})
 
+	// Cross-container file copy: fetch from the source container's file API and
+	// write into the target, binary-safe, without the bytes ever passing through
+	// an LLM context. Both containers must live on this node.
+	r.Post("/api/v1/user-dockers/copy", func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			FromName  string `json:"from_name"`
+			FromPath  string `json:"from_path"`
+			ToName    string `json:"to_name"`
+			ToPath    string `json:"to_path"`
+			SessionID string `json:"session_id"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "invalid json: " + err.Error()})
+			return
+		}
+		if body.FromName == "" || body.FromPath == "" || body.ToName == "" || body.ToPath == "" {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "from_name, from_path, to_name and to_path are required"})
+			return
+		}
+		sessionID := body.SessionID
+		if sessionID == "" {
+			sessionID = requestSessionID(req, nil)
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), 120*time.Second)
+		defer cancel()
+
+		fromMeta, err := cr.ContainerMeta(ctx, body.FromName)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "source container: " + err.Error()})
+			return
+		}
+		if err := authorizeSession(fromMeta, sessionID); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "source container: " + err.Error()})
+			return
+		}
+		toMeta, err := cr.ContainerMeta(ctx, body.ToName)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "target container: " + err.Error()})
+			return
+		}
+		if err := authorizeSession(toMeta, sessionID); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "target container: " + err.Error()})
+			return
+		}
+
+		// ponytail: whole file buffered in memory as base64 (cap 64MB); the
+		// upgrade path is a streaming tar pipe if larger artifacts ever matter.
+		src, err := containerFileJSON(ctx, http.MethodGet,
+			fmt.Sprintf("http://%s:%d/api/v1/userdocker/file?path=%s", body.FromName, fromMeta.Port, url.QueryEscape(body.FromPath)), nil)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "read source file: " + err.Error()})
+			return
+		}
+		content, _ := src["content_base64"].(string)
+		if len(content) > 64<<20*4/3 {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "file too large for copy (64MB cap)"})
+			return
+		}
+		putPayload, _ := json.Marshal(map[string]any{"path": body.ToPath, "content_base64": content})
+		if _, err := containerFileJSON(ctx, http.MethodPut,
+			fmt.Sprintf("http://%s:%d/api/v1/userdocker/file", body.ToName, toMeta.Port), putPayload); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": "write target file: " + err.Error()})
+			return
+		}
+		_, _ = cr.Touch(ctx, body.FromName)
+		_, _ = cr.Touch(ctx, body.ToName)
+		writeJSON(w, 200, map[string]any{
+			"success":   true,
+			"from_name": body.FromName,
+			"from_path": body.FromPath,
+			"to_name":   body.ToName,
+			"to_path":   body.ToPath,
+			"size":      len(content) / 4 * 3,
+		})
+	})
+
 	r.Get("/api/v1/user-dockers/{name}/logs", func(w http.ResponseWriter, req *http.Request) {
 		name := chi.URLParam(req, "name")
 		tail := 0
@@ -613,6 +689,7 @@ func main() {
 				"userdocker_restart",
 				"userdocker_exec",
 				"userdocker_files",
+				"userdocker_copy",
 				"userdocker_artifact_export",
 				"userdocker_interface_contract",
 				"userdocker_images",
@@ -700,6 +777,43 @@ func parseCSV(raw string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// containerFileJSON performs one JSON request against a container's userdocker
+// API and returns the decoded payload, failing on transport, HTTP, or
+// success=false errors.
+func containerFileJSON(ctx context.Context, method, target string, body []byte) (map[string]any, error) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, rdr)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("upstream returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("decode upstream response: %w", err)
+	}
+	if ok, _ := payload["success"].(bool); !ok {
+		if msg, _ := payload["error"].(string); msg != "" {
+			return nil, errors.New(msg)
+		}
+		return nil, errors.New("upstream operation failed")
+	}
+	return payload, nil
 }
 
 func proxyUserDockerJSON(ctx context.Context, w http.ResponseWriter, _ *http.Request, cr *creator.Creator, name, sessionID, method, path string, payload any) {

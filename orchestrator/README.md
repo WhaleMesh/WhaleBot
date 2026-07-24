@@ -196,6 +196,17 @@ error_behavior:
 
 Implementation: resolves `FirstReadyByType("stats")` (liveness + optional `status_endpoint` / `operational_state`) and reverse-proxies the response body and status code.
 
+### Benchmark API (reverse proxy)
+
+Proxied to the healthy `type=runtime` component with capability `benchmark` (runtime hosts the model benchmark harness):
+
+- `POST /api/v1/benchmark/run` → `POST {runtime_endpoint}/benchmark/run` (body `{include_e2e}`; 409 when a run is in progress, 503 when llm-openai has no active model)
+- `GET /api/v1/benchmark/runs` → `GET {runtime_endpoint}/benchmark/runs`
+- `DELETE /api/v1/benchmark/runs` → `DELETE {runtime_endpoint}/benchmark/runs` (clear all history; in-progress runs are kept)
+- `DELETE /api/v1/benchmark/runs/{id}` → `DELETE {runtime_endpoint}/benchmark/runs/{id}`
+
+If no runtime with the `benchmark` capability: **503** with `success: false`.
+
 ### Skills API (reverse proxy)
 
 When a healthy `type=skills` component is registered, the orchestrator reverse-proxies JSON to `{skills_endpoint}` (same pattern as session/logger):
@@ -221,6 +232,7 @@ images: GET /api/v1/tools/user-dockers/images          # fan-out; response { suc
 estimate: GET /api/v1/tools/user-dockers/images/estimate?ref=<image>&node=<node>   # node optional (defaults to first)
 pull: POST /api/v1/tools/user-dockers/pull             # body may carry "node"; returned job_id is composite "<node>/<job>"
 pull_status: GET /api/v1/tools/user-dockers/pull/status?job_id=<node>/<job>
+copy: POST /api/v1/tools/user-dockers/copy             # body {from_name,from_path,to_name,to_path,session_id}; names composite "<node>/<name>"; both must be on the same node (400 otherwise); forwarded to that node's manager
 touch_creator_session: POST /api/v1/tools/user-dockers/touch-creator-session       # broadcast to all nodes, sums touched
 interface_contract: GET /api/v1/tools/user-dockers/interface-contract              # any node (contract is uniform userdocker.v1)
 container_scoped: <METHOD> /api/v1/tools/user-dockers/{node}/{cname}[/action...]   # generic pass-through to that node's manager
@@ -295,6 +307,7 @@ query_to_endpoint:
   estimate_image_pull: GET /api/v1/tools/user-dockers/images/estimate
   pull_image: POST /api/v1/tools/user-dockers/pull
   pull_status: GET /api/v1/tools/user-dockers/pull/status
+  copy_file: POST /api/v1/tools/user-dockers/copy
   userdocker_logs: GET /api/v1/tools/user-dockers/{name}/logs
   exec_status: GET /api/v1/tools/user-dockers/{name}/exec/status
   create_userdocker: POST /api/v1/tools/user-dockers
