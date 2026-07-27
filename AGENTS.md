@@ -75,7 +75,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: OpenAI-compatible chat completions client
   - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
- - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
+ - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client. Upstream HTTP **429** is retried after 30s for up to 3 continuous minutes before failing (applies to chat and benchmark invokes).
  - note: `GET /health` is **liveness-only** (compose healthcheck). Business readiness rides on the register heartbeat as `operational_state` (`normal` | `no_valid_configuration`); there is no `GET /status` endpoint. Without an active model, `POST /invoke` still returns `success=false` with an explanatory `error`.
 - `runtime`
   - purpose: ReAct loop execution engine
@@ -222,7 +222,7 @@ Read this first, then read only the referenced source-of-truth files.
 - Orchestrator request timeout:
  - `ORCHESTRATOR_UPSTREAM_TIMEOUT_SEC`
 - LLM invoke timeout:
- - `LLM_INVOKE_TIMEOUT_SEC` (llm-openai per-invoke upstream budget, default 60; raise for slow local models)
+ - `LLM_INVOKE_TIMEOUT_SEC` (llm-openai per-invoke upstream budget, default 60; raise for slow local models; context also covers a 3-minute continuous-429 retry window)
 - Distributed userdocker nodes:
  - `NODE_TOKEN` (shared secret for `/api/v1/nodes/connect`; empty on orchestrator disables the tunnel endpoint)
  - `NODE_NAME` (unique per machine, lowercase `[a-z0-9_.-]`; default hostname)

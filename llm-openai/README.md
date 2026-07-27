@@ -116,8 +116,13 @@ effect: JSON file for model profiles and active_model_id (compose mounts llm_ope
 name: LLM_INVOKE_TIMEOUT_SEC
 default: "60"
 required: false
-effect: per-invoke upstream budget in seconds (request context deadline; HTTP client gets +5s margin). Raise for slow local models that re-ingest long prompts.
+effect: per-invoke upstream budget in seconds (request context deadline; HTTP client gets +5s margin). Raise for slow local models that re-ingest long prompts. Context deadline is this value plus the continuous-429 retry window (3 minutes).
 ```
+
+### Rate limit (429) retry
+- On upstream HTTP 429, `Invoke` waits 30s and retries.
+- Retries continue while 429s persist for up to 3 minutes from the first 429; then the error is returned.
+- Applies to all `/invoke` callers (chat ReAct, plan gate, benchmark).
 
 ### ORCHESTRATOR_URL
 ```yaml
