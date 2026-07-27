@@ -75,7 +75,7 @@ Read this first, then read only the referenced source-of-truth files.
   - purpose: OpenAI-compatible chat completions client
   - entry: `llm-openai/cmd/server/main.go`
   - host exposed: no
- - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client.
+ - note: model base URL / API key / upstream model id are stored in **`LLM_CONFIG_PATH`** JSON (default `/data/llm-config.json` on volume `llm_openai_data`), edited through WebUI LLM page (or `PUT /api/v1/llm/config` on the service). No root `.env` `MODEL_*`. Localhost-style upstream URLs are rewritten to `host.docker.internal` in the OpenAI client; trailing overlap with `/v1/chat/completions` is stripped from `base_url` so `…/v1`, `…/api/v1`, and full completions URLs all resolve correctly.
  - note: `GET /health` is **liveness-only** (compose healthcheck). Business readiness rides on the register heartbeat as `operational_state` (`normal` | `no_valid_configuration`); there is no `GET /status` endpoint. Without an active model, `POST /invoke` still returns `success=false` with an explanatory `error`.
 - `runtime`
   - purpose: ReAct loop execution engine
