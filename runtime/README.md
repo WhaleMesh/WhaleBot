@@ -30,6 +30,7 @@ last_verified_from:
 - Runs the ReAct loop for chat requests.
 - Dynamically discovers healthy tool components from orchestrator before each run.
 - Calls `llm-openai` with dynamically built tool definitions and executes returned tool calls.
+- The base system prompt is intentionally short and includes a terminology line mapping user phrasing (「用户容器 / userdocker / 用户 Docker」) onto the `docker_*` tools, so requests like "删除用户容器" route to `docker_lifecycle action=remove`; process knowledge lives in the tool descriptions.
 - The user-docker capability is exposed to the model as four focused tools (`docker_lifecycle`, `docker_exec`, `docker_files`, `export_artifact`) with narrow schemas so small local models select tools reliably; all four normalize to the single internal `manage_user_docker` dispatch path (logger events keep `tool_name=manage_user_docker`).
 - Persists final user+assistant pair into `session`.
 - Emits structured runtime+tool trace events (for example `runtime_run_start`, `runtime_context_loaded`, `react_step_start`, `react_model_response`, `tool_call_start`, `tool_call_end`, `tool_call_error`, `runtime_run_completed`) for diagnosis.

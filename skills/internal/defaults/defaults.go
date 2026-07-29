@@ -16,8 +16,8 @@ var whalemeshBody string
 const (
 	WhalemeshSlug    = "whalemesh-best-practices"
 	WhalemeshTitle   = "whalemesh best practices"
-	whalemeshSummary = "In-chat playbook: use only injected tools (primarily manage_user_docker), staged read-then-mutate flows, remove temporary containers when done, respect plan/safety behavior."
-	whalemeshTags    = "whalemesh,chat-agent,tools,userdocker,react"
+	whalemeshSummary = "In-chat playbook: use only injected docker_* tools for user containers (userdocker / 用户容器), staged read-then-mutate flows, remove temporary containers when done, respect plan/safety behavior."
+	whalemeshTags    = "whalemesh,chat-agent,tools,userdocker,用户容器,docker_lifecycle,docker_exec,docker_files"
 )
 
 // EnsureSeed creates the default whalemesh package when packages/ is empty.

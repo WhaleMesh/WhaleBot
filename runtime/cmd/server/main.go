@@ -596,7 +596,7 @@ func intProp(desc string) map[string]any {
 func userDockerToolDefinitions() []map[string]any {
 	return []map[string]any{
 		fnTool("docker_lifecycle",
-			"Manage workspace containers. start/stop only change the container run state; they never execute commands — use docker_exec to run anything. Containers live on nodes: names returned by list/create look like \"nodeA/container-1\" — always pass that full returned name in later calls. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); if the user explicitly names a framework whalebot/* image, create directly with that image; 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
+			"Manage workspace containers (aka userdocker / 用户容器). start/stop only change the container run state; they never execute commands — use docker_exec to run anything. Containers live on nodes: names returned by list/create look like \"nodeA/container-1\" — always pass that full returned name in later calls. Reuse ladder: 1) action=list with include_stopped=true and reuse a container whose purpose matches (start stopped ones — faster than create); 2) else action=list_images and create from a framework whalebot/* image (for Go builds prefer whalebot/userdocker-golang:latest); if the user explicitly names a framework whalebot/* image, create directly with that image; 3) external images only as last resort: first action=estimate_image_pull, tell the user the download size, and only after explicit approval create/pull with external_image_approved_by_user=true. Example: {\"action\":\"create\",\"image\":\"whalebot/userdocker-golang:latest\",\"purpose\":\"Go build env for project X\"}",
 			map[string]any{
 				"action": actionProp("Operation to perform.", []string{
 					"list", "list_images", "create", "start", "stop", "restart", "remove",
@@ -909,7 +909,7 @@ func (s *reactService) reactLoop(ctx context.Context, msgs []cmMessage, routes a
 			lastToolSummary = summarizeToolResultForFallback(tc.Function.Name, resForModel)
 		}
 	}
-	fallback := "我已完成多轮工具执行，但达到当前 ReAct 步数上限，先返回已获得结果。"
+	fallback := "我已完成多轮工具执行，但达到本轮执行步数上限，先返回已获得的结果。"
 	if lastToolSummary != "" {
 		fallback += "\n\n最近一次工具结果：\n" + lastToolSummary
 	}
@@ -2679,7 +2679,8 @@ func (s *reactService) buildSkillsContext(ctx context.Context, base, userMsg str
 // descriptions instead.
 func buildSystemPrompt(c runtimeCatalog) string {
 	lines := []string{
-		"你是 WhaleBot 的 ReAct 助手：先思考，必要时调用工具，最后给出简洁友好的回复。",
+		"你是 WhaleBot 智能工程助理：先思考，必要时调用工具完成实际工作，最后给出简洁友好的回复。",
+		"术语：用户提到的「用户容器 / userdocker / 用户 Docker / workspace 容器」都指本框架用 docker_* 工具管理的工作容器——列出/创建/启停/删除用 docker_lifecycle（如删除即 action=remove），执行命令用 docker_exec，读写文件用 docker_files。",
 		"工程创建、编译、运行、产物导出一律通过 docker_* 工具在容器里完成；具体流程规则见各工具描述，严格遵循。",
 		"拿到关键结果（编译日志、运行输出、导出成功）后立即停止调用工具并输出最终回复；export_artifact 成功后不要重复导出。",
 		"只能使用下方列出的工具，绝不虚构工具名。",
