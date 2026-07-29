@@ -85,18 +85,19 @@ func New(baseURL, apiKey, model string) *Client {
 	}
 }
 
+// chatCompletionsPath is appended by Invoke. normalizeBaseURL strips any
+// trailing overlap with this path so provider docs URLs like
+// ".../v1", ".../api/v1", or the full ".../v1/chat/completions" all work.
+const chatCompletionsPath = "/v1/chat/completions"
+
 func normalizeBaseURL(raw string) string {
 	trimmed := strings.TrimRight(raw, "/")
 	u, err := url.Parse(trimmed)
 	if err != nil || u.Host == "" {
 		return trimmed
 	}
-	// Invoke appends "/v1/chat/completions". If base URL already ends
-	// with "/v1" (common in provider docs), strip it to avoid "/v1/v1/...".
-	if strings.Trim(u.Path, "/") == "v1" {
-		u.Path = ""
-		u.RawPath = ""
-	}
+	u.Path = stripPathOverlap(u.Path, chatCompletionsPath)
+	u.RawPath = ""
 	host := u.Hostname()
 	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
 		return strings.TrimRight(u.String(), "/")
@@ -110,6 +111,21 @@ func normalizeBaseURL(raw string) string {
 	slog.Info("rewrote localhost base URL to host.docker.internal",
 		"original", trimmed, "rewritten", rewritten)
 	return rewritten
+}
+
+// stripPathOverlap removes the longest suffix of path that equals a prefix of
+// appendPath (e.g. path "/api/v1" + append "/v1/chat/completions" → "/api").
+func stripPathOverlap(path, appendPath string) string {
+	path = strings.TrimRight(path, "/")
+	if path == "" || appendPath == "" {
+		return path
+	}
+	for n := len(appendPath); n > 0; n-- {
+		if strings.HasSuffix(path, appendPath[:n]) {
+			return strings.TrimSuffix(path, appendPath[:n])
+		}
+	}
+	return path
 }
 
 type chatCompletionsRequest struct {
