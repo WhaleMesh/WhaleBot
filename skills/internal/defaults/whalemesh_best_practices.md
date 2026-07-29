@@ -27,6 +27,19 @@ Use a staged pattern:
 3. **Mutate workspace** (write files / mkdir / move via `docker_files`) and **run commands** (`docker_exec`; long builds/installs with `async=true` + `exec_status` polling).
 4. **Export artifacts** with `export_artifact` when the user needs downloadable output; if export already succeeded, **do not repeat export** — summarize and finish.
 
+### 3.1) Build-then-run deployments (source provenance)
+
+Build containers are disposable — they are usually removed right after the build, so the **run container must carry everything needed to rebuild**. When you build a binary in one container and deploy it to run in another:
+
+1. In the build container, pack the source: `docker_exec` `tar czf /workspace/src.tar.gz <srcdir>`.
+2. `docker_files` `copy_file` **both** the binary and `/workspace/src.tar.gz` into the run container (both containers must be on the same node).
+3. In the run container, write `/workspace/.whalebot/BUILD.md` recording: source layout, build image and exact build commands, toolchain version, artifact path, deploy date.
+4. Only **then** remove the build container.
+
+Keep `src.tar.gz` unextracted in the run container (single source of truth, nothing to accidentally edit). To upgrade later: create a fresh build container, `copy_file` `src.tar.gz` back, extract, apply changes, rebuild per BUILD.md, and copy the new binary over.
+
+Run containers are cheap and provide fault isolation: **default to one dedicated run container per service/binary**; do not consolidate multiple services into one run container unless the user explicitly asks (port mapping changes require container recreation and would disrupt co-hosted apps).
+
 ## 4) Risk and ambiguity
 
 - If the request is underspecified for destructive or high-impact work, **ask one tight clarifying question** (avoid long questionnaires) and propose a minimal safe default only when it is truly low-risk.
