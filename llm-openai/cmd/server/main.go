@@ -140,10 +140,10 @@ func main() {
 		}
 		client := openai.New(prof.BaseURL, prof.APIKey, prof.Model)
 		// Local models re-ingesting a long prompt can legitimately exceed 60s;
-		// LLM_INVOKE_TIMEOUT_SEC raises the budget. Client timeout gets a small
-		// margin so the context deadline is the one that fires.
+		// LLM_INVOKE_TIMEOUT_SEC raises the budget. Client timeout is per attempt
+		// (+5s margin). Overall context also covers continuous 429 retries.
 		client.HTTP.Timeout = invokeTimeout + 5*time.Second
-		ctx, cancel := context.WithTimeout(req.Context(), invokeTimeout)
+		ctx, cancel := context.WithTimeout(req.Context(), invokeTimeout+openai.RateLimitRetryWindow)
 		defer cancel()
 		msg, usage, err := client.Invoke(ctx, ir.Messages, ir.Tools, ir.Params)
 		if err != nil {

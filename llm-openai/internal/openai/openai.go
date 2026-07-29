@@ -61,6 +61,14 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+// Rate-limit retry: on HTTP 429, wait RateLimitRetryDelay and retry until
+// RateLimitRetryWindow of continuous 429s elapses, then surface the error.
+// ponytail: package vars so unit tests can shrink delays without interfaces.
+var (
+	RateLimitRetryDelay  = 30 * time.Second
+	RateLimitRetryWindow = 3 * time.Minute
+)
+
 func New(baseURL, apiKey, model string) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
@@ -185,6 +193,8 @@ func parseAssistantContent(raw json.RawMessage) string {
 
 // Invoke calls Chat Completions. When tools is non-empty they are passed through;
 // params may include "temperature", "max_tokens", "tool_choice" (e.g. "auto").
+// HTTP 429 responses are retried after RateLimitRetryDelay for up to
+// RateLimitRetryWindow of continuous rate limiting (covers chat + benchmark).
 func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, params map[string]any) (Message, *Usage, error) {
 	if c.APIKey == "" {
 		return echoFallback(messages, tools), nil, nil
@@ -218,38 +228,66 @@ func (c *Client) Invoke(ctx context.Context, messages []Message, tools []Tool, p
 		return Message{}, nil, err
 	}
 	url := c.BaseURL + "/v1/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return Message{}, nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return Message{}, nil, wrapUpstreamDialErr(url, err)
+	var rateLimitDeadline time.Time
+	for {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return Message{}, nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+		resp, err := c.HTTP.Do(httpReq)
+		if err != nil {
+			return Message{}, nil, wrapUpstreamDialErr(url, err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			now := time.Now()
+			if rateLimitDeadline.IsZero() {
+				rateLimitDeadline = now.Add(RateLimitRetryWindow)
+				slog.Warn("upstream 429 rate limited; retrying",
+					"delay", RateLimitRetryDelay.String(),
+					"window", RateLimitRetryWindow.String(),
+					"model", c.Model)
+			}
+			if !now.Before(rateLimitDeadline) {
+				return Message{}, nil, fmt.Errorf("upstream %d (rate limit persisted %s): %s",
+					resp.StatusCode, RateLimitRetryWindow, truncate(string(raw), 4096))
+			}
+			timer := time.NewTimer(RateLimitRetryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return Message{}, nil, ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+
+		if resp.StatusCode >= 300 {
+			return Message{}, nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 4096))
+		}
+		var parsed chatCompletionsResponse
+		if err := json.Unmarshal(raw, &parsed); err != nil {
+			return Message{}, nil, fmt.Errorf("decode: %w", err)
+		}
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return Message{}, nil, errors.New(parsed.Error.Message)
+		}
+		if len(parsed.Choices) == 0 {
+			return Message{}, nil, errors.New("no choices in response")
+		}
+		cm := parsed.Choices[0].Message
+		return Message{
+			Role:      cm.Role,
+			Content:   parseAssistantContent(cm.Content),
+			ToolCalls: cm.ToolCalls,
+		}, parsed.Usage, nil
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return Message{}, nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, truncate(string(raw), 4096))
-	}
-	var parsed chatCompletionsResponse
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return Message{}, nil, fmt.Errorf("decode: %w", err)
-	}
-	if parsed.Error != nil && parsed.Error.Message != "" {
-		return Message{}, nil, errors.New(parsed.Error.Message)
-	}
-	if len(parsed.Choices) == 0 {
-		return Message{}, nil, errors.New("no choices in response")
-	}
-	cm := parsed.Choices[0].Message
-	return Message{
-		Role:      cm.Role,
-		Content:   parseAssistantContent(cm.Content),
-		ToolCalls: cm.ToolCalls,
-	}, parsed.Usage, nil
 }
 
 func echoFallback(messages []Message, tools []Tool) Message {

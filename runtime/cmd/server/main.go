@@ -216,7 +216,8 @@ func main() {
 		orchURL:      orchURL,
 		sessionURL:   sessionURL,
 		llmOpenAIURL: llmOpenAIURL,
-		http:         &http.Client{Timeout: 120 * time.Second},
+		// 5m covers llm-openai invoke budget + continuous 429 retry window (3m).
+		http:         &http.Client{Timeout: 5 * time.Minute},
 		maxSteps:     maxSteps,
 	}
 
@@ -1832,7 +1833,8 @@ func (s *reactService) decidePlanGate(ctx context.Context, userMessage string, h
 
 	// Thinking-mode models reason before answering: give them token and time
 	// budget, and let parsePlanGateResponse strip the <think> block.
-	gctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Extra 3m matches llm-openai continuous-429 retry window.
+	gctx, cancel := context.WithTimeout(ctx, 30*time.Second+3*time.Minute)
 	defer cancel()
 	userBlock := buildPlanGateTranscript(userMessage, history)
 	gateMsgs := []cmMessage{
