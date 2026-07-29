@@ -34,8 +34,10 @@ That paradigm is **not** the ceiling of what your agents can do—the ceiling is
 ```mermaid
 flowchart LR
   user["User"] --> webui["webui"]
+  user --> adapterWebui["adapter-webui"]
   tg["Telegram"] --> adapterTelegram["adapter-telegram"]
   webui --> orchestrator["orchestrator"]
+  adapterWebui --> orchestrator
   adapterTelegram --> orchestrator
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
@@ -43,8 +45,9 @@ flowchart LR
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
   orchestrator --> skills["skills"]
+  orchestrator --> memory["memory"]
   orchestrator --> workspace["workspace"]
-  orchestrator --> stats_optional["stats (optional)"]
+  orchestrator --> stats["stats"]
 ```
 
 ## Quick Start
@@ -53,7 +56,7 @@ After the stack is up, configure **LLM** and a **Telegram bot token** in WebUI; 
 
 1. **Environment file**
 
-Root `.env` holds Compose-wide values; **do not** put model API secrets there (LLM settings live on the `llm-openai` side / WebUI—see `AGENT.md`).
+Root `.env` holds Compose-wide values; **do not** put model API secrets there (LLM settings live on the `llm-openai` side / WebUI—see `AGENTS.md`).
 
 ```bash
 cp .env.example .env
@@ -82,18 +85,19 @@ In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and foll
 
 With both configured, `adapter-telegram` starts polling—open your bot in Telegram and send a message.
 
+Prefer the browser? The built-in **web chat** (`adapter-webui`) is available at `http://localhost:18083` with the same default credentials as WebUI.
+
 6. **Orchestrator API (optional)**
 
 HTTP gateway: `http://localhost:18080`
 
-**About the bundled example**: the repo ships **one** user-facing adapter (Telegram) and **one** LLM path (`llm-openai`) as a minimal runnable loop. More adapters and backends will get easier as component **schemas** and **AGENT** docs mature.
+**About the bundled example**: the repo ships **two** user-facing adapters (Telegram and web chat) and **one** OpenAI-compatible LLM path (`llm-openai`) forming a runnable conversational loop; WebUI also includes a **model Benchmark** page for comparing local models over time. More adapters and backends will get easier as component **schemas** and AGENT docs mature (see `docs/adapter-progress-pattern.md` for the adapter progress pattern).
 
 ## Roadmap / Near-Term Direction
 
 - Formalize interface **schemas** for components and ship matching **AGENT** documentation so new components are cheap to author or generate.
 - Improve Docker **lifecycle** management and orchestration ergonomics so agents interact with containers more smoothly.
 - Refine prompts and the ReAct workflow.
-- Land the `memory` component (status in [`memory/TODO.md`](memory/TODO.md)).
 - Add more common **adapters**.
 - Finer-grained work lives in per-module TODOs and Issues.
 
@@ -101,21 +105,21 @@ HTTP gateway: `http://localhost:18080`
 
 High-level map only; each directory has its own README for implementation detail.
 
-- `orchestrator/`: orchestration and API gateway
-- `runtime/`: ReAct execution loop
-- `session/`: conversation persistence
-- `skills/`: skill library (SQLite + FTS5); exposed via orchestrator routes such as `/api/v1/skills*`
-- `llm-openai/`: model adapter/client
+- `orchestrator/`: orchestration and API gateway (component registry/heartbeats, node tunnel hub, reverse proxies)
+- `runtime/`: ReAct execution loop (includes the model benchmark harness)
+- `session/`: conversation persistence (SQLite, idle expiry)
+- `skills/`: skill library (filesystem skill packages + SQLite FTS5 search index); exposed via orchestrator routes such as `/api/v1/skills*`
+- `llm-openai/`: OpenAI-compatible model adapter/client (multi-profile, managed via WebUI)
 - `adapter-telegram/`: Telegram user I/O adapter
-- `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery)
-- `logger/`: logging service
-- `stats/`: optional Overview metrics service
-- `memory/`: memory service
-  - Source and roadmap live in-repo; default Compose does not start it. See [`memory/TODO.md`](memory/TODO.md).
+- `adapter-webui/`: ChatGPT-style web chat adapter (host port 18083)
+- `user-docker-manager/`: user docker system manager (list/create/remove/restart/interface discovery); one instance per node machine, connected through an outbound reverse tunnel
+- `logger/`: logging service (persistent events)
+- `stats/`: Overview metrics service (optional; stop the container to disable metrics)
+- `memory/`: memory service (KV notes + AES-256-GCM encrypted secrets store; agents reference secrets via `{{secret:key}}` placeholders)
 - `workspace/`: workspace service
 - `userdocker-base/`: base image for dynamic userdocker instances
 - `whalebot/userdocker-golang:latest`: Go-toolchain image variant for dynamic userdocker compile tasks (produced from the `userdocker-base` build flow)
-- `webui/`: frontend
+- `webui/`: dashboard frontend (Svelte + Caddy, with sign-in auth)
 
 ## Documentation Priority
 
@@ -123,10 +127,10 @@ If docs disagree, trust this order:
 
 1. `docker-compose.yml` (runtime truth)
 2. `.env.example` (configuration truth)
-3. `AGENT.md` (low-token project snapshot for AI agents)
+3. `AGENTS.md` (low-token project snapshot for AI agents)
 4. Root and module READMEs
 
 ## Contribution Note
 
-Before committing contributions, update `AGENT.md` together with your code changes
+Before committing contributions, update `AGENTS.md` together with your code changes
 whenever architecture, service map, ports, env vars, runbook, or project status changed.

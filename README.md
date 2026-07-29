@@ -33,8 +33,10 @@ WhaleBot 是一个以 Docker Compose 为核心的多组件 AI 编排系统：单
 ```mermaid
 flowchart LR
   user["User"] --> webui["webui"]
+  user --> adapterWebui["adapter-webui"]
   tg["Telegram"] --> adapterTelegram["adapter-telegram"]
   webui --> orchestrator["orchestrator"]
+  adapterWebui --> orchestrator
   adapterTelegram --> orchestrator
   orchestrator --> runtime["runtime"]
   orchestrator --> session["session"]
@@ -42,8 +44,9 @@ flowchart LR
   orchestrator --> toolDocker["user-docker-manager"]
   orchestrator --> logger["logger"]
   orchestrator --> skills["skills"]
+  orchestrator --> memory["memory"]
   orchestrator --> workspace["workspace"]
-  orchestrator --> stats_optional["stats (optional)"]
+  orchestrator --> stats["stats"]
 ```
 
 ## 快速开始
@@ -52,7 +55,7 @@ flowchart LR
 
 1. **准备环境变量**
 
-根目录 `.env` 主要承载 Compose 与通用变量；**不必**在根文件里配置模型 API 密钥（模型侧在 `llm-openai` 数据卷 / WebUI 中配置，见 `AGENT.md`）。
+根目录 `.env` 主要承载 Compose 与通用变量；**不必**在根文件里配置模型 API 密钥（模型侧在 `llm-openai` 数据卷 / WebUI 中配置，见 `AGENTS.md`）。
 
 ```bash
 cp .env.example .env
@@ -81,6 +84,8 @@ docker compose up -d --build
 
 两者均配置有效后，`adapter-telegram` 开始轮询，即可在 Telegram 里搜索你的 Bot 并发送消息进行对话。
 
+不想用 Telegram 也可以直接使用内置的 **Web 聊天界面**（`adapter-webui`）：浏览器访问 `http://localhost:18083`，默认账号与 WebUI 相同。
+
 6. **API 入口（可选）**
 
 编排层 HTTP：`http://localhost:18080`
@@ -96,14 +101,13 @@ NODE_NAME=gpu-box-1 NODE_TOKEN=<shared-token> \
 docker compose -f docker-compose.node.yml up -d --build
 ```
 
-**关于当前内置示例**：仓库目前只内置**一个**用户侧适配器（Telegram）与**一条** LLM 路径（`llm-openai`），用于构成最小可运行闭环。更多适配器与模型后端将随组件 **schema** 与 **AGENT** 文档完善后更易扩展。
+**关于当前内置示例**：仓库内置**两个**用户侧适配器（Telegram 与 Web 聊天）与**一条** OpenAI 兼容的 LLM 路径（`llm-openai`），构成可运行的对话闭环；WebUI 另提供**模型基准测试**（Benchmark）页，便于在多个本地模型间横向比较。更多适配器与模型后端将随组件 **schema** 与 AGENT 文档完善后更易扩展（适配器进度反馈模式见 `docs/adapter-progress-pattern.md`）。
 
 ## Roadmap / 近期方向
 
 - 完善各类组件的接口 schema 定义，并配套 AGENT 文档，使开发者能低成本编写或生成新组件。
 - 完善 Docker 生命周期管理，加强编排与 Docker 的交互能力，使智能体与容器的协作更顺滑。
 - 优化提示词与 ReAct 工作流。
-- 落地 `memory` 组件（进展见 [`memory/TODO.md`](memory/TODO.md)）。
 - 增加更多常用 adapter。
 - 更多细项以各模块 TODO 与 Issue 为准。
 
@@ -111,21 +115,21 @@ docker compose -f docker-compose.node.yml up -d --build
 
 以下为高层说明；各目录的实现细节见对应子模块 README。
 
-- `orchestrator/`：编排与网关
-- `runtime/`：ReAct 执行循环
-- `session/`：会话持久化
-- `skills/`：技能库（SQLite + FTS5）；对外经 orchestrator 暴露 `/api/v1/skills*` 等路由
-- `llm-openai/`：模型调用适配
+- `orchestrator/`：编排与网关（组件注册/心跳、节点隧道、API 反向代理）
+- `runtime/`：ReAct 执行循环（含模型基准测试 harness）
+- `session/`：会话持久化（SQLite，支持空闲过期）
+- `skills/`：技能库（文件系统技能包 + SQLite FTS5 检索索引）；对外经 orchestrator 暴露 `/api/v1/skills*` 等路由
+- `llm-openai/`：OpenAI 兼容模型调用适配（多 profile，WebUI 管理）
 - `adapter-telegram/`：Telegram 用户 I/O 适配器
-- `user-docker-manager/`：`user docker` 系统管理（列举、创建、移除、重启、接口发现）
-- `logger/`：日志服务
-- `stats/`：可选的 Overview 统计服务
-- `memory/`：记忆服务
-  - 源码与路线图在仓库中维护；默认 compose 不启动该服务。详见 [`memory/TODO.md`](memory/TODO.md)。
+- `adapter-webui/`：ChatGPT 风格 Web 聊天适配器（宿主端口 18083）
+- `user-docker-manager/`：`user docker` 系统管理（列举、创建、移除、重启、接口发现）；每台节点机器一个实例，经出站反向隧道接入编排器
+- `logger/`：日志服务（事件持久化）
+- `stats/`：Overview 统计服务（可选，停用即禁用指标）
+- `memory/`：记忆服务（KV 笔记 + AES-256-GCM 加密的密钥库，agent 经 `{{secret:key}}` 占位符引用）
 - `workspace/`：工作区服务
 - `userdocker-base/`：动态 userdocker 基础镜像
 - `whalebot/userdocker-golang:latest`：动态 userdocker 的 Go 工具链镜像变体（由 `userdocker-base` 构建流程产出）
-- `webui/`：前端界面
+- `webui/`：管理面板前端（Svelte + Caddy，含登录鉴权）
 
 ## 文档与信息优先级
 
@@ -133,10 +137,10 @@ docker compose -f docker-compose.node.yml up -d --build
 
 1. `docker-compose.yml`（运行事实）
 2. `.env.example`（配置事实）
-3. `AGENT.md`（面向 AI agent 的低 token 项目快照）
+3. `AGENTS.md`（面向 AI agent 的低 token 项目快照）
 4. 根 `README.md` 与各模块 `README.md`（说明文档）
 
 ## 贡献说明
 
-提交贡献前，请同步检查并更新 `AGENT.md`。  
-只要你的改动影响了架构、服务清单、端口、环境变量、运行方式或项目状态，就必须在同一提交中更新 `AGENT.md`。
+提交贡献前，请同步检查并更新 `AGENTS.md`。  
+只要你的改动影响了架构、服务清单、端口、环境变量、运行方式或项目状态，就必须在同一提交中更新 `AGENTS.md`。
