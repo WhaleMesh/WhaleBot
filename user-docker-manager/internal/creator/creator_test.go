@@ -36,3 +36,26 @@ func TestDemuxDockerStream(t *testing.T) {
 		t.Fatalf("plain: got %q want %q", got, string(plain))
 	}
 }
+
+func TestMapDockerImageList(t *testing.T) {
+	t.Parallel()
+	raw := []dockerImageListEntry{
+		{ID: "sha256:aaaaaaaaaaaa1111", RepoTags: []string{"alpine:3.20"}, Size: 100, Created: 100},
+		{ID: "sha256:bbbbbbbbbbbb2222", RepoTags: []string{"<none>:<none>"}, Size: 50, Created: 200},
+		{ID: "sha256:cccccccccccccccc", RepoTags: nil, Size: 10, Created: 150},
+	}
+	got := mapDockerImageList(raw)
+	if len(got) != 3 {
+		t.Fatalf("len=%d want 3", len(got))
+	}
+	// Newest first.
+	if got[0].ID != "bbbbbbbbbbbb" || len(got[0].RepoTags) != 0 {
+		t.Fatalf("newest dangling: %+v", got[0])
+	}
+	if got[1].ID != "cccccccccccc" || got[1].RepoTags == nil || len(got[1].RepoTags) != 0 {
+		t.Fatalf("mid: %+v", got[1])
+	}
+	if got[2].ID != "aaaaaaaaaaaa" || got[2].RepoTags[0] != "alpine:3.20" {
+		t.Fatalf("oldest tagged: %+v", got[2])
+	}
+}

@@ -124,6 +124,23 @@ response:
   profiles:
     go_build:
       recommended_image: whalebot/userdocker-golang:latest
+note: policy/profiles only (agent list_images). Local Engine inventory is GET /images/local.
+```
+
+### Endpoint: GET /api/v1/user-dockers/images/local
+```yaml
+method: GET
+path: /api/v1/user-dockers/images/local
+request: none
+response:
+  success: boolean
+  local_images:
+    - id: string          # short 12-char id
+      repo_tags: string[] # empty when dangling
+      size: int64
+      created: int64      # unix seconds
+  error: string
+note: lists Docker Engine images on this node (newest first).
 ```
 
 ### Endpoint: GET /api/v1/user-dockers/images/estimate
@@ -381,6 +398,7 @@ aliases:
   - container_lifecycle_tool
 query_to_endpoint:
   list_userdocker_images: GET /api/v1/user-dockers/images
+  list_userdocker_images_local: GET /api/v1/user-dockers/images/local
   estimate_image_pull: GET /api/v1/user-dockers/images/estimate
   pull_image: POST /api/v1/user-dockers/pull
   pull_status: GET /api/v1/user-dockers/pull/status

@@ -58,7 +58,7 @@ Read this first, then read only the referenced source-of-truth files.
  - purpose: registry (heartbeat liveness) + node tunnel hub + API gateway + chat orchestration
  - entry: `orchestrator/cmd/server/main.go`
  - host exposed: yes (`${ORCHESTRATOR_PORT:-18080}:${ORCHESTRATOR_PORT:-18080}`)
- - note: userdocker API is node-scoped (see §1.6): `GET/POST /api/v1/tools/user-dockers` (list fan-out / create with node pick), `GET …/nodes`, `…/images` (fan-out), `…/images/estimate?node=`, `…/pull` + `…/pull/status` (composite job id), `…/copy` (cross-container file copy; composite names, both containers must be on the same node), `…/touch-creator-session` (broadcast), `…/{node}/{cname}[/action]` generic pass-through
+ - note: userdocker API is node-scoped (see §1.6): `GET/POST /api/v1/tools/user-dockers` (list fan-out / create with node pick), `GET …/nodes`, `…/images` (fan-out policy/profiles for agent `list_images`), `…/images/local?node=` (Engine-local inventory for WebUI), `…/images/estimate?node=`, `…/pull` + `…/pull/status` (composite job id), `…/copy` (cross-container file copy; composite names, both containers must be on the same node), `…/touch-creator-session` (broadcast), `…/{node}/{cname}[/action]` generic pass-through
  - note: exposes `GET /api/v1/stats/overview` as a reverse proxy to the healthy `type=stats` component (`GET …/stats/overview`); returns `503` with `code=stats_disabled` when no stats service is registered
  - note: `GET /health` returns `chat_ready` / `chat_error` (HTTP 200): `runtime`, `session`, and `llm` (`llm-openai`) must each be **live** (fresh heartbeat) **and** operationally ready (heartbeat `operational_state` empty or `normal`); `POST /api/v1/chat` rejects with `success=false` and the same English guidance text if not
  - note: `POST /api/v1/chat` only proxies to `runtime` `/run` (no orchestrator-local session+llm-openai fallback)
@@ -142,7 +142,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: `session_scoped` containers store `whalebot.userdocker.creator_session_id` (same as create-time `session_id`); **any** request that supplies `session_id` may operate them (no per-container session ownership check); temporary removal TTL from `USERDOCKER_TEMP_TTL_SEC` (or `USERDOCKER_IDLE_HOURS*3600`); `POST /api/v1/user-dockers/touch-creator-session` touches all temp dockers for a creator `session_id`
   - note: exposes `start/stop/touch/exec/files/artifacts/export` APIs and idle sweeper for `session_scoped` containers; `global_service` is not subject to this sweeper
  - note: `create` accepts a `purpose` string stored as label `whalebot.userdocker.purpose` and echoed in `GET /api/v1/user-dockers` (`purpose` field) so agents can decide whether to reuse a container
- - note: `POST /api/v1/user-dockers/pull` starts an **async** image pull (background, 30m cap) returning `job_id`; poll `GET …/pull/status`. `GET …/images/estimate?ref=` returns an upper-bound compressed download size from the registry manifest (docker.io anonymous only; other registries return a note). External refs require `external_image_approved_by_user=true`
+ - note: `POST /api/v1/user-dockers/pull` starts an **async** image pull (background, 30m cap) returning `job_id`; poll `GET …/pull/status`. `GET …/images/estimate?ref=` returns an upper-bound compressed download size from the registry manifest (docker.io anonymous only; other registries return a note). External refs require `external_image_approved_by_user=true`. `GET …/images/local` lists Engine-local images (`id`/`repo_tags`/`size`/`created`); policy `GET …/images` stays allowed/profiles only (agent-safe)
  - note: `GET /api/v1/user-dockers/{name}/logs?tail=N` returns demuxed container stdout/stderr; `POST …/exec` accepts `async=true` (returns `job_id`, poll `GET …/exec/status`) for long installs/builds
  - note: `POST /api/v1/user-dockers/copy` (`{from_name, from_path, to_name, to_path, session_id}`) copies a file between two containers on the node, binary-safe (base64 fetch from source file API, PUT to target; 64MB cap) — bytes never enter LLM context
  - note: capabilities add `userdocker_images_estimate`, `userdocker_pull`, `userdocker_logs`, `userdocker_copy`
@@ -188,7 +188,7 @@ Read this first, then read only the referenced source-of-truth files.
   - note: Overview top renders three stat cards (messages / tool calls / tokens) from `GET /api/v1/stats/overview` when the stats service is enabled; shows a stats-disabled banner on `503 stats_disabled`; values use k/M shorthand (>10k -> `Nk`, >1M -> `NM`, one decimal) and a small last-24h delta line (`last_24h` from stats service window)
   - note: session detail keeps thought traces and renders them collapsed by default
   - note: session detail includes runtime timeline panel sourced from logger events (`session_id`-scoped `runtime/react/tool` phases)
-  - note: `Tools` / `Envs` are selector pages; detailed testers are nested pages
+  - note: `Tools` is a selector page; nested pages: `User Docker Manager` (`#/tool/docker-create`) and **Node Images** (`#/tool/docker-images` — pick a node, list Engine-local images via `GET …/images/local?node=`, estimate/pull with dashboard login as pull approval). Derive/build of userdocker-compatible images from arbitrary bases is not exposed in WebUI yet
   - note: sidebar **Skills** opens `#/skills` (CRUD via orchestrator `/api/v1/skills*`), `#/skills/{slug}` edits a **directory package** (metadata + file tree: `SKILL.md`, `references/*`); **Import ZIP** uploads a package archive via `POST /api/v1/skills/import`
   - note: sidebar **Secrets** opens `#/secrets` (CRUD via orchestrator `/api/v1/secrets*`), `#/secrets/{id}` edits one entry; values are masked in the UI, full values only accessible by runtime internally
   - note: sidebar **LLM** opens `#/llm` (lists `type=llm` from `GET /api/v1/components`); `#/llm/{name}` edits persisted model profiles via orchestrator `GET|PUT /api/v1/llm-components/{name}/config`, `POST …/active`, `POST …/test` (proxied to that component’s `/api/v1/llm/*`)
@@ -291,6 +291,7 @@ Read this first, then read only the referenced source-of-truth files.
   - check stats overview (when stats service running): `curl -s http://localhost:18080/api/v1/stats/overview`
   - check userdocker manager contract: `curl -s http://localhost:18080/api/v1/tools/user-dockers/interface-contract`
  - check userdocker allowed images: `curl -s http://localhost:18080/api/v1/tools/user-dockers/images`
+ - check node-local images: `curl -s 'http://localhost:18080/api/v1/tools/user-dockers/images/local?node=<node>'`
  - check connected userdocker nodes: `curl -s http://localhost:18080/api/v1/tools/user-dockers/nodes`
  - check userdocker list (composite `"<node>/<name>"`): `curl -s http://localhost:18080/api/v1/tools/user-dockers`
   - check skills list (when skills service running): `curl -s http://localhost:18080/api/v1/skills`

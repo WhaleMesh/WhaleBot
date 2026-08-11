@@ -99,6 +99,11 @@ error_behavior: standard_http_status_from_caddy
   - `POST /api/v1/tools/user-dockers/{name}/restart`
   - `GET /api/v1/tools/user-dockers/interface-contract`
   - `GET /api/v1/tools/user-dockers/{name}/interface`
+  - `GET /api/v1/tools/user-dockers/nodes`
+  - `GET /api/v1/tools/user-dockers/images/local?node=`
+  - `GET /api/v1/tools/user-dockers/images/estimate?ref=&node=`
+  - `POST /api/v1/tools/user-dockers/pull`
+  - `GET /api/v1/tools/user-dockers/pull/status?job_id=`
   - `GET|POST /api/v1/skills`, `GET /api/v1/skills/search`, `GET|PUT|DELETE /api/v1/skills/{id}` (Skills page)
   - `GET|PUT /api/v1/adapter-components/{name}/config` (Adapters page; proxied to each adapter service `/api/v1/adapter/config`)
   - `POST /api/v1/benchmark/run`, `GET /api/v1/benchmark/runs`, `DELETE /api/v1/benchmark/runs/{id}` (Benchmark page; proxied to runtime)
@@ -106,7 +111,8 @@ error_behavior: standard_http_status_from_caddy
 ## UI Navigation Model
 - Router uses hash-based URLs so browser refresh keeps the current page and detail context.
 - `Tools` page is a selector list for tool test pages.
-  - Current item: `User Docker Manager`.
+  - `User Docker Manager` (`#/tool/docker-create`): create/list/remove/restart/interface.
+  - **Node Images** (`#/tool/docker-images`): select a connected node, list Engine-local images (`GET …/images/local?node=`), estimate size and pull (`POST …/pull` with `external_image_approved_by_user=true` — dashboard sign-in is the approval). Agent `list_images` still uses policy-only `GET …/images`.
 - `Skills` page (`#/skills`, `#/skills/{id}`): CRUD for markdown skills; body defaults to preview with an edit toggle.
 - `Benchmark` page (`#/benchmark`): runs the model benchmark against the **currently active** llm-openai model (one local model loaded at a time — switch on the LLM page between runs) with an optional real-container E2E toggle; shows an accumulating run-history comparison table (total + plan_gate/tool_call/react + E2E scores, avg latency, tokens) with the best completed run highlighted and expandable per-case detail; E2E detail additionally renders collapsed `turn_replies` (per-turn model replies) and `tool_events` (tool-call trace) so failed checkpoints are self-explanatory; each row has a JSON button that downloads the full run record (`benchmark-<model>-<date>.json`) for offline analysis.
 - `Logger` page provides dual-source diagnostics:

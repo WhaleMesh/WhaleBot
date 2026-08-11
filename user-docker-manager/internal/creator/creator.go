@@ -1059,6 +1059,79 @@ func (c *Creator) ImageExistsLocally(ctx context.Context, ref string) bool {
 	return resp.StatusCode == 200
 }
 
+// LocalImage is one Engine-local image as shown on the WebUI Images page.
+type LocalImage struct {
+	ID       string   `json:"id"`
+	RepoTags []string `json:"repo_tags"`
+	Size     int64    `json:"size"`
+	Created  int64    `json:"created"`
+}
+
+type dockerImageListEntry struct {
+	ID       string   `json:"Id"`
+	RepoTags []string `json:"RepoTags"`
+	Size     int64    `json:"Size"`
+	Created  int64    `json:"Created"`
+}
+
+// mapDockerImageList converts Engine /images/json payload into LocalImage rows,
+// newest first. Exported via package for the self-check test.
+func mapDockerImageList(raw []dockerImageListEntry) []LocalImage {
+	out := make([]LocalImage, 0, len(raw))
+	for _, e := range raw {
+		tags := e.RepoTags
+		if tags == nil {
+			tags = []string{}
+		}
+		// Engine sometimes returns [<none>:<none>] for dangling images.
+		cleaned := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if t == "" || t == "<none>:<none>" {
+				continue
+			}
+			cleaned = append(cleaned, t)
+		}
+		out = append(out, LocalImage{
+			ID:       shortImageID(e.ID),
+			RepoTags: cleaned,
+			Size:     e.Size,
+			Created:  e.Created,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created > out[j].Created })
+	return out
+}
+
+func shortImageID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// ListLocalImages returns all images present on this node's Docker Engine.
+func (c *Creator) ListLocalImages(ctx context.Context) ([]LocalImage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/images/json", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, dockerAPIError("list images", resp.StatusCode, body)
+	}
+	var raw []dockerImageListEntry
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode images list: %w", err)
+	}
+	return mapDockerImageList(raw), nil
+}
+
 // PullEstimate is the download-size estimate for an external image.
 type PullEstimate struct {
 	Ref             string `json:"ref"`

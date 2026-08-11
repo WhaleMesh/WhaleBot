@@ -242,6 +242,24 @@ func (s *Server) handleUserDockerImageEstimate(w http.ResponseWriter, r *http.Re
 	s.proxyNodeGet(w, r, n, "/api/v1/user-dockers/images/estimate")
 }
 
+func (s *Server) handleUserDockerImagesLocal(w http.ResponseWriter, r *http.Request) {
+	n, ok := s.nodeFromQuery(w, r)
+	if !ok {
+		return
+	}
+	var payload map[string]any
+	target := "http://" + n.Hello.Node + "/api/v1/user-dockers/images/local"
+	if err := s.nodeGetJSON(r, n, target, &payload); err != nil {
+		writeError(w, 502, fmt.Sprintf("node %s error: %s", n.Hello.Node, err.Error()))
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["node"] = n.Hello.Node
+	writeJSON(w, 200, payload)
+}
+
 // handleUserDockerCopy proxies a cross-container file copy to the node hosting
 // both containers. Names arrive composite ("<node>/<name>"); both must resolve
 // to the same node (the manager copies within its own Docker network only).
