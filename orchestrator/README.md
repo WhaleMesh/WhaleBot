@@ -228,7 +228,8 @@ Userdockers are managed per **node** (every connected `user-docker-manager` tunn
 nodes: GET /api/v1/tools/user-dockers/nodes            # connected nodes (name, version, capabilities, meta, connected_at)
 list: GET /api/v1/tools/user-dockers?all=true|false    # fan-out to all nodes; containers get name="<node>/<name>" + node field; per-node failures in node_errors
 create: POST /api/v1/tools/user-dockers                # body may carry "node"; empty -> first node; response name rewritten to "<node>/<name>"
-images: GET /api/v1/tools/user-dockers/images          # fan-out; response { success, nodes: [{node, default_image, allowed_images, profiles}] }
+images: GET /api/v1/tools/user-dockers/images          # fan-out; response { success, nodes: [{node, default_image, allowed_images, profiles}] } (agent list_images; policy only)
+images_local: GET /api/v1/tools/user-dockers/images/local?node=<node>  # Engine-local inventory on one node; node optional (defaults to first)
 estimate: GET /api/v1/tools/user-dockers/images/estimate?ref=<image>&node=<node>   # node optional (defaults to first)
 pull: POST /api/v1/tools/user-dockers/pull             # body may carry "node"; returned job_id is composite "<node>/<job>"
 pull_status: GET /api/v1/tools/user-dockers/pull/status?job_id=<node>/<job>
@@ -304,6 +305,7 @@ query_to_endpoint:
   list_persistent_logger_events: GET /api/v1/logger/events/recent
   list_userdockers: GET /api/v1/tools/user-dockers
   list_userdocker_images: GET /api/v1/tools/user-dockers/images
+  list_userdocker_images_local: GET /api/v1/tools/user-dockers/images/local
   estimate_image_pull: GET /api/v1/tools/user-dockers/images/estimate
   pull_image: POST /api/v1/tools/user-dockers/pull
   pull_status: GET /api/v1/tools/user-dockers/pull/status

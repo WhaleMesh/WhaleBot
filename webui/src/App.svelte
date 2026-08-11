@@ -11,6 +11,7 @@
   import Tools from './views/Tools.svelte';
   import Skills from './views/Skills.svelte';
   import ToolDockerCreate from './views/ToolDockerCreate.svelte';
+  import ToolDockerImages from './views/ToolDockerImages.svelte';
   import Logger from './views/Logger.svelte';
   import Llm from './views/Llm.svelte';
   import Adapters from './views/Adapters.svelte';
@@ -465,6 +466,8 @@
         <Adapters adapterName={$route.params.id || ''} />
       {:else if $route.name === 'tool' && $route.params.id === 'docker-create'}
         <ToolDockerCreate />
+      {:else if $route.name === 'tool' && $route.params.id === 'docker-images'}
+        <ToolDockerImages />
       {/if}
     </main>
   </div>

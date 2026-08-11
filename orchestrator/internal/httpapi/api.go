@@ -92,6 +92,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/nodes", s.handleUserDockerNodes)
 			r.Get("/interface-contract", s.handleUserDockerInterfaceContract)
 			r.Get("/images", s.handleUserDockerImages)
+			r.Get("/images/local", s.handleUserDockerImagesLocal)
 			r.Get("/images/estimate", s.handleUserDockerImageEstimate)
 			r.Post("/pull", s.handleUserDockerPull)
 			r.Get("/pull/status", s.handleUserDockerPullStatus)

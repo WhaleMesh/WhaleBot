@@ -119,6 +119,17 @@ func main() {
 		})
 	})
 
+	r.Get("/api/v1/user-dockers/images/local", func(w http.ResponseWriter, req *http.Request) {
+		ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+		defer cancel()
+		imgs, err := cr.ListLocalImages(ctx)
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "local_images": imgs})
+	})
+
 	r.Get("/api/v1/user-dockers/images/estimate", func(w http.ResponseWriter, req *http.Request) {
 		ref := strings.TrimSpace(req.URL.Query().Get("ref"))
 		if ref == "" {

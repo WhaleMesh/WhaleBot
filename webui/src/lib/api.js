@@ -82,6 +82,24 @@ export const api = {
     const suffix = port ? `?port=${encodeURIComponent(port)}` : "";
     return req(`/api/v1/tools/user-dockers/${encodeDockerName(name)}/interface${suffix}`);
   },
+  userDockerImagesLocal: (node) =>
+    req(
+      `/api/v1/tools/user-dockers/images/local?node=${encodeURIComponent(node)}`,
+    ),
+  userDockerImageEstimate: (ref, node) => {
+    const q = new URLSearchParams({ ref });
+    if (node) q.set("node", node);
+    return req(`/api/v1/tools/user-dockers/images/estimate?${q}`);
+  },
+  userDockerPull: (body) =>
+    req("/api/v1/tools/user-dockers/pull", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  userDockerPullStatus: (jobId) =>
+    req(
+      `/api/v1/tools/user-dockers/pull/status?job_id=${encodeURIComponent(jobId)}`,
+    ),
   llmConfigGet: (name) =>
     req(`/api/v1/llm-components/${encodeURIComponent(name)}/config`),
   llmConfigPut: (name, body) =>

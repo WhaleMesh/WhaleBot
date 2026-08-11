@@ -2,7 +2,10 @@
   import { goto } from '../lib/route.js';
   import { _ } from '../lib/i18n.js';
 
-  const tools = [{ id: 'docker-create', status: 'available' }];
+  const tools = [
+    { id: 'docker-create', nameKey: 'tools.dockerName', descKey: 'tools.dockerDesc' },
+    { id: 'docker-images', nameKey: 'tools.dockerImagesName', descKey: 'tools.dockerImagesDesc' },
+  ];
 </script>
 
 <h1 class="wb-page-title">{$_('tools.title')}</h1>
@@ -18,13 +21,13 @@
       <div class="card-body gap-0 p-4">
         <div class="flex min-w-0 w-full items-center gap-3">
           <h2 class="card-title min-w-0 flex-1 truncate text-base font-semibold">
-            {$_('tools.dockerName')}
+            {$_(t.nameKey)}
           </h2>
           <span class="badge badge-success badge-sm shrink-0 whitespace-nowrap">
             {$_('tools.statusAvailable')}
           </span>
         </div>
-        <p class="mt-2 text-sm text-base-content/70">{$_('tools.dockerDesc')}</p>
+        <p class="mt-2 text-sm text-base-content/70">{$_(t.descKey)}</p>
       </div>
     </button>
   {/each}
