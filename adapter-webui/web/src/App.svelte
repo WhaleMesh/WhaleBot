@@ -6,7 +6,7 @@
   import Login from './views/Login.svelte';
   import Chat from './views/Chat.svelte';
   import Settings from './views/Settings.svelte';
-  import { BRAND_REPO_URL, WHALEMESH_ORG_URL } from './lib/brandUrls.js';
+  import { BRAND_REPO_URL, WHALETRUE_ORG_URL } from './lib/brandUrls.js';
 
   /** @type {'loading' | 'anon' | 'user'} */
   let authPhase = 'loading';
@@ -122,7 +122,7 @@
 
         <p class="border-t border-base-300/60 pt-2 text-center text-[10px] leading-snug text-base-content/55">
           <span>{$_('layout.poweredByBefore')}</span>
-          <a href={WHALEMESH_ORG_URL} target="_blank" rel="noopener noreferrer" class="link link-hover font-medium text-primary/90">{$_('layout.whaleMesh')}</a><span>{$_('layout.poweredByAfter')}</span>
+          <a href={WHALETRUE_ORG_URL} target="_blank" rel="noopener noreferrer" class="link link-hover font-medium text-primary/90">{$_('layout.whaleTrue')}</a><span>{$_('layout.poweredByAfter')}</span>
         </p>
       </div>
     </aside>

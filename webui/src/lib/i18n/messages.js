@@ -54,7 +54,7 @@ const en = {
     brandRepoAria: 'WhaleBot repository on GitHub (opens in a new tab)',
     poweredByBefore: 'Powered by ',
     poweredByAfter: '',
-    whaleMesh: 'WhaleMesh',
+    whaleTrue: 'WhaleTrue',
   },
   lang: {
     aria: 'Language',
@@ -530,7 +530,7 @@ const zhPart = {
     brandRepoAria: 'WhaleBot 项目仓库（新标签页打开）',
     poweredByBefore: '由 ',
     poweredByAfter: ' 驱动',
-    whaleMesh: 'WhaleMesh',
+    whaleTrue: 'WhaleTrue',
   },
   auth: {
     loginTitle: '登录',
@@ -936,7 +936,7 @@ const jaPart = {
     brandRepoAria: 'GitHub 上の WhaleBot リポジトリ（新しいタブ）',
     poweredByBefore: 'Powered by ',
     poweredByAfter: '',
-    whaleMesh: 'WhaleMesh',
+    whaleTrue: 'WhaleTrue',
   },
   auth: {
     loginTitle: 'サインイン',
