@@ -18,7 +18,7 @@
   import Secrets from './views/Secrets.svelte';
   import Benchmark from './views/Benchmark.svelte';
   import WbBrandIcon from './lib/WbBrandIcon.svelte';
-  import { BRAND_REPO_URL, WHALEMESH_ORG_URL } from './lib/brandUrls.js';
+  import { BRAND_REPO_URL, WHALETRUE_ORG_URL } from './lib/brandUrls.js';
 
   const navIds = ['overview', 'components', 'sessions', 'logger', 'tools', 'skills', 'secrets', 'llm', 'benchmark', 'adapter'];
   const SIDEBAR_LS_KEY = 'whalebot_sidebar_collapsed';
@@ -432,11 +432,11 @@
         >
           <span>{$_('layout.poweredByBefore')}</span>
           <a
-            href={WHALEMESH_ORG_URL}
+            href={WHALETRUE_ORG_URL}
             target="_blank"
             rel="noopener noreferrer"
             class="link link-hover font-medium text-primary/90"
-          >{$_('layout.whaleMesh')}</a><span>{$_('layout.poweredByAfter')}</span>
+          >{$_('layout.whaleTrue')}</a><span>{$_('layout.poweredByAfter')}</span>
         </p>
       </div>
     </aside>

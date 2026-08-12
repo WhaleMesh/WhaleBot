@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go 1.22](https://img.shields.io/badge/Go-1.22-00ADD8.svg)](https://go.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://docs.docker.com/compose/)
-[![GitHub Stars](https://img.shields.io/github/stars/WhaleMesh/WhaleBot?style=flat)](https://github.com/WhaleMesh/WhaleBot/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/WhaleTrue/WhaleBot?style=flat)](https://github.com/WhaleTrue/WhaleBot/stargazers)
 
 默认文档语言为中文。English version: [`README.en.md`](README.en.md)。
 
