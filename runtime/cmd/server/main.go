@@ -419,7 +419,7 @@ func (s *reactService) handleRun(w http.ResponseWriter, r *http.Request) {
 	msgs = append(msgs, cmMessage{Role: "system", Content: buildSystemPrompt(catalog)})
 	planConfirmed := isPlanConfirmationMessage(req.Message, history)
 	gate := s.decidePlanGate(r.Context(), req.Message, history, traceID, sessionID, routes.LoggerWriteEndpoint)
-	forcePlanOnly := gate.InjectPlanOnly
+	forcePlanOnly := shouldForcePlanOnly(gate, planConfirmed)
 	if forcePlanOnly {
 		msgs = append(msgs, cmMessage{
 			Role:    "system",
@@ -1751,6 +1751,10 @@ func (s *reactService) invokeChatModel(ctx context.Context, msgs []cmMessage, to
 type planGateDecision struct {
 	InjectPlanOnly        bool `json:"inject_plan_only"`
 	RestrictMutatingTools bool `json:"restrict_mutating_tools"`
+}
+
+func shouldForcePlanOnly(gate planGateDecision, planConfirmed bool) bool {
+	return gate.InjectPlanOnly && !planConfirmed
 }
 
 func conservativePlanGateDefault() planGateDecision {

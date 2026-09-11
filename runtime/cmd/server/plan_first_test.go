@@ -40,6 +40,17 @@ func TestParsePlanGateResponse_valid(t *testing.T) {
 	}
 }
 
+func TestPlanConfirmationOverridesPlanOnlyDecision(t *testing.T) {
+	t.Parallel()
+	gate := planGateDecision{InjectPlanOnly: true, RestrictMutatingTools: true}
+	if shouldForcePlanOnly(gate, true) {
+		t.Fatal("confirmed plan must enable tools even when the classifier repeats inject_plan_only=true")
+	}
+	if !shouldForcePlanOnly(gate, false) {
+		t.Fatal("unconfirmed execution must remain plan-only")
+	}
+}
+
 func TestParsePlanGateResponse_defaultsWhenPartial(t *testing.T) {
 	t.Parallel()
 	d, ok := parsePlanGateResponse(`{"inject_plan_only":false}`)
