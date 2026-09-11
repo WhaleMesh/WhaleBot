@@ -134,7 +134,8 @@ echo "All done. Compare at http://localhost:18000/#/benchmark"
 Each run in `GET /api/v1/benchmark/runs` contains:
 
 - `model_name` / `model` — profile name / upstream model id (your comparison key).
-- `scores` — `plan_gate` (0–25), `tool_call` (0–35), `react` (0–40), `total` (0–100).
+- `case_set` — benchmark case-set version; compare scores only within the same version.
+- `scores` — `total` (0–100 daily-task readiness), its `plan_gate` / `tool_call` / `react` components, and `bonus` (0–100 capability-ceiling challenges; v3+ only).
 - `metrics` — `llm_calls`, `avg_latency_ms`, token counts.
 - `cases[]` — per-case `pass`/`score`/`detail` for failure analysis.
 - `e2e` — `status` (`passed|failed|skipped|error`), `score` (0–100 from 5 checkpoints),

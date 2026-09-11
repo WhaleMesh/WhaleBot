@@ -25,8 +25,9 @@
 
   function bestRunId(list) {
     let best = null;
+    const caseSet = list.find((r) => r.status === 'completed')?.case_set || '';
     for (const r of list) {
-      if (r.status !== 'completed') continue;
+      if (r.status !== 'completed' || (r.case_set || '') !== caseSet) continue;
       if (!best || (r.scores?.total ?? 0) > (best.scores?.total ?? 0)) best = r;
     }
     return best ? best.id : '';
@@ -112,7 +113,7 @@
   function downloadCsv() {
     const cols = [
       'model_name', 'model', 'started_at', 'status', 'case_set',
-      'total', 'plan_gate', 'tool_call', 'react', 'e2e_status', 'e2e_score',
+      'total', 'bonus', 'plan_gate', 'tool_call', 'react', 'e2e_status', 'e2e_score',
       'llm_calls', 'avg_latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens',
       'e2e_turns', 'e2e_wall_ms',
     ];
@@ -120,7 +121,7 @@
     for (const r of runs) {
       lines.push([
         r.model_name, r.model, r.started_at, r.status, r.case_set,
-        r.scores?.total, r.scores?.plan_gate, r.scores?.tool_call, r.scores?.react,
+        r.scores?.total, r.scores?.bonus, r.scores?.plan_gate, r.scores?.tool_call, r.scores?.react,
         r.e2e?.status, r.e2e?.score,
         r.metrics?.llm_calls, r.metrics?.avg_latency_ms,
         r.metrics?.prompt_tokens, r.metrics?.completion_tokens, r.metrics?.total_tokens,
@@ -298,15 +299,14 @@
       <thead>
         <tr>
           <th>{$_('benchmark.thModel')}</th>
+          <th>{$_('benchmark.thCaseSet')}</th>
           <th>
             <div class="leading-tight">{$_('benchmark.thStatus')}</div>
             <div class="leading-tight">{$_('benchmark.thDate')}</div>
           </th>
-          <th>{$_('benchmark.thTotal')}</th>
-          <th>{$_('benchmark.thPlanGate')}</th>
-          <th>{$_('benchmark.thToolCall')}</th>
-          <th>{$_('benchmark.thReact')}</th>
-          <th>{$_('benchmark.thE2E')}</th>
+          <th class="min-w-56 border-x border-base-300 bg-primary/5">{$_('benchmark.thTotal')}</th>
+          <th class="border-x border-base-300 bg-warning/5">{$_('benchmark.thBonus')}</th>
+          <th class="border-x border-base-300 bg-info/5">{$_('benchmark.thE2E')}</th>
           <th>
             <div class="leading-tight">{$_('benchmark.thLatency')}</div>
             <div class="leading-tight">{$_('benchmark.thTokens')}</div>
@@ -334,6 +334,7 @@
                 {abbrevModel(r.model)}
               </div>
             </td>
+            <td class="wb-mono whitespace-nowrap text-xs">{r.case_set || $_('benchmark.legacyCaseSet')}</td>
             <td class="whitespace-nowrap">
               {#if r.status === 'running'}
                 <span class="flex max-w-40 items-center gap-1 text-info">
@@ -352,13 +353,20 @@
                 {fmtShortDate(r.started_at)}
               </div>
             </td>
-            <td class="wb-mono text-base font-semibold {scoreClass(r.scores?.total)}">
-              {r.status === 'completed' ? fmtScore(r.scores?.total) : '—'}
+            <td class="min-w-56 border-x border-base-300 bg-primary/5">
+              <div class="wb-mono text-lg font-semibold {scoreClass(r.scores?.total)}">
+                {r.status === 'completed' ? fmtScore(r.scores?.total) : '—'}
+              </div>
+              <div class="mt-1 flex gap-3 whitespace-nowrap text-xs text-base-content/60">
+                <span>{$_('benchmark.thPlanGate')} <strong class="wb-mono text-base-content/80">{r.status === 'completed' ? fmtScore(r.scores?.plan_gate) : '—'}</strong></span>
+                <span>{$_('benchmark.thToolCall')} <strong class="wb-mono text-base-content/80">{r.status === 'completed' ? fmtScore(r.scores?.tool_call) : '—'}</strong></span>
+                <span>{$_('benchmark.thReact')} <strong class="wb-mono text-base-content/80">{r.status === 'completed' ? fmtScore(r.scores?.react) : '—'}</strong></span>
+              </div>
             </td>
-            <td class="wb-mono text-sm">{r.status === 'completed' ? fmtScore(r.scores?.plan_gate) : '—'}</td>
-            <td class="wb-mono text-sm">{r.status === 'completed' ? fmtScore(r.scores?.tool_call) : '—'}</td>
-            <td class="wb-mono text-sm">{r.status === 'completed' ? fmtScore(r.scores?.react) : '—'}</td>
-            <td class="wb-mono text-sm">
+            <td class="border-x border-base-300 bg-warning/5 wb-mono text-base font-semibold">
+              {r.status === 'completed' && String(r.case_set || '').startsWith('v3') ? fmtScore(r.scores?.bonus) : '—'}
+            </td>
+            <td class="border-x border-base-300 bg-info/5 wb-mono text-base font-semibold">
               {#if r.e2e && r.e2e.status !== 'skipped'}
                 <span class={scoreClass(r.e2e.score)}>{fmtScore(r.e2e.score)}</span>
               {:else}
@@ -401,7 +409,7 @@
           </tr>
           {#if expandedId === r.id}
             <tr>
-              <td colspan="9" class="bg-base-200/40 p-3">
+              <td colspan="8" class="bg-base-200/40 p-3">
                 {#if r.error}
                   <div role="alert" class="alert alert-soft alert-error mb-3 text-sm">{r.error}</div>
                 {/if}
@@ -488,7 +496,7 @@
           {/if}
         {:else}
           <tr>
-            <td colspan="9" class="text-center text-base-content/60">{$_('benchmark.empty')}</td>
+            <td colspan="8" class="text-center text-base-content/60">{$_('benchmark.empty')}</td>
           </tr>
         {/each}
       </tbody>

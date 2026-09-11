@@ -323,9 +323,11 @@ func TestComputeBenchScores(t *testing.T) {
 		{Category: "plan_gate", Score: 0},
 		{Category: "tool_call", Score: 1},
 		{Category: "react", Score: 0.5},
+		{Category: "bonus", Score: 0.25},
+		{Category: "bonus", Score: 0.75},
 	}
 	s := computeBenchScores(cases)
-	if s.PlanGate != 50 || s.ToolCall != 100 || s.React != 50 {
+	if s.PlanGate != 50 || s.ToolCall != 100 || s.React != 50 || s.Bonus != 50 {
 		t.Fatalf("category percentages wrong: %+v", s)
 	}
 	want := 0.25*50 + 0.35*100 + 0.40*50

@@ -31,9 +31,9 @@ const (
 	benchMaxRuns     = 50 // ponytail: fixed history cap; raise if users want more
 	// benchCaseSet versions the case list: bump whenever cases are added or
 	// re-weighted so runs from different case sets are not compared blindly.
-	// v2.1: destructive-op cases gained the scripted-approval retry (asking
-	// for confirmation first is no longer scored 0).
-	benchCaseSet = "v2.1"
+	// v3.0: daily-task readiness stays in Total; harder capability-ceiling
+	// scenarios are reported separately as Bonus.
+	benchCaseSet = "v3.0"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,10 +45,11 @@ type benchScores struct {
 	ToolCall float64 `json:"tool_call"`
 	React    float64 `json:"react"`
 	Total    float64 `json:"total"`
+	Bonus    float64 `json:"bonus"`
 }
 
 type benchCaseResult struct {
-	Category  string  `json:"category"` // plan_gate | tool_call | react
+	Category  string  `json:"category"` // plan_gate | tool_call | react | bonus
 	Name      string  `json:"name"`
 	Pass      bool    `json:"pass"`
 	Score     float64 `json:"score"` // 0..1
@@ -394,7 +395,9 @@ func (b *benchService) execute(runID string, includeE2E bool) {
 			cctx, ccancel := context.WithTimeout(ctx, 3*time.Minute)
 			res := runOne(cctx, i)
 			ccancel()
-			res.Category = category
+			if res.Category == "" {
+				res.Category = category
+			}
 			cases = append(cases, res)
 			b.store.update(runID, func(r *benchRun) { r.Cases = cases; b.applyMeter(r, meter) })
 			if meter.errStreak >= 3 {
@@ -472,7 +475,7 @@ func computeBenchScores(cases []benchCaseResult) benchScores {
 		}
 		return 100 * sum[cat] / float64(cnt[cat])
 	}
-	s := benchScores{PlanGate: pct("plan_gate"), ToolCall: pct("tool_call"), React: pct("react")}
+	s := benchScores{PlanGate: pct("plan_gate"), ToolCall: pct("tool_call"), React: pct("react"), Bonus: pct("bonus")}
 	s.Total = 0.25*s.PlanGate + 0.35*s.ToolCall + 0.40*s.React
 	return s
 }
@@ -874,6 +877,7 @@ type benchToolCallRec struct {
 
 type reactScenario struct {
 	name     string
+	category string
 	user     string
 	maxSteps int
 	respond  func(rec benchToolCallRec) string
@@ -1091,6 +1095,7 @@ func benchReactScenarios() []reactScenario {
 			brokenSrc := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmtt.Println(\"OK\")\n}\n"
 			return reactScenario{
 				name:     "fix compile error and rebuild",
+				category: "bonus",
 				user:     "In the existing container node1/go-build-main, write /workspace/tool.go — a small Go program that prints OK — and build it with `go build`. Make sure the build actually succeeds before you report back.",
 				maxSteps: 10,
 				respond: func(rec benchToolCallRec) string {
@@ -1170,6 +1175,7 @@ func benchReactScenarios() []reactScenario {
 			polls := 0
 			return reactScenario{
 				name:     "poll async build to completion",
+				category: "bonus",
 				user:     "In container node1/go-build-main, start the full dependency download and build (`go mod download && go build ./...`) — it takes several minutes, so don't block on it — and tell me once it has actually finished.",
 				maxSteps: 8,
 				respond: func(rec benchToolCallRec) string {
@@ -1279,7 +1285,11 @@ func (b *benchService) runReactScenario(ctx context.Context, sc reactScenario, m
 	}
 
 	score, detail := sc.score(calls, finalText)
-	return benchCaseResult{Name: sc.name, Score: score, Pass: score >= 1, Detail: detail, LatencyMS: totalLat}
+	category := sc.category
+	if category == "" {
+		category = "react"
+	}
+	return benchCaseResult{Category: category, Name: sc.name, Score: score, Pass: score >= 1, Detail: detail, LatencyMS: totalLat}
 }
 
 // ---------------------------------------------------------------------------
